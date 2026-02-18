@@ -319,6 +319,23 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
     return { kind: "field", expr: lowerExpr(ctx, expr.expression), name: expr.name.text };
   }
 
+  if (ts.isElementAccessExpression(expr)) {
+    const index = expr.argumentExpression;
+    if (!index) failAt(expr, "TSB1110", "Element access must have an index expression in v0.");
+    return { kind: "index", expr: lowerExpr(ctx, expr.expression), index: lowerExpr(ctx, index) };
+  }
+
+  if (ts.isArrayLiteralExpression(expr)) {
+    const args: RustExpr[] = [];
+    for (const el of expr.elements) {
+      if (ts.isSpreadElement(el)) {
+        failAt(el, "TSB1111", "Array spread is not supported in v0.");
+      }
+      args.push(lowerExpr(ctx, el));
+    }
+    return { kind: "macro_call", name: "vec", args };
+  }
+
   if (ts.isBinaryExpression(expr)) {
     const left = lowerExpr(ctx, expr.left);
     const right = lowerExpr(ctx, expr.right);
@@ -481,6 +498,15 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
   }
 
   if (ts.isExpressionStatement(st)) {
+    if (ts.isBinaryExpression(st.expression) && st.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      return [
+        {
+          kind: "assign",
+          target: lowerExpr(ctx, st.expression.left),
+          expr: lowerExpr(ctx, st.expression.right),
+        },
+      ];
+    }
     return [{ kind: "expr", expr: lowerExpr(ctx, st.expression) }];
   }
 
@@ -493,6 +519,20 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
     const then = lowerStmtBlock(ctx, st.thenStatement);
     const elseStmts = st.elseStatement ? lowerStmtBlock(ctx, st.elseStatement) : undefined;
     return [{ kind: "if", cond, then, else: elseStmts }];
+  }
+
+  if (ts.isWhileStatement(st)) {
+    const cond = lowerExpr(ctx, st.expression);
+    const body = lowerStmtBlock(ctx, st.statement);
+    return [{ kind: "while", cond, body }];
+  }
+
+  if (ts.isBreakStatement(st)) {
+    return [{ kind: "break" }];
+  }
+
+  if (ts.isContinueStatement(st)) {
+    return [{ kind: "continue" }];
   }
 
   failAt(st, "TSB2100", `Unsupported statement: ${st.getText()}`);

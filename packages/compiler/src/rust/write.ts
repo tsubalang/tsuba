@@ -48,6 +48,8 @@ function emitExpr(expr: RustExpr): string {
       return `(${emitExpr(expr.expr)}) as ${emitType(expr.type)}`;
     case "field":
       return `${emitExpr(expr.expr)}.${expr.name}`;
+    case "index":
+      return `${emitExpr(expr.expr)}[${emitExpr(expr.index)}]`;
     case "binary":
       return `(${emitExpr(expr.left)} ${expr.op} ${emitExpr(expr.right)})`;
     case "call":
@@ -80,8 +82,16 @@ function emitStmtInline(st: RustStmt): string {
       const ty = st.type ? `: ${emitType(st.type)}` : "";
       return `let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`;
     }
+    case "assign":
+      return `${emitExpr(st.target)} = ${emitExpr(st.expr)};`;
     case "expr":
       return `${emitExpr(st.expr)};`;
+    case "break":
+      return "break;";
+    case "continue":
+      return "continue;";
+    case "while":
+      return "__tsuba_unreachable_inline_while__;";
     case "return":
       return st.expr ? `return ${emitExpr(st.expr)};` : "return;";
     case "if":
@@ -97,8 +107,21 @@ function emitStmtLines(st: RustStmt, indent: string): string[] {
       const ty = st.type ? `: ${emitType(st.type)}` : "";
       return [`${indent}let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`];
     }
+    case "assign":
+      return [`${indent}${emitExpr(st.target)} = ${emitExpr(st.expr)};`];
     case "expr":
       return [`${indent}${emitExpr(st.expr)};`];
+    case "while": {
+      const out: string[] = [];
+      out.push(`${indent}while ${emitExpr(st.cond)} {`);
+      for (const s of st.body) out.push(...emitStmtLines(s, `${indent}  `));
+      out.push(`${indent}}`);
+      return out;
+    }
+    case "break":
+      return [`${indent}break;`];
+    case "continue":
+      return [`${indent}continue;`];
     case "return":
       return [st.expr ? `${indent}return ${emitExpr(st.expr)};` : `${indent}return;`];
     case "if": {

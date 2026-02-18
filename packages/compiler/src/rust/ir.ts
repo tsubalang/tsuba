@@ -32,6 +32,7 @@ export type RustExpr =
   | (NodeBase & { readonly kind: "paren"; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "cast"; readonly expr: RustExpr; readonly type: RustType })
   | (NodeBase & { readonly kind: "field"; readonly expr: RustExpr; readonly name: string })
+  | (NodeBase & { readonly kind: "index"; readonly expr: RustExpr; readonly index: RustExpr })
   | (NodeBase & { readonly kind: "binary"; readonly op: string; readonly left: RustExpr; readonly right: RustExpr })
   | (NodeBase & { readonly kind: "call"; readonly callee: RustExpr; readonly args: readonly RustExpr[] })
   | (NodeBase & { readonly kind: "macro_call"; readonly name: string; readonly args: readonly RustExpr[] })
@@ -48,7 +49,11 @@ export type RustStmt =
       readonly type?: RustType;
       readonly init: RustExpr;
     })
+  | (NodeBase & { readonly kind: "assign"; readonly target: RustExpr; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "expr"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "while"; readonly cond: RustExpr; readonly body: readonly RustStmt[] })
+  | (NodeBase & { readonly kind: "break" })
+  | (NodeBase & { readonly kind: "continue" })
   | (NodeBase & { readonly kind: "return"; readonly expr?: RustExpr })
   | (NodeBase & {
       readonly kind: "if";

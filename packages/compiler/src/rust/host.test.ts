@@ -211,4 +211,54 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("mod math {");
     expect(out.mainRs).to.contain("pub fn add(a: i32, b: i32) -> i32");
   });
+
+  it("lowers array literals to vec!(...) and supports element access", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "type usize = number;",
+        "",
+        "export function main(): void {",
+        "  const v = [1 as i32, 2 as i32];",
+        "  const x = v[0 as usize];",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let v = vec!((1) as i32, (2) as i32);");
+    expect(out.mainRs).to.contain("let x = v[(0) as usize];");
+  });
+
+  it("supports while loops and assignment statements (requires mut<T> marker)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "type mut<T> = T;",
+        "",
+        "export function main(): void {",
+        "  let x: mut<i32> = 0 as i32;",
+        "  while (x < (3 as i32)) {",
+        "    x = x + (1 as i32);",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let mut x: i32 = (0) as i32;");
+    expect(out.mainRs).to.contain("while (x < ((3) as i32)) {");
+    expect(out.mainRs).to.contain("x = (x + ((1) as i32));");
+  });
 });
