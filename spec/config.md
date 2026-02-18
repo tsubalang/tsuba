@@ -87,7 +87,11 @@ Example:
 {
   "schema": 1,
   "kind": "crate",
-  "crate": { "name": "axum", "version": "0.7.5" },
+  "crate": {
+    "name": "axum",
+    "package": "axum",
+    "version": "0.7.5"
+  },
   "modules": {
     "@tsuba/axum/index.js": "axum",
     "@tsuba/axum/routing.js": "axum::routing",
@@ -101,3 +105,12 @@ Rules:
 - Keys are TS import specifiers used by user code.
 - Values are Rust paths used by codegen.
 - The manifest must be deterministic and complete for the published surface.
+
+Crate identity:
+
+- `crate.name` (string): the Rust **crate name** used in paths (normally the Cargo `lib` target name, e.g. `simple_crate`).
+- `crate.package` (string, optional): the Cargo **package** name for dependency resolution when it differs from the crate name (e.g. package `simple-crate` with crate `simple_crate`).
+- `crate.version` (string) **or** `crate.path` (string): exactly one must be present.
+  - `crate.version`: consume from crates.io (requires network / existing Cargo cache).
+  - `crate.path`: consume from a local path (typically a bundled crate inside the npm package).
+    - Relative paths are resolved relative to the `tsuba.bindings.json` file.

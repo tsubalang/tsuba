@@ -29,10 +29,10 @@
     "test": "mocha --parallel 'dist/**/*.test.js'"
   },
   "dependencies": {
-    "@tsuba/core": "0.0.1"
+    "@tsuba/core": "0.0.1",
+    "@tsuba/std": "0.0.1"
   },
   "engines": {
     "node": ">=22.0.0"
   }
 }
-

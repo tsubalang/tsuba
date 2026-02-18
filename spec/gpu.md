@@ -186,7 +186,28 @@ Tsuba provides a minimal atomic set via intrinsics:
 - `atomicMax(ptr, value)`
 - `atomicCAS(ptr, expected, desired)`
 
+Because TypeScript has no `&` operator, v0 uses an explicit helper to obtain an “address-of element”
+pointer:
+
+```ts
+import { addr, atomicAdd } from "@tsuba/gpu/lang.js";
+atomicAdd(addr(out, i), 1 as u32); // lowers to: atomicAdd(&out[i], 1u)
+```
+
 Backend determines availability; missing features are a compile error unless explicitly gated.
+
+### Math intrinsics (v0)
+
+v0 exposes a small set of CUDA math intrinsics via `@tsuba/gpu/lang.js` markers.
+
+Example (used by the v0 softmax credibility kernel):
+
+```ts
+import { expf } from "@tsuba/gpu/lang.js";
+import type { f32 } from "@tsuba/core/types.js";
+
+const y: f32 = expf(x);
+```
 
 ---
 

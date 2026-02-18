@@ -21,7 +21,7 @@ The repo already has a working v0 scaffold:
 - `tsuba init/build/run` exist and are covered by unit + E2E tests.
 - `@tsuba/compiler` emits a small, explicitly-whitelisted TS subset to a single Rust `main.rs` and runs `cargo build/run`.
 - `@tsuba/core/@tsuba/std/@tsuba/gpu` exist as marker/facade packages.
-- GPU kernels are **detected** and **gated** deterministically (backend not implemented yet).
+- GPU kernels are compiled to deterministic CUDA C + PTX (via `nvcc`), and host code can launch kernels via a CUDA driver runtime module (`__tsuba_cuda`).
 
 This roadmap is the plan to take that v0 scaffold to a “real language” implementation.
 
@@ -157,7 +157,7 @@ Merge gate:
 
 ---
 
-## Phase 4 — GPU kernel compiler MVP (CUDA/PTX first) (TODO)
+## Phase 4 — GPU kernel compiler MVP (CUDA/PTX first) (IN PROGRESS)
 
 Deliverables:
 
@@ -185,7 +185,7 @@ Merge gate:
 
 ---
 
-## Phase 5 — “Credibility kernels”: matmul + softmax building blocks (TODO)
+## Phase 5 — “Credibility kernels”: matmul + softmax building blocks (IN PROGRESS)
 
 Deliverables:
 
@@ -202,7 +202,7 @@ Merge gate:
 
 ---
 
-## Phase 6 — MoE dispatch + router building blocks (TODO)
+## Phase 6 — MoE dispatch + router building blocks (IN PROGRESS)
 
 Deliverables:
 
@@ -220,7 +220,7 @@ Merge gate:
 
 ---
 
-## Phase 7 — Proof projects + README-smoke discipline (TODO)
+## Phase 7 — Proof projects + README-smoke discipline (IN PROGRESS)
 
 Deliverables:
 

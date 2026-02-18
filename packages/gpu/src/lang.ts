@@ -1,7 +1,9 @@
 // @tsuba/gpu/lang.js
 // Marker functions only. Tsuba erases these at compile time.
 
-import type { u32 } from "@tsuba/core/types.js";
+import type { f32, u32 } from "@tsuba/core/types.js";
+import type { mutref, ref } from "@tsuba/core/types.js";
+import type { Vec } from "@tsuba/std/prelude.js";
 import type { global_ptr, shared_ptr } from "./types.js";
 
 function marker(name: string): never {
@@ -71,12 +73,16 @@ export function deviceMalloc<T>(_len: u32): global_ptr<T> {
   void _len;
   return marker("deviceMalloc");
 }
-export function memcpyHtoD<T>(_dst: global_ptr<T>, _src: unknown): void {
+export function deviceFree<T>(_ptr: global_ptr<T>): void {
+  void _ptr;
+  marker("deviceFree");
+}
+export function memcpyHtoD<T>(_dst: global_ptr<T>, _src: ref<Vec<T>>): void {
   void _dst;
   void _src;
   marker("memcpyHtoD");
 }
-export function memcpyDtoH<T>(_dst: unknown, _src: global_ptr<T>): void {
+export function memcpyDtoH<T>(_dst: mutref<Vec<T>>, _src: global_ptr<T>): void {
   void _dst;
   void _src;
   marker("memcpyDtoH");
@@ -96,4 +102,17 @@ export function atomicAdd(_ptr: global_ptr<u32>, _value: u32): u32 {
   void _ptr;
   void _value;
   return marker("atomicAdd");
+}
+
+// Math intrinsics (kernel-only)
+export function expf(_x: f32): f32 {
+  void _x;
+  return marker("expf");
+}
+
+// Pointer helpers (kernel-only)
+export function addr<T>(_ptr: global_ptr<T>, _index: u32): global_ptr<T> {
+  void _ptr;
+  void _index;
+  return marker("addr");
 }

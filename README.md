@@ -30,13 +30,13 @@ Initialize a workspace (in an empty directory):
 node /path/to/tsuba/packages/cli/dist/bin.js init
 ```
 
-Build a project (generates Rust + runs `cargo build`):
+Build a project (generates Rust + runs `cargo build`), from inside a project directory (e.g. `packages/<project>`):
 
 ```bash
 node /path/to/tsuba/packages/cli/dist/bin.js build
 ```
 
-Run a project (builds + runs `cargo run`):
+Run a project (builds + runs `cargo run`), from inside a project directory:
 
 ```bash
 node /path/to/tsuba/packages/cli/dist/bin.js run

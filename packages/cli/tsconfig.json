@@ -6,6 +6,10 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../compiler" }]
+  "references": [
+    { "path": "../core" },
+    { "path": "../std" },
+    { "path": "../gpu" },
+    { "path": "../compiler" }
+  ]
 }
-

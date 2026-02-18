@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "crate",
+  "crate": {
+    "name": "simple_crate",
+    "package": "simple-crate",
+    "path": "./crate"
+  },
+  "modules": {
+    "@tsuba/simple/index.js": "simple_crate",
+    "@tsuba/simple/math.js": "simple_crate::math"
+  }
+}
