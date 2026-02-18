@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { compileHostToRust } from "./host.js";
+import { CompileError, compileHostToRust } from "./host.js";
 
 describe("@tsuba/compiler host emitter", () => {
   function getRepoRoot(): string {
@@ -397,6 +397,87 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("use fake_crate::Color;");
     expect(out.mainRs).to.contain("Color::Red");
     expect(out.crates).to.deep.equal([{ name: "fake_crate", version: "0.1.0" }]);
+  });
+
+  it("lowers object type aliases to Rust structs and supports struct literals", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-struct-alias-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "export type Point = {",
+        "  x: i32;",
+        "  y: i32;",
+        "};",
+        "",
+        "export function main(): void {",
+        "  const p: Point = { x: 1, y: 2 };",
+        "  void p.x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("pub struct Point {");
+    expect(out.mainRs).to.contain("pub x: i32,");
+    expect(out.mainRs).to.contain("pub y: i32,");
+    expect(out.mainRs).to.contain("Point { x: 1, y: 2 }");
+  });
+
+  it("generates private shape structs for untyped object literals with explicit field casts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-shape-struct-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "export function main(): void {",
+        "  const p = { x: 1 as i32, y: 2 as i32 };",
+        "  void p.x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    const m = out.mainRs.match(/struct (__Anon_[0-9a-f]{8}) \{/);
+    expect(m).to.not.equal(null);
+    const name = m?.[1];
+    expect(name).to.be.a("string");
+    expect(out.mainRs).to.contain(`${name} { x: (1) as i32, y: (2) as i32 }`);
+  });
+
+  it("errors on untyped shape object literals without explicit field casts (airplane-grade)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-shape-err-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "export function main(): void {",
+        "  const p = { x: 1 };",
+        "  void p;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1131");
   });
 
   it("lowers discriminated union type aliases to Rust enums and switches to match", () => {

@@ -2,7 +2,17 @@ import ts from "typescript";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
-import type { RustExpr, RustItem, RustMatchArm, RustParam, RustProgram, RustStmt, RustType, Span } from "./ir.js";
+import type {
+  RustExpr,
+  RustItem,
+  RustMatchArm,
+  RustParam,
+  RustProgram,
+  RustStmt,
+  RustType,
+  RustVisibility,
+  Span,
+} from "./ir.js";
 import { identExpr, pathExpr, pathType, unitExpr, unitType } from "./ir.js";
 import { writeRustProgram } from "./write.js";
 
@@ -51,10 +61,21 @@ type UnionDef = {
   readonly variants: readonly UnionVariantDef[];
 };
 
+type StructDef = {
+  readonly key: string;
+  readonly name: string;
+  readonly span: Span;
+  readonly vis: "pub" | "private";
+  readonly fields: readonly { readonly name: string; readonly type: RustType }[];
+};
+
 type EmitCtx = {
   readonly checker: ts.TypeChecker;
   readonly thisName?: string;
   readonly unions: ReadonlyMap<string, UnionDef>;
+  readonly structs: ReadonlyMap<string, StructDef>;
+  readonly shapeStructsByKey: Map<string, StructDef>;
+  readonly shapeStructsByFile: Map<string, StructDef[]>;
   readonly fieldBindings?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 };
 
@@ -116,6 +137,19 @@ function unionKeyFromType(type: ts.Type): string | undefined {
     if (ts.isTypeAliasDeclaration(d)) return unionKeyFromDecl(d);
   }
   return undefined;
+}
+
+function fnv1a32(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+function anonStructName(key: string): string {
+  return `__Anon_${fnv1a32(key).toString(16).padStart(8, "0")}`;
 }
 
 const markerModuleSpecifiers = new Set<string>([
@@ -526,26 +560,13 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   }
 
   if (ts.isObjectLiteralExpression(expr)) {
-    const ctxt = ctx.checker.getContextualType(expr);
-    if (!ctxt) {
-      failAt(expr, "TSB1115", "Object literals require a contextual type in v0.");
-    }
-    const key = unionKeyFromType(ctxt);
-    const def = key ? ctx.unions.get(key) : undefined;
-    if (!def) {
-      failAt(
-        expr,
-        "TSB1117",
-        "Only object literals constructing discriminated unions are supported in v0."
-      );
-    }
-
     const props = new Map<string, ts.Expression>();
     for (const p of expr.properties) {
       if (ts.isSpreadAssignment(p)) {
         failAt(p, "TSB1118", "Object spread is not supported in v0.");
       }
       if (ts.isShorthandPropertyAssignment(p)) {
+        if (props.has(p.name.text)) failAt(p.name, "TSB1125", `Duplicate property '${p.name.text}' in object literal.`);
         props.set(p.name.text, p.name);
         continue;
       }
@@ -555,46 +576,111 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       if (!ts.isIdentifier(p.name)) {
         failAt(p.name, "TSB1120", "Only identifier-named object literal properties are supported in v0.");
       }
+      if (props.has(p.name.text)) failAt(p.name, "TSB1125", `Duplicate property '${p.name.text}' in object literal.`);
       props.set(p.name.text, p.initializer);
     }
 
-    const discExpr = props.get(def.discriminant);
-    if (!discExpr || !ts.isStringLiteral(discExpr)) {
-      failAt(
-        expr,
-        "TSB1121",
-        `Union '${def.name}' object literal must include ${def.discriminant}: \"...\".`
-      );
-    }
-    const tag = discExpr.text;
-    const variant = def.variants.find((v) => v.tag === tag);
-    if (!variant) {
-      failAt(
-        discExpr,
-        "TSB1122",
-        `Unknown union tag '${tag}' for ${def.name}.`
-      );
-    }
+    const ctxt = ctx.checker.getContextualType(expr);
+    if (ctxt) {
+      const key = unionKeyFromType(ctxt);
+      const unionDef = key ? ctx.unions.get(key) : undefined;
+      if (unionDef) {
+        const discExpr = props.get(unionDef.discriminant);
+        if (!discExpr || !ts.isStringLiteral(discExpr)) {
+          failAt(
+            expr,
+            "TSB1121",
+            `Union '${unionDef.name}' object literal must include ${unionDef.discriminant}: \"...\".`
+          );
+        }
+        const tag = discExpr.text;
+        const variant = unionDef.variants.find((v) => v.tag === tag);
+        if (!variant) {
+          failAt(discExpr, "TSB1122", `Unknown union tag '${tag}' for ${unionDef.name}.`);
+        }
 
-    const allowed = new Set<string>([def.discriminant, ...variant.fields.map((f) => f.name)]);
-    for (const k0 of props.keys()) {
-      if (!allowed.has(k0)) {
-        failAt(expr, "TSB1123", `Unknown property '${k0}' for union variant '${tag}' in ${def.name}.`);
+        const allowed = new Set<string>([unionDef.discriminant, ...variant.fields.map((f) => f.name)]);
+        for (const k0 of props.keys()) {
+          if (!allowed.has(k0)) {
+            failAt(expr, "TSB1123", `Unknown property '${k0}' for union variant '${tag}' in ${unionDef.name}.`);
+          }
+        }
+
+        const fields = variant.fields.map((f) => {
+          const v = props.get(f.name);
+          if (!v) {
+            failAt(expr, "TSB1124", `Missing required field '${f.name}' for union variant '${tag}' in ${unionDef.name}.`);
+          }
+          return { name: f.name, expr: lowerExpr(ctx, v) };
+        });
+
+        if (fields.length === 0) {
+          return pathExpr([unionDef.name, variant.name]);
+        }
+        return { kind: "struct_lit", typePath: { segments: [unionDef.name, variant.name] }, fields };
+      }
+
+      const structDef = key ? ctx.structs.get(key) : undefined;
+      if (structDef) {
+        for (const k0 of props.keys()) {
+          if (!structDef.fields.some((f) => f.name === k0)) {
+            failAt(expr, "TSB1126", `Unknown property '${k0}' for ${structDef.name} in v0.`);
+          }
+        }
+        const fields = structDef.fields.map((f) => {
+          const v = props.get(f.name);
+          if (!v) {
+            failAt(expr, "TSB1127", `Missing required field '${f.name}' for ${structDef.name} in v0.`);
+          }
+          return { name: f.name, expr: lowerExpr(ctx, v) };
+        });
+        if (fields.length === 0) return pathExpr([structDef.name]);
+        return { kind: "struct_lit", typePath: { segments: [structDef.name] }, fields };
       }
     }
 
-    const fields = variant.fields.map((f) => {
+    // Shape structs: generate a private nominal struct for object literals without a known contextual type.
+    for (const p of expr.properties) {
+      if (ts.isShorthandPropertyAssignment(p)) {
+        failAt(p, "TSB1130", "Shorthand object literal properties require a contextual nominal type in v0.");
+      }
+    }
+
+    const span = spanFromNode(expr);
+    const key = `${span.fileName}:${span.start}:${span.end}`;
+    let def = ctx.shapeStructsByKey.get(key);
+    if (!def) {
+      const name = anonStructName(key);
+      const fields: { readonly name: string; readonly type: RustType }[] = [];
+      for (const p of expr.properties) {
+        if (ts.isSpreadAssignment(p)) continue;
+        if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name)) continue;
+        const init = p.initializer;
+        const ty = (() => {
+          if (ts.isAsExpression(init)) return typeNodeToRust(init.type);
+          if (init.kind === ts.SyntaxKind.TrueKeyword || init.kind === ts.SyntaxKind.FalseKeyword) return pathType(["bool"]);
+          failAt(
+            init,
+            "TSB1131",
+            "Object literal fields without a contextual type must use explicit type assertions in v0 (e.g., x: 1 as i32)."
+          );
+        })();
+        fields.push({ name: p.name.text, type: ty });
+      }
+      def = { key, name, span, vis: "private", fields };
+      ctx.shapeStructsByKey.set(key, def);
+      const list = ctx.shapeStructsByFile.get(span.fileName) ?? [];
+      list.push(def);
+      ctx.shapeStructsByFile.set(span.fileName, list);
+    }
+
+    const fields = def.fields.map((f) => {
       const v = props.get(f.name);
-      if (!v) {
-        failAt(expr, "TSB1124", `Missing required field '${f.name}' for union variant '${tag}' in ${def.name}.`);
-      }
+      if (!v) failAt(expr, "TSB1132", `Missing required field '${f.name}' in object literal for ${def.name}.`);
       return { name: f.name, expr: lowerExpr(ctx, v) };
     });
-
-    if (fields.length === 0) {
-      return pathExpr([def.name, variant.name]);
-    }
-    return { kind: "struct_lit", typePath: { segments: [def.name, variant.name] }, fields };
+    if (fields.length === 0) return pathExpr([def.name]);
+    return { kind: "struct_lit", typePath: { segments: [def.name] }, fields };
   }
 
   if (ts.isNewExpression(expr)) {
@@ -906,7 +992,15 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
       for (const f of variant.fields) fieldMap.set(f.name, f.name);
       const inherited = ctx.fieldBindings ? new Map(ctx.fieldBindings) : new Map<string, ReadonlyMap<string, string>>();
       inherited.set(targetIdent.text, fieldMap);
-      const armCtx: EmitCtx = { checker: ctx.checker, unions: ctx.unions, thisName: ctx.thisName, fieldBindings: inherited };
+      const armCtx: EmitCtx = {
+        checker: ctx.checker,
+        unions: ctx.unions,
+        structs: ctx.structs,
+        shapeStructsByKey: ctx.shapeStructsByKey,
+        shapeStructsByFile: ctx.shapeStructsByFile,
+        thisName: ctx.thisName,
+        fieldBindings: inherited,
+      };
 
       const body: RustStmt[] = [];
       for (const s0 of bodyStmtsNodes) body.push(...lowerStmt(armCtx, s0));
@@ -1230,7 +1324,14 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
 
     const ret = typeNodeToRust(m.type);
     const body: RustStmt[] = [];
-    const methodCtx: EmitCtx = { checker: ctx.checker, unions: ctx.unions, thisName: "self" };
+    const methodCtx: EmitCtx = {
+      checker: ctx.checker,
+      unions: ctx.unions,
+      structs: ctx.structs,
+      shapeStructsByKey: ctx.shapeStructsByKey,
+      shapeStructsByFile: ctx.shapeStructsByFile,
+      thisName: "self",
+    };
     for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
 
     implItems.push({
@@ -1361,25 +1462,72 @@ function tryParseDiscriminatedUnionTypeAlias(decl: ts.TypeAliasDeclaration): Uni
   return { key: unionKeyFromDecl(decl), name, discriminant, variants: unionVariants };
 }
 
-function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: readonly string[]): readonly RustItem[] {
-  const def = ctx.unions.get(unionKeyFromDecl(decl));
-  if (!def) return [];
-  const isExport = hasModifier(decl, ts.SyntaxKind.ExportKeyword);
-  const vis: "pub" | "private" = isExport ? "pub" : "private";
+function tryParseStructTypeAlias(decl: ts.TypeAliasDeclaration): StructDef | undefined {
+  const ty = decl.type;
+  if (!ts.isTypeLiteralNode(ty)) return undefined;
 
-  return [
-    {
-      kind: "enum",
-      span: spanFromNode(decl),
-      vis,
-      name: def.name,
-      attrs,
-      variants: def.variants.map((v) => ({
-        name: v.name,
-        fields: v.fields,
-      })),
-    },
-  ];
+  const fields: { readonly name: string; readonly type: RustType }[] = [];
+  const seen = new Set<string>();
+  for (const m of ty.members) {
+    if (!ts.isPropertySignature(m)) {
+      failAt(m, "TSB5200", `Only property signatures are supported in object type aliases in v0: ${decl.name.text}.`);
+    }
+    if (!ts.isIdentifier(m.name)) {
+      failAt(m.name, "TSB5201", `Only identifier-named properties are supported in object type aliases in v0: ${decl.name.text}.`);
+    }
+    if (!m.type) {
+      failAt(m, "TSB5202", `Type alias field '${m.name.text}' in ${decl.name.text} must have a type annotation in v0.`);
+    }
+    if (m.questionToken) {
+      failAt(m, "TSB5203", `Optional fields are not supported in object type aliases in v0 (use Option<T>): ${decl.name.text}.${m.name.text}`);
+    }
+    const name = m.name.text;
+    if (seen.has(name)) failAt(m.name, "TSB5204", `Duplicate field '${name}' in ${decl.name.text}.`);
+    seen.add(name);
+    fields.push({ name, type: typeNodeToRust(m.type) });
+  }
+
+  const key = unionKeyFromDecl(decl);
+  const vis: "pub" | "private" = hasModifier(decl, ts.SyntaxKind.ExportKeyword) ? "pub" : "private";
+
+  return { key, name: decl.name.text, span: spanFromNode(decl), vis, fields };
+}
+
+function structItemFromDef(def: StructDef, attrs: readonly string[]): RustItem {
+  const fieldVis: RustVisibility = def.vis === "pub" ? "pub" : "private";
+  return {
+    kind: "struct",
+    span: def.span,
+    vis: def.vis,
+    name: def.name,
+    attrs,
+    fields: def.fields.map((f) => ({ vis: fieldVis, name: f.name, type: f.type })),
+  };
+}
+
+function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: readonly string[]): readonly RustItem[] {
+  const key = unionKeyFromDecl(decl);
+  const unionDef = ctx.unions.get(key);
+  if (unionDef) {
+    return [
+      {
+        kind: "enum",
+        span: spanFromNode(decl),
+        vis: hasModifier(decl, ts.SyntaxKind.ExportKeyword) ? "pub" : "private",
+        name: unionDef.name,
+        attrs,
+        variants: unionDef.variants.map((v) => ({
+          name: v.name,
+          fields: v.fields,
+        })),
+      },
+    ];
+  }
+
+  const structDef = ctx.structs.get(key);
+  if (structDef) return [structItemFromDef(structDef, attrs)];
+
+  return [];
 }
 
 function lowerInterface(decl: ts.InterfaceDeclaration): readonly RustItem[] {
@@ -1451,7 +1599,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const rustReturnType = returnKind === "result" ? typeNodeToRust(returnTypeNode) : undefined;
 
   const unionsByKey = new Map<string, UnionDef>();
-  const ctx: EmitCtx = { checker, unions: unionsByKey };
+  const structAliasesByKey = new Map<string, StructDef>();
+  const shapeStructsByKey = new Map<string, StructDef>();
+  const shapeStructsByFile = new Map<string, StructDef[]>();
+  const ctx: EmitCtx = {
+    checker,
+    unions: unionsByKey,
+    structs: structAliasesByKey,
+    shapeStructsByKey,
+    shapeStructsByFile,
+  };
   const kernels = collectKernelDecls(ctx, sf);
   const usedCratesByName = new Map<string, CrateDep>();
 
@@ -1821,9 +1978,11 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   // Collect discriminated unions (type aliases) up-front so they can be used during expression/statement lowering.
   for (const lowered of loweredByFile.values()) {
     for (const ta of lowered.typeAliases) {
-      const def = tryParseDiscriminatedUnionTypeAlias(ta.decl);
-      if (!def) continue;
-      unionsByKey.set(def.key, def);
+      const unionDef = tryParseDiscriminatedUnionTypeAlias(ta.decl);
+      if (unionDef) unionsByKey.set(unionDef.key, unionDef);
+
+      const structDef = tryParseStructTypeAlias(ta.decl);
+      if (structDef) structAliasesByKey.set(structDef.key, structDef);
     }
   }
 
@@ -1840,7 +1999,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       if (n) declPosByName.set(n, c0.pos);
     }
     for (const t0 of lowered.typeAliases) {
-      if (ctx.unions.has(unionKeyFromDecl(t0.decl))) {
+      const key = unionKeyFromDecl(t0.decl);
+      if (ctx.unions.has(key) || ctx.structs.has(key)) {
         declPosByName.set(t0.decl.name.text, t0.pos);
       }
     }
@@ -1898,7 +2058,13 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     itemGroups.sort((a, b) => a.pos - b.pos);
     const declItems = itemGroups.flatMap((g) => g.items);
 
-    const modItems: RustItem[] = [...sortUses(lowered.uses), ...declItems];
+    const usesSorted = sortUses(lowered.uses);
+    const shapeStructs = [...(ctx.shapeStructsByFile.get(fileName) ?? [])].sort(
+      (a, b) => a.span.start - b.span.start || a.key.localeCompare(b.key)
+    );
+    const shapeItems = shapeStructs.map((d) => structItemFromDef(d, []));
+
+    const modItems: RustItem[] = [...usesSorted, ...shapeItems, ...declItems];
     items.push({ kind: "mod", name: modName, items: modItems });
   }
 
@@ -1929,6 +2095,11 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   const mainBody: RustStmt[] = [];
   for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(ctx, st));
+
+  const rootShapeStructs = [...(ctx.shapeStructsByFile.get(entryFileName) ?? [])].sort(
+    (a, b) => a.span.start - b.span.start || a.key.localeCompare(b.key)
+  );
+  for (const d of rootShapeStructs) items.push(structItemFromDef(d, []));
 
   const mainItem: RustItem = {
     kind: "fn",
