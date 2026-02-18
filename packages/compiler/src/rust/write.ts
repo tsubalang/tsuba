@@ -106,6 +106,8 @@ function emitStmtInline(st: RustStmt): string {
       return "continue;";
     case "while":
       return "__tsuba_unreachable_inline_while__;";
+    case "match":
+      return "__tsuba_unreachable_inline_match__;";
     case "return":
       return st.expr ? `return ${emitExpr(st.expr)};` : "return;";
     case "if":
@@ -156,6 +158,33 @@ function emitStmtLines(st: RustStmt, indent: string): string[] {
       out.push(`${indent}}`);
       return out;
     }
+    case "match": {
+      const out: string[] = [];
+      out.push(`${indent}match ${emitExpr(st.expr)} {`);
+      const armIndent = `${indent}  `;
+      const bodyIndent = `${indent}    `;
+      for (const arm of st.arms) {
+        const pat = (() => {
+          switch (arm.pattern.kind) {
+            case "wild":
+              return "_";
+            case "enum_struct": {
+              const base = emitPath(arm.pattern.path.segments);
+              if (arm.pattern.fields.length === 0) return base;
+              const fields = arm.pattern.fields
+                .map((f) => `${f.name}: ${emitPattern(f.bind)}`)
+                .join(", ");
+              return `${base} { ${fields} }`;
+            }
+          }
+        })();
+        out.push(`${armIndent}${pat} => {`);
+        for (const s of arm.body) out.push(...emitStmtLines(s, bodyIndent));
+        out.push(`${armIndent}},`);
+      }
+      out.push(`${indent}}`);
+      return out;
+    }
   }
 }
 
@@ -182,6 +211,36 @@ function emitItem(item: RustItem, indent: string): string[] {
       out.push(`${indent}}`);
       return out;
     }
+    case "trait": {
+      const out: string[] = [];
+      const vis = item.vis === "pub" ? "pub " : "";
+      out.push(`${indent}${vis}trait ${item.name} {`);
+      const innerIndent = `${indent}  `;
+      let first = true;
+      for (const inner of item.items) {
+        if (!first) out.push("");
+        out.push(...emitItem(inner, innerIndent));
+        first = false;
+      }
+      out.push(`${indent}}`);
+      return out;
+    }
+    case "enum": {
+      const out: string[] = [];
+      for (const a of item.attrs) out.push(`${indent}${a}`);
+      const vis = item.vis === "pub" ? "pub " : "";
+      out.push(`${indent}${vis}enum ${item.name} {`);
+      for (const v of item.variants) {
+        if (v.fields.length === 0) {
+          out.push(`${indent}  ${v.name},`);
+          continue;
+        }
+        const fields = v.fields.map((f) => `${f.name}: ${emitType(f.type)}`).join(", ");
+        out.push(`${indent}  ${v.name} { ${fields} },`);
+      }
+      out.push(`${indent}}`);
+      return out;
+    }
     case "struct": {
       const out: string[] = [];
       for (const a of item.attrs) out.push(`${indent}${a}`);
@@ -200,7 +259,10 @@ function emitItem(item: RustItem, indent: string): string[] {
     }
     case "impl": {
       const out: string[] = [];
-      out.push(`${indent}impl ${emitPath(item.typePath.segments)} {`);
+      const head = item.traitPath
+        ? `impl ${emitPath(item.traitPath.segments)} for ${emitPath(item.typePath.segments)}`
+        : `impl ${emitPath(item.typePath.segments)}`;
+      out.push(`${indent}${head} {`);
       const innerIndent = `${indent}  `;
       let first = true;
       for (const inner of item.items) {

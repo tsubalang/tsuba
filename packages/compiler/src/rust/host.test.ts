@@ -392,4 +392,72 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("use fake_crate::Foo;");
     expect(out.crates).to.deep.equal([{ name: "fake_crate", version: "0.1.0" }]);
   });
+
+  it("lowers discriminated union type aliases to Rust enums and switches to match", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-union-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type f64 = number;",
+        "",
+        "export type Shape =",
+        '  | { kind: "circle"; r: f64 }',
+        '  | { kind: "square"; side: f64 };',
+        "",
+        "function f(s: Shape): void {",
+        "  switch (s.kind) {",
+        '    case "circle":',
+        "      void s.r;",
+        "      break;",
+        '    case "square":',
+        "      void s.side;",
+        "      break;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        '  const s: Shape = { kind: "circle", r: 1 as f64 };',
+        "  f(s);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("pub enum Shape {");
+    expect(out.mainRs).to.contain("Circle { r: f64 }");
+    expect(out.mainRs).to.contain("Square { side: f64 }");
+    expect(out.mainRs).to.contain('let s: Shape = Shape::Circle { r: (1) as f64 };');
+    expect(out.mainRs).to.contain("match s {");
+    expect(out.mainRs).to.contain("Shape::Circle");
+  });
+
+  it("lowers empty interfaces to marker traits and supports `implements` on classes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-trait-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "interface Foo {}",
+        "",
+        "class Bar implements Foo {}",
+        "",
+        "export function main(): void {",
+        "  const b = new Bar();",
+        "  void b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait Foo {");
+    expect(out.mainRs).to.contain("struct Bar;");
+    expect(out.mainRs).to.contain("impl Foo for Bar {");
+    expect(out.mainRs).to.contain("pub fn new() -> Bar");
+    expect(out.mainRs).to.contain("return Bar;");
+  });
 });

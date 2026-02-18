@@ -70,6 +70,11 @@ export type RustStmt =
   | (NodeBase & { readonly kind: "while"; readonly cond: RustExpr; readonly body: readonly RustStmt[] })
   | (NodeBase & { readonly kind: "break" })
   | (NodeBase & { readonly kind: "continue" })
+  | (NodeBase & {
+      readonly kind: "match";
+      readonly expr: RustExpr;
+      readonly arms: readonly RustMatchArm[];
+    })
   | (NodeBase & { readonly kind: "return"; readonly expr?: RustExpr })
   | (NodeBase & {
       readonly kind: "if";
@@ -86,6 +91,24 @@ export type RustStructField = NodeBase & {
   readonly type: RustType;
 };
 
+export type RustEnumVariant = NodeBase & {
+  readonly name: string;
+  readonly fields: readonly { readonly name: string; readonly type: RustType }[];
+};
+
+export type RustMatchPattern =
+  | (NodeBase & { readonly kind: "wild" })
+  | (NodeBase & {
+      readonly kind: "enum_struct";
+      readonly path: RustPath;
+      readonly fields: readonly { readonly name: string; readonly bind: RustPattern }[];
+    });
+
+export type RustMatchArm = NodeBase & {
+  readonly pattern: RustMatchPattern;
+  readonly body: readonly RustStmt[];
+};
+
 export type RustItem =
   | (NodeBase & {
       readonly kind: "use";
@@ -98,6 +121,19 @@ export type RustItem =
       readonly items: readonly RustItem[];
     })
   | (NodeBase & {
+      readonly kind: "trait";
+      readonly vis: RustVisibility;
+      readonly name: string;
+      readonly items: readonly RustItem[];
+    })
+  | (NodeBase & {
+      readonly kind: "enum";
+      readonly vis: RustVisibility;
+      readonly name: string;
+      readonly attrs: readonly string[];
+      readonly variants: readonly RustEnumVariant[];
+    })
+  | (NodeBase & {
       readonly kind: "struct";
       readonly vis: RustVisibility;
       readonly name: string;
@@ -106,6 +142,7 @@ export type RustItem =
     })
   | (NodeBase & {
       readonly kind: "impl";
+      readonly traitPath?: RustPath;
       readonly typePath: RustPath;
       readonly items: readonly RustItem[];
     })

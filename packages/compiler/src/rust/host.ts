@@ -2,8 +2,8 @@ import ts from "typescript";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
-import type { RustExpr, RustItem, RustParam, RustProgram, RustStmt, RustType, Span } from "./ir.js";
-import { identExpr, pathType, unitExpr, unitType } from "./ir.js";
+import type { RustExpr, RustItem, RustMatchArm, RustParam, RustProgram, RustStmt, RustType, Span } from "./ir.js";
+import { identExpr, pathExpr, pathType, unitExpr, unitType } from "./ir.js";
 import { writeRustProgram } from "./write.js";
 
 export type CompileIssue = {
@@ -39,9 +39,24 @@ export type CompileHostOutput = {
   readonly crates: readonly CrateDep[];
 };
 
+type UnionVariantDef = {
+  readonly tag: string;
+  readonly name: string;
+  readonly fields: readonly { readonly name: string; readonly type: RustType }[];
+};
+
+type UnionDef = {
+  readonly key: string;
+  readonly name: string;
+  readonly discriminant: string;
+  readonly variants: readonly UnionVariantDef[];
+};
+
 type EmitCtx = {
   readonly checker: ts.TypeChecker;
   readonly thisName?: string;
+  readonly unions: ReadonlyMap<string, UnionDef>;
+  readonly fieldBindings?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 };
 
 type BindingsManifest = {
@@ -74,8 +89,33 @@ function rustModuleNameFromFileName(fileName: string): string {
   return rustIdentFromStem(stem);
 }
 
+function rustTypeNameFromTag(tag: string): string {
+  const raw = tag
+    .replaceAll(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/g)
+    .filter((s) => s.length > 0)
+    .map((s) => s[0]!.toUpperCase() + s.slice(1))
+    .join("");
+  const base = raw.length === 0 ? "Variant" : raw;
+  return /^[0-9]/.test(base) ? `V${base}` : base;
+}
+
 function splitRustPath(path: string): readonly string[] {
   return path.split("::").filter((s) => s.length > 0);
+}
+
+function unionKeyFromDecl(decl: ts.TypeAliasDeclaration): string {
+  return `${normalizePath(decl.getSourceFile().fileName)}::${decl.name.text}`;
+}
+
+function unionKeyFromType(type: ts.Type): string | undefined {
+  const alias = (type as unknown as { readonly aliasSymbol?: ts.Symbol }).aliasSymbol;
+  if (!alias) return undefined;
+  for (const d of alias.declarations ?? []) {
+    if (ts.isTypeAliasDeclaration(d)) return unionKeyFromDecl(d);
+  }
+  return undefined;
 }
 
 const markerModuleSpecifiers = new Set<string>([
@@ -435,7 +475,18 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   }
 
   if (ts.isPropertyAccessExpression(expr)) {
-    return { kind: "field", expr: lowerExpr(ctx, expr.expression), name: expr.name.text };
+    const base = expr.expression;
+    if (ts.isIdentifier(base)) {
+      const m = ctx.fieldBindings?.get(base.text);
+      if (m) {
+        const bound = m.get(expr.name.text);
+        if (!bound) {
+          failAt(expr.name, "TSB1116", `Property '${expr.name.text}' is not available on this union variant in v0.`);
+        }
+        return identExpr(bound);
+      }
+    }
+    return { kind: "field", expr: lowerExpr(ctx, base), name: expr.name.text };
   }
 
   if (ts.isElementAccessExpression(expr)) {
@@ -453,6 +504,78 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       args.push(lowerExpr(ctx, el));
     }
     return { kind: "macro_call", name: "vec", args };
+  }
+
+  if (ts.isObjectLiteralExpression(expr)) {
+    const ctxt = ctx.checker.getContextualType(expr);
+    if (!ctxt) {
+      failAt(expr, "TSB1115", "Object literals require a contextual type in v0.");
+    }
+    const key = unionKeyFromType(ctxt);
+    const def = key ? ctx.unions.get(key) : undefined;
+    if (!def) {
+      failAt(
+        expr,
+        "TSB1117",
+        "Only object literals constructing discriminated unions are supported in v0."
+      );
+    }
+
+    const props = new Map<string, ts.Expression>();
+    for (const p of expr.properties) {
+      if (ts.isSpreadAssignment(p)) {
+        failAt(p, "TSB1118", "Object spread is not supported in v0.");
+      }
+      if (ts.isShorthandPropertyAssignment(p)) {
+        props.set(p.name.text, p.name);
+        continue;
+      }
+      if (!ts.isPropertyAssignment(p)) {
+        failAt(p, "TSB1119", "Unsupported object literal property form in v0.");
+      }
+      if (!ts.isIdentifier(p.name)) {
+        failAt(p.name, "TSB1120", "Only identifier-named object literal properties are supported in v0.");
+      }
+      props.set(p.name.text, p.initializer);
+    }
+
+    const discExpr = props.get(def.discriminant);
+    if (!discExpr || !ts.isStringLiteral(discExpr)) {
+      failAt(
+        expr,
+        "TSB1121",
+        `Union '${def.name}' object literal must include ${def.discriminant}: \"...\".`
+      );
+    }
+    const tag = discExpr.text;
+    const variant = def.variants.find((v) => v.tag === tag);
+    if (!variant) {
+      failAt(
+        discExpr,
+        "TSB1122",
+        `Unknown union tag '${tag}' for ${def.name}.`
+      );
+    }
+
+    const allowed = new Set<string>([def.discriminant, ...variant.fields.map((f) => f.name)]);
+    for (const k0 of props.keys()) {
+      if (!allowed.has(k0)) {
+        failAt(expr, "TSB1123", `Unknown property '${k0}' for union variant '${tag}' in ${def.name}.`);
+      }
+    }
+
+    const fields = variant.fields.map((f) => {
+      const v = props.get(f.name);
+      if (!v) {
+        failAt(expr, "TSB1124", `Missing required field '${f.name}' for union variant '${tag}' in ${def.name}.`);
+      }
+      return { name: f.name, expr: lowerExpr(ctx, v) };
+    });
+
+    if (fields.length === 0) {
+      return pathExpr([def.name, variant.name]);
+    }
+    return { kind: "struct_lit", typePath: { segments: [def.name, variant.name] }, fields };
   }
 
   if (ts.isNewExpression(expr)) {
@@ -691,6 +814,100 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
     return [{ kind: "while", cond, body }];
   }
 
+  if (ts.isSwitchStatement(st)) {
+    const e = st.expression;
+    if (!ts.isPropertyAccessExpression(e) || !ts.isIdentifier(e.expression)) {
+      failAt(st.expression, "TSB2200", "switch(...) is only supported as switch(x.<disc>) in v0.");
+    }
+    const targetIdent = e.expression;
+    const discName = e.name.text;
+
+    const targetType = ctx.checker.getTypeAtLocation(targetIdent);
+    const key = unionKeyFromType(targetType);
+    const def = key ? ctx.unions.get(key) : undefined;
+    if (!def) {
+      failAt(targetIdent, "TSB2201", "switch(...) is only supported for discriminated unions in v0.");
+    }
+    if (discName !== def.discriminant) {
+      failAt(
+        e.name,
+        "TSB2202",
+        `switch(...) discriminant '${discName}' does not match union '${def.name}' discriminant '${def.discriminant}'.`
+      );
+    }
+
+    const arms: RustMatchArm[] = [];
+    const coveredTags = new Set<string>();
+
+    for (const clause of st.caseBlock.clauses) {
+      if (ts.isDefaultClause(clause)) {
+        failAt(clause, "TSB2203", "default clauses are not supported for discriminated unions in v0 (must be exhaustive).");
+      }
+      const caseExpr = clause.expression;
+      if (!ts.isStringLiteral(caseExpr)) {
+        failAt(caseExpr, "TSB2204", "Union switch cases must use string literal tags in v0.");
+      }
+      const tag = caseExpr.text;
+      if (coveredTags.has(tag)) {
+        failAt(caseExpr, "TSB2205", `Duplicate union case '${tag}' in switch.`);
+      }
+      coveredTags.add(tag);
+
+      const variant = def.variants.find((v) => v.tag === tag);
+      if (!variant) {
+        failAt(caseExpr, "TSB2206", `Unknown union tag '${tag}' for ${def.name}.`);
+      }
+
+      if (clause.statements.length === 0) {
+        failAt(clause, "TSB2207", "Empty switch cases are not supported in v0 (no fallthrough).");
+      }
+
+      const last = clause.statements.at(-1);
+      if (!last) failAt(clause, "TSB2207", "Empty switch cases are not supported in v0 (no fallthrough).");
+      const bodyStmtsNodes =
+        ts.isBreakStatement(last) ? clause.statements.slice(0, -1) : clause.statements;
+      if (!ts.isBreakStatement(last) && !ts.isReturnStatement(last)) {
+        failAt(
+          last,
+          "TSB2208",
+          "Switch cases must end with `break;` or `return ...;` in v0 (no fallthrough)."
+        );
+      }
+      for (const s0 of bodyStmtsNodes) {
+        if (ts.isBreakStatement(s0)) {
+          failAt(s0, "TSB2209", "break; is only allowed as the final statement in a switch case in v0.");
+        }
+      }
+
+      const fieldMap = new Map<string, string>();
+      for (const f of variant.fields) fieldMap.set(f.name, f.name);
+      const inherited = ctx.fieldBindings ? new Map(ctx.fieldBindings) : new Map<string, ReadonlyMap<string, string>>();
+      inherited.set(targetIdent.text, fieldMap);
+      const armCtx: EmitCtx = { checker: ctx.checker, unions: ctx.unions, thisName: ctx.thisName, fieldBindings: inherited };
+
+      const body: RustStmt[] = [];
+      for (const s0 of bodyStmtsNodes) body.push(...lowerStmt(armCtx, s0));
+
+      arms.push({
+        pattern: {
+          kind: "enum_struct",
+          path: { segments: [def.name, variant.name] },
+          fields: variant.fields.map((f) => ({ name: f.name, bind: { kind: "ident", name: f.name } })),
+        },
+        body,
+      });
+    }
+
+    if (coveredTags.size !== def.variants.length) {
+      const missing = def.variants
+        .map((v) => v.tag)
+        .filter((t) => !coveredTags.has(t));
+      failAt(st, "TSB2210", `Non-exhaustive switch for union '${def.name}'. Missing cases: ${missing.join(", ")}`);
+    }
+
+    return [{ kind: "match", expr: identExpr(targetIdent.text), arms }];
+  }
+
   if (ts.isBreakStatement(st)) {
     return [{ kind: "break" }];
   }
@@ -788,8 +1005,28 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
   if (cls.typeParameters && cls.typeParameters.length > 0) {
     failAt(cls, "TSB4001", "Generic classes are not supported in v0.");
   }
+  const implementsTraits: string[] = [];
   if (cls.heritageClauses && cls.heritageClauses.length > 0) {
-    failAt(cls, "TSB4002", "Class extends/implements is not supported in v0 (use composition/traits).");
+    for (const h of cls.heritageClauses) {
+      if (h.token === ts.SyntaxKind.ExtendsKeyword) {
+        failAt(h, "TSB4002", "Class extends is not supported in v0.");
+      }
+      if (h.token !== ts.SyntaxKind.ImplementsKeyword) {
+        failAt(h, "TSB4002", "Unsupported class heritage in v0.");
+      }
+      for (const t0 of h.types) {
+        if (!ts.isExpressionWithTypeArguments(t0)) {
+          failAt(t0, "TSB4003", "Unsupported implements clause in v0.");
+        }
+        if ((t0.typeArguments?.length ?? 0) > 0) {
+          failAt(t0, "TSB4004", "Generic implements is not supported in v0.");
+        }
+        if (!ts.isIdentifier(t0.expression)) {
+          failAt(t0.expression, "TSB4005", "implements only supports identifier traits in v0.");
+        }
+        implementsTraits.push(t0.expression.text);
+      }
+    }
   }
 
   const hasExport = cls.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
@@ -911,7 +1148,15 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
     name: "new",
     params: ctorParams,
     ret: pathType([className]),
-    body: [{ kind: "return", expr: { kind: "struct_lit", typePath: { segments: [className] }, fields: initFields } }],
+    body: [
+      {
+        kind: "return",
+        expr:
+          initFields.length === 0
+            ? pathExpr([className])
+            : { kind: "struct_lit", typePath: { segments: [className] }, fields: initFields },
+      },
+    ],
   };
 
   const implItems: RustItem[] = [newItem];
@@ -956,7 +1201,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
 
     const ret = typeNodeToRust(m.type);
     const body: RustStmt[] = [];
-    const methodCtx: EmitCtx = { checker: ctx.checker, thisName: "self" };
+    const methodCtx: EmitCtx = { checker: ctx.checker, unions: ctx.unions, thisName: "self" };
     for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
 
     implItems.push({
@@ -972,7 +1217,153 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
 
   const implItem: RustItem = { kind: "impl", typePath: { segments: [className] }, items: implItems };
 
-  return [structItem, implItem];
+  const traitImpls: RustItem[] = implementsTraits.map((t) => ({
+    kind: "impl",
+    traitPath: { segments: [t] },
+    typePath: { segments: [className] },
+    items: [],
+  }));
+
+  return [structItem, ...traitImpls, implItem];
+}
+
+function tryParseDiscriminatedUnionTypeAlias(decl: ts.TypeAliasDeclaration): UnionDef | undefined {
+  const name = decl.name.text;
+  const ty = decl.type;
+  if (!ts.isUnionTypeNode(ty)) return undefined;
+
+  if (ty.types.length < 2) {
+    failAt(decl, "TSB5000", `Discriminated unions must have at least 2 variants: ${name}.`);
+  }
+
+  const variants: { readonly tag: string; readonly node: ts.TypeLiteralNode }[] = [];
+  const propertyNamesByVariant: string[][] = [];
+
+  for (const t of ty.types) {
+    if (!ts.isTypeLiteralNode(t)) {
+      failAt(t, "TSB5001", `Discriminated union variants must be object types in v0: ${name}.`);
+    }
+    const propNames: string[] = [];
+    for (const m of t.members) {
+      if (!ts.isPropertySignature(m)) {
+        failAt(m, "TSB5002", `Only property signatures are supported in union variants in v0: ${name}.`);
+      }
+      if (!ts.isIdentifier(m.name)) {
+        failAt(m.name, "TSB5003", `Only identifier-named properties are supported in union variants in v0: ${name}.`);
+      }
+      propNames.push(m.name.text);
+    }
+    propertyNamesByVariant.push(propNames);
+    variants.push({ tag: "__pending__", node: t });
+  }
+
+  const common = propertyNamesByVariant.reduce<Set<string>>((acc, names) => {
+    const set = new Set(names);
+    if (!acc) return set;
+    for (const k of [...acc]) if (!set.has(k)) acc.delete(k);
+    return acc;
+  }, new Set(propertyNamesByVariant[0] ?? []));
+
+  const candidates: string[] = [];
+  for (const k of common) {
+    let ok = true;
+    for (const v of variants) {
+      const prop = v.node.members.find((m) => ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === k) as
+        | ts.PropertySignature
+        | undefined;
+      if (!prop || !prop.type || !ts.isLiteralTypeNode(prop.type) || !ts.isStringLiteral(prop.type.literal)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) candidates.push(k);
+  }
+
+  if (candidates.length !== 1) {
+    failAt(
+      decl,
+      "TSB5004",
+      `Could not determine discriminant property for union '${name}' (candidates: ${candidates.length === 0 ? "none" : candidates.join(", ")}).`
+    );
+  }
+  const discriminant = candidates[0]!;
+
+  const unionVariants: UnionVariantDef[] = [];
+  const usedVariantNames = new Set<string>();
+  const usedTags = new Set<string>();
+
+  for (const v of variants) {
+    const tagProp = v.node.members.find(
+      (m) => ts.isPropertySignature(m) && ts.isIdentifier(m.name) && m.name.text === discriminant
+    ) as ts.PropertySignature | undefined;
+    if (!tagProp || !tagProp.type || !ts.isLiteralTypeNode(tagProp.type) || !ts.isStringLiteral(tagProp.type.literal)) {
+      failAt(v.node, "TSB5005", `Union '${name}' is missing a '${discriminant}' string-literal discriminant.`);
+    }
+    const tag = tagProp.type.literal.text;
+    if (usedTags.has(tag)) failAt(tagProp.type.literal, "TSB5006", `Duplicate union tag '${tag}' in ${name}.`);
+    usedTags.add(tag);
+
+    const variantName = rustTypeNameFromTag(tag);
+    if (usedVariantNames.has(variantName)) {
+      failAt(decl, "TSB5007", `Two union tags map to the same Rust variant name '${variantName}' in ${name}.`);
+    }
+    usedVariantNames.add(variantName);
+
+    const fields: { name: string; type: RustType }[] = [];
+    for (const m of v.node.members) {
+      if (!ts.isPropertySignature(m) || !ts.isIdentifier(m.name)) continue;
+      const propName = m.name.text;
+      if (propName === discriminant) continue;
+      if (!m.type) {
+        failAt(m, "TSB5008", `Union variant field '${propName}' in ${name} must have a type annotation in v0.`);
+      }
+      if (m.questionToken) {
+        failAt(m, "TSB5009", `Optional union fields are not supported in v0 (use Option<T>): ${name}.${propName}`);
+      }
+      fields.push({ name: propName, type: typeNodeToRust(m.type) });
+    }
+
+    unionVariants.push({ tag, name: variantName, fields });
+  }
+
+  return { key: unionKeyFromDecl(decl), name, discriminant, variants: unionVariants };
+}
+
+function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration): readonly RustItem[] {
+  const def = ctx.unions.get(unionKeyFromDecl(decl));
+  if (!def) return [];
+  const isExport = hasModifier(decl, ts.SyntaxKind.ExportKeyword);
+  const vis: "pub" | "private" = isExport ? "pub" : "private";
+
+  return [
+    {
+      kind: "enum",
+      vis,
+      name: def.name,
+      attrs: [],
+      variants: def.variants.map((v) => ({
+        name: v.name,
+        fields: v.fields,
+      })),
+    },
+  ];
+}
+
+function lowerInterface(decl: ts.InterfaceDeclaration): readonly RustItem[] {
+  if (decl.typeParameters && decl.typeParameters.length > 0) {
+    failAt(decl, "TSB5100", "Generic interfaces are not supported in v0.");
+  }
+  if (decl.heritageClauses && decl.heritageClauses.length > 0) {
+    failAt(decl, "TSB5101", "Interface extends is not supported in v0.");
+  }
+  if (decl.members.length > 0) {
+    failAt(decl, "TSB5102", "Interface members are not supported in v0 (marker traits only).");
+  }
+
+  const isExport = hasModifier(decl, ts.SyntaxKind.ExportKeyword);
+  const vis: "pub" | "private" = isExport ? "pub" : "private";
+
+  return [{ kind: "trait", vis, name: decl.name.text, items: [] }];
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
@@ -1026,7 +1417,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   const rustReturnType = returnKind === "result" ? typeNodeToRust(returnTypeNode) : undefined;
 
-  const ctx: EmitCtx = { checker };
+  const unionsByKey = new Map<string, UnionDef>();
+  const ctx: EmitCtx = { checker, unions: unionsByKey };
   const kernels = collectKernelDecls(ctx, sf);
   const usedCratesByName = new Map<string, CrateDep>();
 
@@ -1136,6 +1528,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     readonly uses: RustItem[];
     readonly classes: { readonly pos: number; readonly decl: ts.ClassDeclaration }[];
     readonly functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[];
+    readonly typeAliases: { readonly pos: number; readonly decl: ts.TypeAliasDeclaration }[];
+    readonly interfaces: { readonly pos: number; readonly decl: ts.InterfaceDeclaration }[];
   };
 
   const loweredByFile = new Map<string, FileLowered>();
@@ -1145,6 +1539,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     const uses: RustItem[] = [];
     const classes: { readonly pos: number; readonly decl: ts.ClassDeclaration }[] = [];
     const functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[] = [];
+    const typeAliases: { readonly pos: number; readonly decl: ts.TypeAliasDeclaration }[] = [];
+    const interfaces: { readonly pos: number; readonly decl: ts.InterfaceDeclaration }[] = [];
 
     for (const st of f.statements) {
       if (ts.isImportDeclaration(st)) {
@@ -1161,7 +1557,6 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         if (!clause) {
           failAt(st, "TSB3206", "Side-effect-only imports are not supported in v0.");
         }
-        if (clause.isTypeOnly) continue;
         if (clause.name) {
           failAt(clause.name, "TSB3207", "Default imports are not supported in v0.");
         }
@@ -1234,10 +1629,18 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
       if (
         ts.isExportDeclaration(st) ||
-        ts.isTypeAliasDeclaration(st) ||
-        ts.isInterfaceDeclaration(st) ||
         ts.isEmptyStatement(st)
       ) {
+        continue;
+      }
+
+      if (ts.isTypeAliasDeclaration(st)) {
+        typeAliases.push({ pos: st.pos, decl: st });
+        continue;
+      }
+
+      if (ts.isInterfaceDeclaration(st)) {
+        interfaces.push({ pos: st.pos, decl: st });
         continue;
       }
 
@@ -1284,7 +1687,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       failAt(st, "TSB3102", `Unsupported top-level statement: ${st.getText()}`);
     }
 
-    loweredByFile.set(fileName, { fileName, sourceFile: f, uses, classes, functions });
+    loweredByFile.set(fileName, { fileName, sourceFile: f, uses, classes, functions, typeAliases, interfaces });
+  }
+
+  // Collect discriminated unions (type aliases) up-front so they can be used during expression/statement lowering.
+  for (const lowered of loweredByFile.values()) {
+    for (const ta of lowered.typeAliases) {
+      const def = tryParseDiscriminatedUnionTypeAlias(ta.decl);
+      if (!def) continue;
+      unionsByKey.set(def.key, def);
+    }
   }
 
   // Root (entry file) uses
@@ -1298,6 +1710,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     const lowered = loweredByFile.get(fileName);
     if (!lowered) continue;
     const itemGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
+    for (const t0 of lowered.typeAliases) itemGroups.push({ pos: t0.pos, items: lowerTypeAlias(ctx, t0.decl) });
+    for (const i0 of lowered.interfaces) itemGroups.push({ pos: i0.pos, items: lowerInterface(i0.decl) });
     for (const c of lowered.classes) itemGroups.push({ pos: c.pos, items: lowerClass(ctx, c.decl) });
     for (const f0 of lowered.functions) itemGroups.push({ pos: f0.pos, items: [lowerFunction(ctx, f0.decl)] });
     itemGroups.sort((a, b) => a.pos - b.pos);
@@ -1309,6 +1723,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   // Root declarations (entry file only, excluding main)
   const rootGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
+  for (const t0 of rootLowered.typeAliases) rootGroups.push({ pos: t0.pos, items: lowerTypeAlias(ctx, t0.decl) });
+  for (const i0 of rootLowered.interfaces) rootGroups.push({ pos: i0.pos, items: lowerInterface(i0.decl) });
   for (const c of rootLowered.classes) rootGroups.push({ pos: c.pos, items: lowerClass(ctx, c.decl) });
   for (const f0 of rootLowered.functions) rootGroups.push({ pos: f0.pos, items: [lowerFunction(ctx, f0.decl)] });
   rootGroups.sort((a, b) => a.pos - b.pos);
