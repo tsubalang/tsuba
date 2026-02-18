@@ -16,6 +16,7 @@ describe("@tsuba/compiler rust writer", () => {
           name: "main",
           params: [],
           ret: unitType(),
+          attrs: [],
           body: [
             {
               kind: "let",
@@ -73,6 +74,7 @@ describe("@tsuba/compiler rust writer", () => {
               name: "add",
               params: [{ name: "a", type: pathType(["i32"]) }],
               ret: pathType(["i32"]),
+              attrs: [],
               body: [{ kind: "return", expr: identExpr("a") }],
             },
           ],
@@ -103,6 +105,7 @@ describe("@tsuba/compiler rust writer", () => {
             { name: "z", type: { kind: "ref", mut: false, lifetime: "a", inner: pathType(["i32"]) } },
           ],
           ret: unitType(),
+          attrs: [],
           body: [],
         },
       ],
@@ -123,6 +126,7 @@ describe("@tsuba/compiler rust writer", () => {
           name: "main",
           params: [],
           ret: unitType(),
+          attrs: [],
           body: [
             {
               kind: "let",

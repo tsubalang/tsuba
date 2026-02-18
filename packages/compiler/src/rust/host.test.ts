@@ -466,4 +466,39 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("pub fn new() -> Bar");
     expect(out.mainRs).to.contain("return Bar;");
   });
+
+  it("applies annotate(attr(...)) markers as Rust attributes on items", () => {
+    const dir = makeRepoTempDir("compiler-attrs-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { annotate, attr, tokens } from "@tsuba/core/lang.js";',
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export class User {",
+        "  id: i32 = 0 as i32;",
+        "",
+        "  constructor() {",
+        "    this.id = 1 as i32;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void User;",
+        "}",
+        "",
+        'annotate(User, attr("repr", tokens`C`));',
+        'annotate(main, attr("inline", tokens`always`));',
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("#[repr(C)]");
+    expect(out.mainRs).to.contain("#[inline(always)]");
+    expect(out.mainRs).to.contain("pub struct User {");
+    expect(out.mainRs).to.contain("fn main()");
+  });
 });

@@ -275,6 +275,7 @@ function emitItem(item: RustItem, indent: string): string[] {
     }
     case "fn": {
       const out: string[] = [];
+      for (const a of item.attrs) out.push(`${indent}${a}`);
       const retClause = item.ret.kind === "unit" ? "" : ` -> ${emitType(item.ret)}`;
       const vis = item.vis === "pub" ? "pub " : "";
       const receiver = (() => {

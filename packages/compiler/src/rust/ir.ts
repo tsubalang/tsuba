@@ -153,6 +153,7 @@ export type RustItem =
       readonly name: string;
       readonly params: readonly RustParam[];
       readonly ret: RustType;
+      readonly attrs: readonly string[];
       readonly body: readonly RustStmt[];
     });
 

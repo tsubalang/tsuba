@@ -959,7 +959,7 @@ function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
   return lowerStmt(ctx, st);
 }
 
-function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
+function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: readonly string[]): RustItem {
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
 
@@ -988,7 +988,7 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   const body: RustStmt[] = [];
   for (const st of fnDecl.body.statements) body.push(...lowerStmt(ctx, st));
 
-  return { kind: "fn", vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, body };
+  return { kind: "fn", vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, attrs, body };
 }
 
 function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { readonly mut: boolean; readonly lifetime?: string } | undefined {
@@ -1005,7 +1005,7 @@ function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { reado
   return undefined;
 }
 
-function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[] {
+function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly string[]): readonly RustItem[] {
   if (!cls.name) failAt(cls, "TSB4000", "Anonymous classes are not supported in v0.");
   if (cls.typeParameters && cls.typeParameters.length > 0) {
     failAt(cls, "TSB4001", "Generic classes are not supported in v0.");
@@ -1104,7 +1104,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
     kind: "struct",
     vis: classVis,
     name: className,
-    attrs: [],
+    attrs,
     fields: structFields,
   };
 
@@ -1153,6 +1153,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
     name: "new",
     params: ctorParams,
     ret: pathType([className]),
+    attrs: [],
     body: [
       {
         kind: "return",
@@ -1216,6 +1217,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[]
       name: m.name.text,
       params,
       ret,
+      attrs: [],
       body,
     });
   }
@@ -1334,7 +1336,7 @@ function tryParseDiscriminatedUnionTypeAlias(decl: ts.TypeAliasDeclaration): Uni
   return { key: unionKeyFromDecl(decl), name, discriminant, variants: unionVariants };
 }
 
-function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration): readonly RustItem[] {
+function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: readonly string[]): readonly RustItem[] {
   const def = ctx.unions.get(unionKeyFromDecl(decl));
   if (!def) return [];
   const isExport = hasModifier(decl, ts.SyntaxKind.ExportKeyword);
@@ -1345,7 +1347,7 @@ function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration): readonly R
       kind: "enum",
       vis,
       name: def.name,
-      attrs: [],
+      attrs,
       variants: def.variants.map((v) => ({
         name: v.name,
         fields: v.fields,
@@ -1527,6 +1529,58 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     });
   }
 
+  function parseTokensArg(expr: ts.Expression): string {
+    if (!ts.isTaggedTemplateExpression(expr) || !ts.isIdentifier(expr.tag)) {
+      failAt(expr, "TSB3300", "attr(...) arguments must be tokens`...` in v0.");
+    }
+    if (expr.tag.text !== "tokens" || !isFromTsubaCoreLang(ctx, expr.tag)) {
+      failAt(expr.tag, "TSB3301", "attr(...) arguments must use @tsuba/core tokens`...` in v0.");
+    }
+    const tmpl = expr.template;
+    if (!ts.isNoSubstitutionTemplateLiteral(tmpl)) {
+      failAt(tmpl, "TSB3302", "tokens`...` must not contain substitutions in v0.");
+    }
+    if (tmpl.text.includes("\n") || tmpl.text.includes("\r")) {
+      failAt(tmpl, "TSB3303", "tokens`...` must be single-line in v0.");
+    }
+    return tmpl.text;
+  }
+
+  function parseAttrMarker(expr: ts.Expression): string {
+    if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) {
+      failAt(expr, "TSB3304", "annotate(...) only supports attr(...) markers in v0.");
+    }
+    const callee = expr.expression;
+    if (callee.text !== "attr" || !isFromTsubaCoreLang(ctx, callee)) {
+      failAt(callee, "TSB3305", "annotate(...) only supports @tsuba/core attr(...) markers in v0.");
+    }
+    const [nameArg, ...rest] = expr.arguments;
+    if (!nameArg || !ts.isStringLiteral(nameArg)) {
+      failAt(expr, "TSB3306", "attr(name, ...) requires a string literal name in v0.");
+    }
+    const args = rest.map(parseTokensArg);
+    if (args.length === 0) return `#[${nameArg.text}]`;
+    return `#[${nameArg.text}(${args.join(", ")})]`;
+  }
+
+  function tryParseAnnotateStatement(st: ts.Statement): { readonly target: string; readonly attrs: readonly string[] } | undefined {
+    if (!ts.isExpressionStatement(st)) return undefined;
+    const e = st.expression;
+    if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression)) return undefined;
+    const callee = e.expression;
+    if (callee.text !== "annotate" || !isFromTsubaCoreLang(ctx, callee)) return undefined;
+
+    if (e.arguments.length < 2) {
+      failAt(e, "TSB3307", "annotate(target, ...) requires at least one attribute in v0.");
+    }
+    const [target, ...items] = e.arguments;
+    if (!target || !ts.isIdentifier(target)) {
+      failAt(e, "TSB3308", "annotate(...) target must be an identifier in v0.");
+    }
+    const attrs = items.map(parseAttrMarker);
+    return { target: target.text, attrs };
+  }
+
   type FileLowered = {
     readonly fileName: string;
     readonly sourceFile: ts.SourceFile;
@@ -1535,6 +1589,12 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     readonly functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[];
     readonly typeAliases: { readonly pos: number; readonly decl: ts.TypeAliasDeclaration }[];
     readonly interfaces: { readonly pos: number; readonly decl: ts.InterfaceDeclaration }[];
+    readonly annotations: readonly {
+      readonly pos: number;
+      readonly node: ts.Statement;
+      readonly target: string;
+      readonly attrs: readonly string[];
+    }[];
   };
 
   const loweredByFile = new Map<string, FileLowered>();
@@ -1546,6 +1606,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     const functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[] = [];
     const typeAliases: { readonly pos: number; readonly decl: ts.TypeAliasDeclaration }[] = [];
     const interfaces: { readonly pos: number; readonly decl: ts.InterfaceDeclaration }[] = [];
+    const annotations: { pos: number; node: ts.Statement; target: string; attrs: string[] }[] = [];
 
     for (const st of f.statements) {
       if (ts.isImportDeclaration(st)) {
@@ -1649,6 +1710,12 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         continue;
       }
 
+      const ann = tryParseAnnotateStatement(st);
+      if (ann) {
+        annotations.push({ pos: st.pos, node: st, target: ann.target, attrs: [...ann.attrs] });
+        continue;
+      }
+
       if (ts.isVariableStatement(st)) {
         if (hasModifier(st, ts.SyntaxKind.DeclareKeyword)) continue;
 
@@ -1692,7 +1759,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       failAt(st, "TSB3102", `Unsupported top-level statement: ${st.getText()}`);
     }
 
-    loweredByFile.set(fileName, { fileName, sourceFile: f, uses, classes, functions, typeAliases, interfaces });
+    loweredByFile.set(fileName, {
+      fileName,
+      sourceFile: f,
+      uses,
+      classes,
+      functions,
+      typeAliases,
+      interfaces,
+      annotations,
+    });
   }
 
   // Collect discriminated unions (type aliases) up-front so they can be used during expression/statement lowering.
@@ -1702,6 +1778,43 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       if (!def) continue;
       unionsByKey.set(def.key, def);
     }
+  }
+
+  // Collect `annotate(...)` attributes per file/target.
+  const attrsByFile = new Map<string, ReadonlyMap<string, readonly string[]>>();
+  for (const [fileName, lowered] of loweredByFile.entries()) {
+    const declPosByName = new Map<string, number>();
+    for (const f0 of lowered.functions) {
+      const n = f0.decl.name?.text;
+      if (n) declPosByName.set(n, f0.pos);
+    }
+    for (const c0 of lowered.classes) {
+      const n = c0.decl.name?.text;
+      if (n) declPosByName.set(n, c0.pos);
+    }
+    for (const t0 of lowered.typeAliases) {
+      if (ctx.unions.has(unionKeyFromDecl(t0.decl))) {
+        declPosByName.set(t0.decl.name.text, t0.pos);
+      }
+    }
+    if (fileName === entryFileName) {
+      declPosByName.set("main", mainFn.pos);
+    }
+
+    const attrsByName = new Map<string, string[]>();
+    for (const a of lowered.annotations) {
+      const declPos = declPosByName.get(a.target);
+      if (declPos === undefined) {
+        failAt(a.node, "TSB3310", `annotate(...) target '${a.target}' was not found in this module.`);
+      }
+      if (a.pos <= declPos) {
+        failAt(a.node, "TSB3311", `annotate(${a.target}, ...) must appear after the declaration in v0.`);
+      }
+      const list = attrsByName.get(a.target) ?? [];
+      list.push(...a.attrs);
+      attrsByName.set(a.target, list);
+    }
+    attrsByFile.set(fileName, attrsByName);
   }
 
   // Root (entry file) uses
@@ -1714,11 +1827,27 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   for (const [fileName, modName] of moduleFiles) {
     const lowered = loweredByFile.get(fileName);
     if (!lowered) continue;
+    const fileAttrs = attrsByFile.get(fileName) ?? new Map<string, readonly string[]>();
     const itemGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
-    for (const t0 of lowered.typeAliases) itemGroups.push({ pos: t0.pos, items: lowerTypeAlias(ctx, t0.decl) });
+    for (const t0 of lowered.typeAliases) {
+      itemGroups.push({
+        pos: t0.pos,
+        items: lowerTypeAlias(ctx, t0.decl, fileAttrs.get(t0.decl.name.text) ?? []),
+      });
+    }
     for (const i0 of lowered.interfaces) itemGroups.push({ pos: i0.pos, items: lowerInterface(i0.decl) });
-    for (const c of lowered.classes) itemGroups.push({ pos: c.pos, items: lowerClass(ctx, c.decl) });
-    for (const f0 of lowered.functions) itemGroups.push({ pos: f0.pos, items: [lowerFunction(ctx, f0.decl)] });
+    for (const c of lowered.classes) {
+      itemGroups.push({
+        pos: c.pos,
+        items: lowerClass(ctx, c.decl, fileAttrs.get(c.decl.name?.text ?? "") ?? []),
+      });
+    }
+    for (const f0 of lowered.functions) {
+      itemGroups.push({
+        pos: f0.pos,
+        items: [lowerFunction(ctx, f0.decl, fileAttrs.get(f0.decl.name?.text ?? "") ?? [])],
+      });
+    }
     itemGroups.sort((a, b) => a.pos - b.pos);
     const declItems = itemGroups.flatMap((g) => g.items);
 
@@ -1728,10 +1857,26 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   // Root declarations (entry file only, excluding main)
   const rootGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
-  for (const t0 of rootLowered.typeAliases) rootGroups.push({ pos: t0.pos, items: lowerTypeAlias(ctx, t0.decl) });
+  const rootAttrs = attrsByFile.get(entryFileName) ?? new Map<string, readonly string[]>();
+  for (const t0 of rootLowered.typeAliases) {
+    rootGroups.push({
+      pos: t0.pos,
+      items: lowerTypeAlias(ctx, t0.decl, rootAttrs.get(t0.decl.name.text) ?? []),
+    });
+  }
   for (const i0 of rootLowered.interfaces) rootGroups.push({ pos: i0.pos, items: lowerInterface(i0.decl) });
-  for (const c of rootLowered.classes) rootGroups.push({ pos: c.pos, items: lowerClass(ctx, c.decl) });
-  for (const f0 of rootLowered.functions) rootGroups.push({ pos: f0.pos, items: [lowerFunction(ctx, f0.decl)] });
+  for (const c of rootLowered.classes) {
+    rootGroups.push({
+      pos: c.pos,
+      items: lowerClass(ctx, c.decl, rootAttrs.get(c.decl.name?.text ?? "") ?? []),
+    });
+  }
+  for (const f0 of rootLowered.functions) {
+    rootGroups.push({
+      pos: f0.pos,
+      items: [lowerFunction(ctx, f0.decl, rootAttrs.get(f0.decl.name?.text ?? "") ?? [])],
+    });
+  }
   rootGroups.sort((a, b) => a.pos - b.pos);
   items.push(...rootGroups.flatMap((g) => g.items));
 
@@ -1745,6 +1890,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     name: "main",
     params: [],
     ret: returnKind === "unit" ? unitType() : (rustReturnType ?? unitType()),
+    attrs: rootAttrs.get("main") ?? [],
     body: mainBody,
   };
   items.push(mainItem);
