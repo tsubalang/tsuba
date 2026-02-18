@@ -6,7 +6,13 @@ import type {
   RustProgram,
   RustStmt,
   RustType,
+  Span,
 } from "./ir.js";
+
+function emitSpanLine(indent: string, span: Span | undefined): string[] {
+  if (!span) return [];
+  return [`${indent}// tsuba-span: ${span.fileName}:${span.start}:${span.end}`];
+}
 
 function emitPath(segments: readonly string[]): string {
   return segments.join("::");
@@ -117,38 +123,42 @@ function emitStmtInline(st: RustStmt): string {
 }
 
 function emitStmtLines(st: RustStmt, indent: string): string[] {
+  const spanLine = emitSpanLine(indent, st.span);
   switch (st.kind) {
     case "let": {
       const mut = st.mut ? "mut " : "";
       const ty = st.type ? `: ${emitType(st.type)}` : "";
-      return [`${indent}let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`];
+      return [...spanLine, `${indent}let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`];
     }
     case "block": {
       const out: string[] = [];
+      out.push(...spanLine);
       out.push(`${indent}{`);
       for (const s of st.body) out.push(...emitStmtLines(s, `${indent}  `));
       out.push(`${indent}}`);
       return out;
     }
     case "assign":
-      return [`${indent}${emitExpr(st.target)} = ${emitExpr(st.expr)};`];
+      return [...spanLine, `${indent}${emitExpr(st.target)} = ${emitExpr(st.expr)};`];
     case "expr":
-      return [`${indent}${emitExpr(st.expr)};`];
+      return [...spanLine, `${indent}${emitExpr(st.expr)};`];
     case "while": {
       const out: string[] = [];
+      out.push(...spanLine);
       out.push(`${indent}while ${emitExpr(st.cond)} {`);
       for (const s of st.body) out.push(...emitStmtLines(s, `${indent}  `));
       out.push(`${indent}}`);
       return out;
     }
     case "break":
-      return [`${indent}break;`];
+      return [...spanLine, `${indent}break;`];
     case "continue":
-      return [`${indent}continue;`];
+      return [...spanLine, `${indent}continue;`];
     case "return":
-      return [st.expr ? `${indent}return ${emitExpr(st.expr)};` : `${indent}return;`];
+      return [...spanLine, st.expr ? `${indent}return ${emitExpr(st.expr)};` : `${indent}return;`];
     case "if": {
       const out: string[] = [];
+      out.push(...spanLine);
       out.push(`${indent}if ${emitExpr(st.cond)} {`);
       for (const s of st.then) out.push(...emitStmtLines(s, `${indent}  `));
       if (st.else) {
@@ -160,6 +170,7 @@ function emitStmtLines(st: RustStmt, indent: string): string[] {
     }
     case "match": {
       const out: string[] = [];
+      out.push(...spanLine);
       out.push(`${indent}match ${emitExpr(st.expr)} {`);
       const armIndent = `${indent}  `;
       const bodyIndent = `${indent}    `;
@@ -193,13 +204,15 @@ function emitParam(p: RustParam): string {
 }
 
 function emitItem(item: RustItem, indent: string): string[] {
+  const spanLine = emitSpanLine(indent, item.span);
   switch (item.kind) {
     case "use": {
       const alias = item.alias ? ` as ${item.alias}` : "";
-      return [`${indent}use ${emitPath(item.path.segments)}${alias};`];
+      return [...spanLine, `${indent}use ${emitPath(item.path.segments)}${alias};`];
     }
     case "mod": {
       const out: string[] = [];
+      out.push(...spanLine);
       out.push(`${indent}mod ${item.name} {`);
       const innerIndent = `${indent}  `;
       let first = true;
@@ -214,6 +227,7 @@ function emitItem(item: RustItem, indent: string): string[] {
     case "trait": {
       const out: string[] = [];
       const vis = item.vis === "pub" ? "pub " : "";
+      out.push(...spanLine);
       out.push(`${indent}${vis}trait ${item.name} {`);
       const innerIndent = `${indent}  `;
       let first = true;
@@ -227,6 +241,7 @@ function emitItem(item: RustItem, indent: string): string[] {
     }
     case "enum": {
       const out: string[] = [];
+      out.push(...spanLine);
       for (const a of item.attrs) out.push(`${indent}${a}`);
       const vis = item.vis === "pub" ? "pub " : "";
       out.push(`${indent}${vis}enum ${item.name} {`);
@@ -243,6 +258,7 @@ function emitItem(item: RustItem, indent: string): string[] {
     }
     case "struct": {
       const out: string[] = [];
+      out.push(...spanLine);
       for (const a of item.attrs) out.push(`${indent}${a}`);
       const vis = item.vis === "pub" ? "pub " : "";
       if (item.fields.length === 0) {
@@ -262,6 +278,7 @@ function emitItem(item: RustItem, indent: string): string[] {
       const head = item.traitPath
         ? `impl ${emitPath(item.traitPath.segments)} for ${emitPath(item.typePath.segments)}`
         : `impl ${emitPath(item.typePath.segments)}`;
+      out.push(...spanLine);
       out.push(`${indent}${head} {`);
       const innerIndent = `${indent}  `;
       let first = true;
@@ -275,6 +292,7 @@ function emitItem(item: RustItem, indent: string): string[] {
     }
     case "fn": {
       const out: string[] = [];
+      out.push(...spanLine);
       for (const a of item.attrs) out.push(`${indent}${a}`);
       const retClause = item.ret.kind === "unit" ? "" : ` -> ${emitType(item.ret)}`;
       const vis = item.vis === "pub" ? "pub " : "";

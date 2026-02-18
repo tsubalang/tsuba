@@ -171,4 +171,33 @@ describe("@tsuba/cli build", () => {
     expect(mainRs).to.contain("use simple::isRed;");
     expect(mainRs).to.contain("Color::Red");
   });
+
+  it("maps rustc errors back to TS source spans when possible", async () => {
+    const root = makeRepoTempDir("cli-build-rustc-map-");
+    const projectName = basename(root);
+
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", projectName);
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      [
+        "export function main(): void {",
+        '  const s = "a" + "b";',
+        "  void s;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err)).to.contain("src/main.ts");
+    expect(String(err)).to.contain("cargo build failed");
+  });
 });

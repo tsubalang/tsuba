@@ -6,6 +6,22 @@ import { compileHostToRust } from "@tsuba/compiler";
 
 import { mergeCargoDependencies, renderCargoToml } from "./cargo.js";
 
+type CargoMessageSpan = {
+  readonly file_name: string;
+  readonly line_start: number;
+  readonly column_start: number;
+};
+
+type CargoCompilerMessage = {
+  readonly reason: "compiler-message";
+  readonly message: {
+    readonly level: string;
+    readonly message: string;
+    readonly rendered?: string;
+    readonly spans: readonly CargoMessageSpan[];
+  };
+};
+
 type WorkspaceConfig = {
   readonly schema: number;
   readonly rustEdition: "2021" | "2024";
@@ -42,6 +58,95 @@ export type BuildArgs = {
 function readJson<T>(path: string): T {
   const raw = readFileSync(path, "utf-8");
   return JSON.parse(raw) as T;
+}
+
+function normalizePath(p: string): string {
+  return p.replaceAll("\\", "/");
+}
+
+function posToLineCol(text: string, pos: number): { readonly line: number; readonly col: number } {
+  // 1-based, like most compilers.
+  let line = 1;
+  let col = 1;
+  for (let i = 0; i < pos && i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    if (ch === 10 /* \n */) {
+      line++;
+      col = 1;
+    } else {
+      col++;
+    }
+  }
+  return { line, col };
+}
+
+function parseSpanComment(line: string): { readonly fileName: string; readonly start: number; readonly end: number } | undefined {
+  const trimmed = line.trimStart();
+  const prefix = "// tsuba-span: ";
+  if (!trimmed.startsWith(prefix)) return undefined;
+  const rest = trimmed.slice(prefix.length);
+  const last = rest.lastIndexOf(":");
+  if (last === -1) return undefined;
+  const secondLast = rest.lastIndexOf(":", last - 1);
+  if (secondLast === -1) return undefined;
+  const fileName = rest.slice(0, secondLast);
+  const startText = rest.slice(secondLast + 1, last);
+  const endText = rest.slice(last + 1);
+  const start = Number.parseInt(startText, 10);
+  const end = Number.parseInt(endText, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined;
+  if (start < 0 || end < start) return undefined;
+  return { fileName, start, end };
+}
+
+function firstCargoCompilerError(
+  stdout: string,
+  generatedRoot: string
+): { readonly rendered: string; readonly span?: CargoMessageSpan } | undefined {
+  const genRoot = normalizePath(generatedRoot).replaceAll(/\/+$/g, "");
+  for (const line of stdout.split(/\r?\n/g)) {
+    if (line.trim().length === 0) continue;
+    let obj: unknown;
+    try {
+      obj = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    const m = obj as Partial<CargoCompilerMessage>;
+    if (m.reason !== "compiler-message") continue;
+    if (!m.message || typeof m.message !== "object") continue;
+    if (m.message.level !== "error") continue;
+    const rendered =
+      typeof m.message.rendered === "string" && m.message.rendered.length > 0 ? m.message.rendered : m.message.message;
+    const spans = m.message.spans ?? [];
+    const isAbs = (p: string): boolean => p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+    const pick = spans.find((s) => {
+      const fileName = normalizePath(s.file_name);
+      if (!isAbs(fileName)) return true; // relative to crate root
+      return fileName.startsWith(`${genRoot}/`);
+    });
+    return { rendered, span: pick ?? spans[0] };
+  }
+  return undefined;
+}
+
+function tryMapRustErrorToTs(opts: {
+  readonly generatedRoot: string;
+  readonly rustFileName: string;
+  readonly rustLine: number;
+}): { readonly fileName: string; readonly line: number; readonly col: number } | undefined {
+  const isAbs = (p: string): boolean => p.startsWith("/") || /^[A-Za-z]:\//.test(p);
+  const rustFileName = isAbs(opts.rustFileName) ? opts.rustFileName : join(opts.generatedRoot, opts.rustFileName);
+  const rustText = readFileSync(rustFileName, "utf-8");
+  const rustLines = rustText.split(/\r?\n/g);
+  for (let i = Math.min(opts.rustLine - 1, rustLines.length - 1); i >= 0; i--) {
+    const parsed = parseSpanComment(rustLines[i]!);
+    if (!parsed) continue;
+    const tsText = readFileSync(parsed.fileName, "utf-8");
+    const lc = posToLineCol(tsText, parsed.start);
+    return { fileName: parsed.fileName, line: lc.line, col: lc.col };
+  }
+  return undefined;
 }
 
 function findWorkspaceRoot(fromDir: string): string {
@@ -137,7 +242,7 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   const cargoTargetDir = resolve(workspaceRoot, workspace.cargoTargetDir);
   mkdirSync(cargoTargetDir, { recursive: true });
 
-  const res = spawnSync("cargo", ["build", "--quiet"], {
+  const res = spawnSync("cargo", ["build", "--quiet", "--message-format=json"], {
     cwd: generatedRoot,
     env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
     encoding: "utf-8",
@@ -146,6 +251,17 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   if (res.status !== 0) {
     const stdout = res.stdout ?? "";
     const stderr = res.stderr ?? "";
+    const err = firstCargoCompilerError(stdout, generatedRoot);
+    if (err?.span) {
+      const mapped = tryMapRustErrorToTs({
+        generatedRoot,
+        rustFileName: err.span.file_name,
+        rustLine: err.span.line_start,
+      });
+      if (mapped) {
+        throw new Error(`${mapped.fileName}:${mapped.line}:${mapped.col}: cargo build failed.\n${err.rendered}`);
+      }
+    }
     throw new Error(`cargo build failed.\n${stdout}${stderr}`);
   }
 }

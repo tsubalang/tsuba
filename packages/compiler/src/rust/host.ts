@@ -755,6 +755,7 @@ function lowerVarDeclList(ctx: EmitCtx, declList: ts.VariableDeclarationList): R
       if (!inner) failAt(decl.type, "TSB2010", "mut<T> must have exactly one type argument.");
       out.push({
         kind: "let",
+        span: spanFromNode(decl),
         pattern: { kind: "ident", name: decl.name.text },
         mut: true,
         type: typeNodeToRust(inner),
@@ -765,6 +766,7 @@ function lowerVarDeclList(ctx: EmitCtx, declList: ts.VariableDeclarationList): R
 
     out.push({
       kind: "let",
+      span: spanFromNode(decl),
       pattern: { kind: "ident", name: decl.name.text },
       mut: false,
       type: decl.type ? typeNodeToRust(decl.type) : undefined,
@@ -779,6 +781,7 @@ function lowerExprStmt(ctx: EmitCtx, expr: ts.Expression): RustStmt[] {
     return [
       {
         kind: "assign",
+        span: spanFromNode(expr),
         target: lowerExpr(ctx, expr.left),
         expr: lowerExpr(ctx, expr.right),
       },
@@ -798,13 +801,14 @@ function lowerExprStmt(ctx: EmitCtx, expr: ts.Expression): RustStmt[] {
     return [
       {
         kind: "assign",
+        span: spanFromNode(expr),
         target: identExpr(name),
         expr: { kind: "binary", op, left: identExpr(name), right: { kind: "number", text: "1" } },
       },
     ];
   }
 
-  return [{ kind: "expr", expr: lowerExpr(ctx, expr) }];
+  return [{ kind: "expr", span: spanFromNode(expr), expr: lowerExpr(ctx, expr) }];
 }
 
 function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
@@ -817,20 +821,20 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
   }
 
   if (ts.isReturnStatement(st)) {
-    return [{ kind: "return", expr: st.expression ? lowerExpr(ctx, st.expression) : undefined }];
+    return [{ kind: "return", span: spanFromNode(st), expr: st.expression ? lowerExpr(ctx, st.expression) : undefined }];
   }
 
   if (ts.isIfStatement(st)) {
     const cond = lowerExpr(ctx, st.expression);
     const then = lowerStmtBlock(ctx, st.thenStatement);
     const elseStmts = st.elseStatement ? lowerStmtBlock(ctx, st.elseStatement) : undefined;
-    return [{ kind: "if", cond, then, else: elseStmts }];
+    return [{ kind: "if", span: spanFromNode(st), cond, then, else: elseStmts }];
   }
 
   if (ts.isWhileStatement(st)) {
     const cond = lowerExpr(ctx, st.expression);
     const body = lowerStmtBlock(ctx, st.statement);
-    return [{ kind: "while", cond, body }];
+    return [{ kind: "while", span: spanFromNode(st), cond, body }];
   }
 
   if (ts.isSwitchStatement(st)) {
@@ -924,15 +928,15 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
       failAt(st, "TSB2210", `Non-exhaustive switch for union '${def.name}'. Missing cases: ${missing.join(", ")}`);
     }
 
-    return [{ kind: "match", expr: identExpr(targetIdent.text), arms }];
+    return [{ kind: "match", span: spanFromNode(st), expr: identExpr(targetIdent.text), arms }];
   }
 
   if (ts.isBreakStatement(st)) {
-    return [{ kind: "break" }];
+    return [{ kind: "break", span: spanFromNode(st) }];
   }
 
   if (ts.isContinueStatement(st)) {
-    return [{ kind: "continue" }];
+    return [{ kind: "continue", span: spanFromNode(st) }];
   }
 
   if (ts.isForStatement(st)) {
@@ -957,8 +961,9 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
     const bodyStmts = lowerStmtBlock(ctx, st.statement);
 
     const whileBody = [...bodyStmts, ...incStmts];
-    const lowered: RustStmt = { kind: "while", cond: lowerExpr(ctx, condExpr), body: whileBody };
-    return [{ kind: "block", body: [...initStmts, lowered] }];
+    const span = spanFromNode(st);
+    const lowered: RustStmt = { kind: "while", span, cond: lowerExpr(ctx, condExpr), body: whileBody };
+    return [{ kind: "block", span, body: [...initStmts, lowered] }];
   }
 
   failAt(st, "TSB2100", `Unsupported statement: ${st.getText()}`);
@@ -977,6 +982,7 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
 
+  const span = spanFromNode(fnDecl);
   const hasExport = fnDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
   const vis = hasExport ? "pub" : "private";
 
@@ -1002,7 +1008,7 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
   const body: RustStmt[] = [];
   for (const st of fnDecl.body.statements) body.push(...lowerStmt(ctx, st));
 
-  return { kind: "fn", vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, attrs, body };
+  return { kind: "fn", span, vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, attrs, body };
 }
 
 function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { readonly mut: boolean; readonly lifetime?: string } | undefined {
@@ -1051,6 +1057,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
   const hasExport = cls.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
   const classVis = hasExport ? "pub" : "private";
   const className = cls.name.text;
+  const classSpan = spanFromNode(cls);
 
   const fields: { readonly name: string; readonly vis: "pub" | "private"; readonly type: RustType; readonly init?: RustExpr }[] =
     [];
@@ -1116,6 +1123,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
 
   const structItem: RustItem = {
     kind: "struct",
+    span: classSpan,
     vis: classVis,
     name: className,
     attrs,
@@ -1162,6 +1170,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
 
   const newItem: RustItem = {
     kind: "fn",
+    span: classSpan,
     vis: "pub",
     receiver: { kind: "none" },
     name: "new",
@@ -1226,6 +1235,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
 
     implItems.push({
       kind: "fn",
+      span: spanFromNode(m),
       vis,
       receiver,
       name: m.name.text,
@@ -1236,10 +1246,11 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     });
   }
 
-  const implItem: RustItem = { kind: "impl", typePath: { segments: [className] }, items: implItems };
+  const implItem: RustItem = { kind: "impl", span: classSpan, typePath: { segments: [className] }, items: implItems };
 
   const traitImpls: RustItem[] = implementsTraits.map((t) => ({
     kind: "impl",
+    span: classSpan,
     traitPath: { segments: [t] },
     typePath: { segments: [className] },
     items: [],
@@ -1359,6 +1370,7 @@ function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: read
   return [
     {
       kind: "enum",
+      span: spanFromNode(decl),
       vis,
       name: def.name,
       attrs,
@@ -1384,7 +1396,7 @@ function lowerInterface(decl: ts.InterfaceDeclaration): readonly RustItem[] {
   const isExport = hasModifier(decl, ts.SyntaxKind.ExportKeyword);
   const vis: "pub" | "private" = isExport ? "pub" : "private";
 
-  return [{ kind: "trait", vis, name: decl.name.text, items: [] }];
+  return [{ kind: "trait", span: spanFromNode(decl), vis, name: decl.name.text, items: [] }];
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
@@ -1678,6 +1690,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
             const local = el.name.text;
             uses.push({
               kind: "use",
+              span: spanFromNode(el),
               path: { segments: ["crate", resolved.mod, exported] },
               alias: local !== exported ? local : undefined,
             });
@@ -1718,6 +1731,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
             const local = el.name.text;
             uses.push({
               kind: "use",
+              span: spanFromNode(el),
               path: { segments: [...baseSegs, exported] },
               alias: local !== exported ? local : undefined,
             });
@@ -1918,6 +1932,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   const mainItem: RustItem = {
     kind: "fn",
+    span: spanFromNode(mainFn),
     vis: "private",
     receiver: { kind: "none" },
     name: "main",
