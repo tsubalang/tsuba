@@ -4,11 +4,13 @@ import { readFileSync } from "node:fs";
 import { CompileError } from "@tsuba/compiler";
 
 import { runBuild } from "./internal/commands/build.js";
+import { runAdd } from "./internal/commands/add.js";
 import { runBindgen } from "./internal/commands/bindgen.js";
 import { runInit } from "./internal/commands/init.js";
 import { runRun } from "./internal/commands/run.js";
+import { runTest } from "./internal/commands/test.js";
 
-type Cmd = "init" | "build" | "run" | "bindgen" | "help";
+type Cmd = "init" | "add" | "build" | "run" | "test" | "bindgen" | "help";
 
 function usage(): void {
   // Keep this minimal for now.
@@ -19,8 +21,12 @@ function usage(): void {
       "",
       "Usage:",
       "  tsuba init",
+      "  tsuba add crate <name>@<version>",
+      "  tsuba add path <name> <path-to-crate>",
+      "  tsuba add npm <package>",
       "  tsuba build",
       "  tsuba run",
+      "  tsuba test",
       "  tsuba bindgen --manifest-path <Cargo.toml> --out <dir> [--package <@scope/name>]",
       "",
     ].join("\n")
@@ -30,7 +36,7 @@ function usage(): void {
 function parseCommand(args: readonly string[]): Cmd {
   const [cmd] = args;
   if (!cmd) return "help";
-  if (cmd === "init" || cmd === "build" || cmd === "run" || cmd === "bindgen" || cmd === "help") return cmd;
+  if (cmd === "init" || cmd === "add" || cmd === "build" || cmd === "run" || cmd === "test" || cmd === "bindgen" || cmd === "help") return cmd;
   return "help";
 }
 
@@ -57,11 +63,17 @@ async function main(): Promise<void> {
       case "init":
         await runInit({ dir: cwd() });
         return;
+      case "add":
+        await runAdd({ dir: cwd(), argv: argv.slice(3) });
+        return;
       case "build":
         await runBuild({ dir: cwd() });
         return;
       case "run":
         await runRun({ dir: cwd(), stdio: "inherit" });
+        return;
+      case "test":
+        await runTest({ dir: cwd(), stdio: "inherit" });
         return;
       case "bindgen":
         await runBindgen({ dir: cwd(), argv: argv.slice(3) });
