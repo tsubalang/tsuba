@@ -461,53 +461,81 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   failAt(expr, "TSB1100", `Unsupported expression: ${expr.getText()}`);
 }
 
-function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
-  if (ts.isVariableStatement(st)) {
-    const out: RustStmt[] = [];
-    for (const decl of st.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name)) {
-        failAt(decl.name, "TSB2001", "Destructuring declarations are not supported in v0.");
-      }
-      if (!decl.initializer) {
-        failAt(decl, "TSB2002", `Variable '${decl.name.text}' must have an initializer in v0.`);
-      }
+function lowerVarDeclList(ctx: EmitCtx, declList: ts.VariableDeclarationList): RustStmt[] {
+  const out: RustStmt[] = [];
+  for (const decl of declList.declarations) {
+    if (!ts.isIdentifier(decl.name)) {
+      failAt(decl.name, "TSB2001", "Destructuring declarations are not supported in v0.");
+    }
+    if (!decl.initializer) {
+      failAt(decl, "TSB2002", `Variable '${decl.name.text}' must have an initializer in v0.`);
+    }
 
-      const isMut = isMutMarkerType(decl.type);
-      if (isMut && decl.type && ts.isTypeReferenceNode(decl.type)) {
-        const inner = decl.type.typeArguments?.[0];
-        if (!inner) failAt(decl.type, "TSB2010", "mut<T> must have exactly one type argument.");
-        out.push({
-          kind: "let",
-          pattern: { kind: "ident", name: decl.name.text },
-          mut: true,
-          type: typeNodeToRust(inner),
-          init: lowerExpr(ctx, decl.initializer),
-        });
-        continue;
-      }
-
+    const isMut = isMutMarkerType(decl.type);
+    if (isMut && decl.type && ts.isTypeReferenceNode(decl.type)) {
+      const inner = decl.type.typeArguments?.[0];
+      if (!inner) failAt(decl.type, "TSB2010", "mut<T> must have exactly one type argument.");
       out.push({
         kind: "let",
         pattern: { kind: "ident", name: decl.name.text },
-        mut: false,
-        type: decl.type ? typeNodeToRust(decl.type) : undefined,
+        mut: true,
+        type: typeNodeToRust(inner),
         init: lowerExpr(ctx, decl.initializer),
       });
+      continue;
     }
-    return out;
+
+    out.push({
+      kind: "let",
+      pattern: { kind: "ident", name: decl.name.text },
+      mut: false,
+      type: decl.type ? typeNodeToRust(decl.type) : undefined,
+      init: lowerExpr(ctx, decl.initializer),
+    });
+  }
+  return out;
+}
+
+function lowerExprStmt(ctx: EmitCtx, expr: ts.Expression): RustStmt[] {
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return [
+      {
+        kind: "assign",
+        target: lowerExpr(ctx, expr.left),
+        expr: lowerExpr(ctx, expr.right),
+      },
+    ];
+  }
+
+  if (
+    (ts.isPostfixUnaryExpression(expr) || ts.isPrefixUnaryExpression(expr)) &&
+    (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    const operand = expr.operand;
+    if (!ts.isIdentifier(operand)) {
+      failAt(expr, "TSB2110", "++/-- is only supported on identifiers in v0.");
+    }
+    const op = expr.operator === ts.SyntaxKind.PlusPlusToken ? "+" : "-";
+    const name = operand.text;
+    return [
+      {
+        kind: "assign",
+        target: identExpr(name),
+        expr: { kind: "binary", op, left: identExpr(name), right: { kind: "number", text: "1" } },
+      },
+    ];
+  }
+
+  return [{ kind: "expr", expr: lowerExpr(ctx, expr) }];
+}
+
+function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
+  if (ts.isVariableStatement(st)) {
+    return lowerVarDeclList(ctx, st.declarationList);
   }
 
   if (ts.isExpressionStatement(st)) {
-    if (ts.isBinaryExpression(st.expression) && st.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      return [
-        {
-          kind: "assign",
-          target: lowerExpr(ctx, st.expression.left),
-          expr: lowerExpr(ctx, st.expression.right),
-        },
-      ];
-    }
-    return [{ kind: "expr", expr: lowerExpr(ctx, st.expression) }];
+    return lowerExprStmt(ctx, st.expression);
   }
 
   if (ts.isReturnStatement(st)) {
@@ -533,6 +561,32 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
 
   if (ts.isContinueStatement(st)) {
     return [{ kind: "continue" }];
+  }
+
+  if (ts.isForStatement(st)) {
+    const init = st.initializer;
+    const condExpr = st.condition ?? ts.factory.createTrue();
+    const inc = st.incrementor;
+
+    const initStmts: RustStmt[] = [];
+    if (!init) {
+      // ok
+    } else if (ts.isVariableDeclarationList(init)) {
+      // v0: for-loop scoping must be preserved, so we always wrap a `for` lowering in a block.
+      const isVar = (init.flags & ts.NodeFlags.Let) === 0 && (init.flags & ts.NodeFlags.Const) === 0;
+      if (isVar) failAt(init, "TSB2120", "for-loop `var` declarations are not supported in v0 (use let/const).");
+      initStmts.push(...lowerVarDeclList(ctx, init));
+    } else {
+      // Expression initializer (e.g., i = 0)
+      initStmts.push(...lowerExprStmt(ctx, init));
+    }
+
+    const incStmts = inc ? lowerExprStmt(ctx, inc) : [];
+    const bodyStmts = lowerStmtBlock(ctx, st.statement);
+
+    const whileBody = [...bodyStmts, ...incStmts];
+    const lowered: RustStmt = { kind: "while", cond: lowerExpr(ctx, condExpr), body: whileBody };
+    return [{ kind: "block", body: [...initStmts, lowered] }];
   }
 
   failAt(st, "TSB2100", `Unsupported statement: ${st.getText()}`);

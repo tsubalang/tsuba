@@ -49,6 +49,7 @@ export type RustStmt =
       readonly type?: RustType;
       readonly init: RustExpr;
     })
+  | (NodeBase & { readonly kind: "block"; readonly body: readonly RustStmt[] })
   | (NodeBase & { readonly kind: "assign"; readonly target: RustExpr; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "expr"; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "while"; readonly cond: RustExpr; readonly body: readonly RustStmt[] })

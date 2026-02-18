@@ -82,6 +82,8 @@ function emitStmtInline(st: RustStmt): string {
       const ty = st.type ? `: ${emitType(st.type)}` : "";
       return `let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`;
     }
+    case "block":
+      return "__tsuba_unreachable_inline_block__;";
     case "assign":
       return `${emitExpr(st.target)} = ${emitExpr(st.expr)};`;
     case "expr":
@@ -106,6 +108,13 @@ function emitStmtLines(st: RustStmt, indent: string): string[] {
       const mut = st.mut ? "mut " : "";
       const ty = st.type ? `: ${emitType(st.type)}` : "";
       return [`${indent}let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`];
+    }
+    case "block": {
+      const out: string[] = [];
+      out.push(`${indent}{`);
+      for (const s of st.body) out.push(...emitStmtLines(s, `${indent}  `));
+      out.push(`${indent}}`);
+      return out;
     }
     case "assign":
       return [`${indent}${emitExpr(st.target)} = ${emitExpr(st.expr)};`];

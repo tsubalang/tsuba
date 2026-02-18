@@ -261,4 +261,29 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("while (x < ((3) as i32)) {");
     expect(out.mainRs).to.contain("x = (x + ((1) as i32));");
   });
+
+  it("supports for loops (lowered to a scoped block + while) and ++/-- in statement position", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "type mut<T> = T;",
+        "",
+        "export function main(): void {",
+        "  for (let i: mut<i32> = 0 as i32; i < (3 as i32); i++) {",
+        "    void i;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let mut i: i32 = (0) as i32;");
+    expect(out.mainRs).to.contain("while (i < ((3) as i32)) {");
+    expect(out.mainRs).to.contain("i = (i + 1);");
+  });
 });
