@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-describe("@tsuba/cli README smoke", () => {
+describe("@tsuba/cli README smoke", function () {
+  // These are full end-to-end smoke tests (init + cargo build/run). Keep them deterministic,
+  // but allow enough time to compile dependencies on a cold machine.
+  this.timeout(60_000);
+
   function getDistBinPath(): string {
     const here = fileURLToPath(import.meta.url);
     // dist/readme-smoke.test.js → dist/bin.js
@@ -30,4 +34,3 @@ describe("@tsuba/cli README smoke", () => {
     runBin(projectRoot, ["run"]);
   });
 });
-
