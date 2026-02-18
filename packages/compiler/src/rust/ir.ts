@@ -12,6 +12,8 @@ export type RustPath = {
   readonly segments: readonly string[];
 };
 
+export type RustVisibility = "private" | "pub";
+
 export type RustType =
   | (NodeBase & { readonly kind: "unit" })
   | (NodeBase & { readonly kind: "path"; readonly path: RustPath; readonly args: readonly RustType[] });
@@ -23,6 +25,7 @@ export type RustPattern =
 export type RustExpr =
   | (NodeBase & { readonly kind: "unit" })
   | (NodeBase & { readonly kind: "ident"; readonly name: string })
+  | (NodeBase & { readonly kind: "path"; readonly path: RustPath })
   | (NodeBase & { readonly kind: "number"; readonly text: string })
   | (NodeBase & { readonly kind: "string"; readonly value: string })
   | (NodeBase & { readonly kind: "bool"; readonly value: boolean })
@@ -57,9 +60,25 @@ export type RustStmt =
 export type RustParam = NodeBase & { readonly name: string; readonly type: RustType };
 
 export type RustItem =
-  | (NodeBase & { readonly kind: "struct"; readonly name: string; readonly attrs: readonly string[] })
+  | (NodeBase & {
+      readonly kind: "use";
+      readonly path: RustPath;
+      readonly alias?: string;
+    })
+  | (NodeBase & {
+      readonly kind: "mod";
+      readonly name: string;
+      readonly items: readonly RustItem[];
+    })
+  | (NodeBase & {
+      readonly kind: "struct";
+      readonly vis: RustVisibility;
+      readonly name: string;
+      readonly attrs: readonly string[];
+    })
   | (NodeBase & {
       readonly kind: "fn";
+      readonly vis: RustVisibility;
       readonly name: string;
       readonly params: readonly RustParam[];
       readonly ret: RustType;
@@ -85,4 +104,8 @@ export function unitExpr(): RustExpr {
 
 export function identExpr(name: string): RustExpr {
   return { kind: "ident", name };
+}
+
+export function pathExpr(segments: readonly string[]): RustExpr {
+  return { kind: "path", path: { segments } };
 }

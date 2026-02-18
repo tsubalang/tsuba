@@ -1,4 +1,5 @@
 import ts from "typescript";
+import { basename, dirname, resolve } from "node:path";
 
 import type { RustExpr, RustItem, RustParam, RustProgram, RustStmt, RustType, Span } from "./ir.js";
 import { identExpr, pathType, unitExpr, unitType } from "./ir.js";
@@ -36,6 +37,21 @@ type EmitCtx = {
 
 function normalizePath(p: string): string {
   return p.replaceAll("\\", "/");
+}
+
+function rustIdentFromStem(stem: string): string {
+  const raw = stem
+    .replaceAll(/[^A-Za-z0-9_]/g, "_")
+    .replaceAll(/_+/g, "_")
+    .replaceAll(/^_+|_+$/g, "");
+  const lower = raw.length === 0 ? "mod" : raw.toLowerCase();
+  return /^[0-9]/.test(lower) ? `_${lower}` : lower;
+}
+
+function rustModuleNameFromFileName(fileName: string): string {
+  const b = basename(fileName);
+  const stem = b.replaceAll(/\.[^.]+$/g, "");
+  return rustIdentFromStem(stem);
 }
 
 function splitRustPath(path: string): readonly string[] {
@@ -495,6 +511,9 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
 
+  const hasExport = fnDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+  const vis = hasExport ? "pub" : "private";
+
   const params: RustParam[] = [];
   for (const p of fnDecl.parameters) {
     if (!ts.isIdentifier(p.name)) {
@@ -517,7 +536,7 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   const body: RustStmt[] = [];
   for (const st of fnDecl.body.statements) body.push(...lowerStmt(ctx, st));
 
-  return { kind: "fn", name: fnDecl.name.text, params, ret, body };
+  return { kind: "fn", vis, name: fnDecl.name.text, params, ret, body };
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
@@ -574,20 +593,138 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const ctx: EmitCtx = { checker };
   const kernels = collectKernelDecls(ctx, sf);
 
-  // Collect helper functions from all user source files (entry + its imports),
-  // ignoring type-only and ambient declarations.
-  const helperFnDecls: { readonly fileName: string; readonly pos: number; readonly decl: ts.FunctionDeclaration }[] =
-    [];
-  const seenFnNames = new Map<string, string>();
+  const items: RustItem[] = [];
+  if (kernels.length > 0) {
+    items.push({
+      kind: "struct",
+      vis: "private",
+      name: "__tsuba_kernel_placeholder",
+      attrs: ["#[allow(dead_code)]"],
+    });
+  }
 
   const userSourceFiles = program
     .getSourceFiles()
     .filter((f) => !f.isDeclarationFile && !isInNodeModules(f.fileName));
 
+  const entryFileName = normalizePath(sf.fileName);
+
+  const userFilesByName = new Map<string, ts.SourceFile>();
+  for (const f of userSourceFiles) userFilesByName.set(normalizePath(f.fileName), f);
+
+  // Map user files (excluding entry) to Rust module names.
+  const moduleNameByFile = new Map<string, string>();
+  const fileByModuleName = new Map<string, string>();
+
   for (const f of userSourceFiles) {
+    const fileName = normalizePath(f.fileName);
+    if (fileName === entryFileName) continue;
+    const modName = rustModuleNameFromFileName(f.fileName);
+    const prev = fileByModuleName.get(modName);
+    if (prev) {
+      fail(
+        "TSB3200",
+        `Two files map to the same Rust module '${modName}':\n  - ${prev}\n  - ${fileName}\nRename one of the files to avoid a module collision.`
+      );
+    }
+    fileByModuleName.set(modName, fileName);
+    moduleNameByFile.set(fileName, modName);
+  }
+
+  function resolveRelativeImport(fromFileName: string, spec: string): { readonly targetFile: string; readonly mod: string } {
+    if (!spec.startsWith(".")) {
+      fail("TSB3201", `Only relative imports are supported in v0 (got ${JSON.stringify(spec)}).`);
+    }
+    let rewritten = spec;
+    if (rewritten.endsWith(".js")) rewritten = `${rewritten.slice(0, -3)}.ts`;
+    if (!rewritten.endsWith(".ts")) {
+      fail("TSB3202", `Import specifier must end with '.js' (source) in v0 (got ${JSON.stringify(spec)}).`);
+    }
+
+    const abs = normalizePath(resolve(dirname(fromFileName), rewritten));
+    const target = userFilesByName.get(abs);
+    if (!target) {
+      fail("TSB3203", `Import target not found in the project: ${JSON.stringify(spec)} -> ${abs}`);
+    }
+    const mod = moduleNameByFile.get(abs);
+    if (!mod) {
+      fail("TSB3204", `Importing the entry module is not supported in v0 (got ${JSON.stringify(spec)}).`);
+    }
+    return { targetFile: abs, mod };
+  }
+
+  function sortUses(uses: readonly RustItem[]): RustItem[] {
+    return [...uses].sort((a, b) => {
+      if (a.kind !== "use" || b.kind !== "use") return 0;
+      const pa = a.path.segments.join("::");
+      const pb = b.path.segments.join("::");
+      if (pa !== pb) return pa.localeCompare(pb);
+      const aa = a.alias ?? "";
+      const ab = b.alias ?? "";
+      return aa.localeCompare(ab);
+    });
+  }
+
+  type FileLowered = {
+    readonly fileName: string;
+    readonly sourceFile: ts.SourceFile;
+    readonly uses: RustItem[];
+    readonly functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[];
+  };
+
+  const loweredByFile = new Map<string, FileLowered>();
+
+  for (const f of userSourceFiles) {
+    const fileName = normalizePath(f.fileName);
+    const uses: RustItem[] = [];
+    const functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[] = [];
+
     for (const st of f.statements) {
+      if (ts.isImportDeclaration(st)) {
+        const specNode = st.moduleSpecifier;
+        if (!ts.isStringLiteral(specNode)) {
+          failAt(specNode, "TSB3205", "Import module specifier must be a string literal in v0.");
+        }
+        const spec = specNode.text;
+
+        // Marker/facade imports: compile-time only, no Rust `use` emitted.
+        if (spec.startsWith("@tsuba/")) continue;
+
+        const clause = st.importClause;
+        if (!clause) {
+          failAt(st, "TSB3206", "Side-effect-only imports are not supported in v0.");
+        }
+        if (clause.isTypeOnly) continue;
+        if (clause.name) {
+          failAt(clause.name, "TSB3207", "Default imports are not supported in v0.");
+        }
+
+        const bindings = clause.namedBindings;
+        if (!bindings) {
+          failAt(st, "TSB3208", "Import must have named bindings in v0.");
+        }
+
+        if (ts.isNamespaceImport(bindings)) {
+          failAt(bindings, "TSB3209", "Namespace imports (import * as x) are not supported in v0.");
+        }
+        if (!ts.isNamedImports(bindings)) {
+          failAt(bindings, "TSB3210", "Unsupported import binding form in v0.");
+        }
+
+        const resolved = resolveRelativeImport(f.fileName, spec);
+        for (const el of bindings.elements) {
+          const exported = el.propertyName?.text ?? el.name.text;
+          const local = el.name.text;
+          uses.push({
+            kind: "use",
+            path: { segments: ["crate", resolved.mod, exported] },
+            alias: local !== exported ? local : undefined,
+          });
+        }
+        continue;
+      }
+
       if (
-        ts.isImportDeclaration(st) ||
         ts.isExportDeclaration(st) ||
         ts.isTypeAliasDeclaration(st) ||
         ts.isInterfaceDeclaration(st) ||
@@ -603,7 +740,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         //   const k = kernel({ ... } as const, (...) => ...)
         const declList = st.declarationList;
         const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
-        if (!isConst) fail("TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
+        if (!isConst) failAt(st, "TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
 
         const allKernelDecls = declList.declarations.every((d) => {
           if (!ts.isIdentifier(d.name)) return false;
@@ -618,45 +755,53 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
         if (allKernelDecls) continue;
 
-        fail("TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
+        failAt(st, "TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
       }
 
       if (ts.isFunctionDeclaration(st)) {
         if (!st.body) continue; // ambient
-        if (!st.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
-        if (st.name.text === "main" && f === sf) continue;
+        if (!st.name) failAt(st, "TSB3000", "Unnamed functions are not supported in v0.");
+        if (st.name.text === "main" && fileName === entryFileName) continue;
 
-        const prev = seenFnNames.get(st.name.text);
-        if (prev) fail("TSB3101", `Duplicate function '${st.name.text}' in ${prev} and ${f.fileName}.`);
-        seenFnNames.set(st.name.text, f.fileName);
-
-        helperFnDecls.push({ fileName: f.fileName, pos: st.pos, decl: st });
+        functions.push({ pos: st.pos, decl: st });
         continue;
       }
 
-      fail("TSB3102", `Unsupported top-level statement: ${st.getText()}`);
+      failAt(st, "TSB3102", `Unsupported top-level statement: ${st.getText()}`);
     }
+
+    loweredByFile.set(fileName, { fileName, sourceFile: f, uses, functions });
   }
 
-  helperFnDecls.sort((a, b) => {
-    const fa = normalizePath(a.fileName);
-    const fb = normalizePath(b.fileName);
-    if (fa !== fb) return fa.localeCompare(fb);
-    return a.pos - b.pos;
-  });
+  // Root (entry file) uses
+  const rootLowered = loweredByFile.get(entryFileName);
+  if (!rootLowered) fail("TSB0001", "Internal error: entry file missing from lowered set.");
+  items.push(...sortUses(rootLowered.uses));
 
-  const items: RustItem[] = [];
-  if (kernels.length > 0) {
-    items.push({ kind: "struct", name: "__tsuba_kernel_placeholder", attrs: ["#[allow(dead_code)]"] });
+  // Modules (non-entry files)
+  const moduleFiles = [...moduleNameByFile.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [fileName, modName] of moduleFiles) {
+    const lowered = loweredByFile.get(fileName);
+    if (!lowered) continue;
+    const fnItems = lowered.functions
+      .sort((a, b) => a.pos - b.pos)
+      .map((f) => lowerFunction(ctx, f.decl));
+    const modItems: RustItem[] = [...sortUses(lowered.uses), ...fnItems];
+    items.push({ kind: "mod", name: modName, items: modItems });
   }
 
-  for (const h of helperFnDecls) items.push(lowerFunction(ctx, h.decl));
+  // Root helper functions (entry file only, excluding main)
+  const rootFns = rootLowered.functions
+    .sort((a, b) => a.pos - b.pos)
+    .map((f) => lowerFunction(ctx, f.decl));
+  items.push(...rootFns);
 
   const mainBody: RustStmt[] = [];
   for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(ctx, st));
 
   const mainItem: RustItem = {
     kind: "fn",
+    vis: "private",
     name: "main",
     params: [],
     ret: returnKind === "unit" ? unitType() : (rustReturnType ?? unitType()),

@@ -179,4 +179,36 @@ describe("@tsuba/compiler host emitter", () => {
     const out = compileHostToRust({ entryFile: entry });
     expect(out.mainRs).to.contain("fn add(a: i32, b: i32) -> i32");
   });
+
+  it("emits imported project modules as Rust `mod` blocks and wires named imports via `use`", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    const math = join(dir, "math.ts");
+
+    writeFileSync(
+      math,
+      [
+        "type i32 = number;",
+        "",
+        "export function add(a: i32, b: i32): i32 {",
+        "  return a + b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      ["type i32 = number;", 'import { add } from "./math.js";', "", "export function main(): void {", "  add(1 as i32, 2 as i32);", "}", ""].join(
+        "\n"
+      ),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("use crate::math::add;");
+    expect(out.mainRs).to.contain("mod math {");
+    expect(out.mainRs).to.contain("pub fn add(a: i32, b: i32) -> i32");
+  });
 });

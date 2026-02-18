@@ -11,6 +11,7 @@ describe("@tsuba/compiler rust writer", () => {
       items: [
         {
           kind: "fn",
+          vis: "private",
           name: "main",
           params: [],
           ret: unitType(),
@@ -54,12 +55,44 @@ describe("@tsuba/compiler rust writer", () => {
     );
   });
 
+  it("writes `use` and `mod` items with stable indentation", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        { kind: "use", path: { segments: ["crate", "math", "add"] } },
+        {
+          kind: "mod",
+          name: "math",
+          items: [
+            { kind: "use", path: { segments: ["crate", "util", "f"] }, alias: "f" },
+            {
+              kind: "fn",
+              vis: "pub",
+              name: "add",
+              params: [{ name: "a", type: pathType(["i32"]) }],
+              ret: pathType(["i32"]),
+              body: [{ kind: "return", expr: identExpr("a") }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("use crate::math::add;");
+    expect(rust).to.contain("mod math {");
+    expect(rust).to.contain("  use crate::util::f as f;");
+    expect(rust).to.contain("  pub fn add(a: i32) -> i32 {");
+    expect(rust).to.contain("    return a;");
+  });
+
   it("writes block expressions in a stable single-line form (v0)", () => {
     const program: RustProgram = {
       kind: "program",
       items: [
         {
           kind: "fn",
+          vis: "private",
           name: "main",
           params: [],
           ret: unitType(),
@@ -90,4 +123,3 @@ describe("@tsuba/compiler rust writer", () => {
     expect(rust).to.contain("let x = { let _ = f(); () };");
   });
 });
-

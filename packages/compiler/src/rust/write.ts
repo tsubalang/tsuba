@@ -34,6 +34,8 @@ function emitExpr(expr: RustExpr): string {
       return "()";
     case "ident":
       return expr.name;
+    case "path":
+      return emitPath(expr.path.segments);
     case "number":
       return expr.text;
     case "string":
@@ -117,20 +119,40 @@ function emitParam(p: RustParam): string {
   return `${p.name}: ${emitType(p.type)}`;
 }
 
-function emitItem(item: RustItem): string[] {
+function emitItem(item: RustItem, indent: string): string[] {
   switch (item.kind) {
+    case "use": {
+      const alias = item.alias ? ` as ${item.alias}` : "";
+      return [`${indent}use ${emitPath(item.path.segments)}${alias};`];
+    }
+    case "mod": {
+      const out: string[] = [];
+      out.push(`${indent}mod ${item.name} {`);
+      const innerIndent = `${indent}  `;
+      let first = true;
+      for (const inner of item.items) {
+        if (!first) out.push("");
+        out.push(...emitItem(inner, innerIndent));
+        first = false;
+      }
+      out.push(`${indent}}`);
+      return out;
+    }
     case "struct": {
       const out: string[] = [];
-      for (const a of item.attrs) out.push(a);
-      out.push(`struct ${item.name};`);
+      for (const a of item.attrs) out.push(`${indent}${a}`);
+      const vis = item.vis === "pub" ? "pub " : "";
+      out.push(`${indent}${vis}struct ${item.name};`);
       return out;
     }
     case "fn": {
       const out: string[] = [];
       const retClause = item.ret.kind === "unit" ? "" : ` -> ${emitType(item.ret)}`;
-      out.push(`fn ${item.name}(${item.params.map(emitParam).join(", ")})${retClause} {`);
-      for (const st of item.body) out.push(...emitStmtLines(st, "  "));
-      out.push("}");
+      const vis = item.vis === "pub" ? "pub " : "";
+      out.push(`${indent}${vis}fn ${item.name}(${item.params.map(emitParam).join(", ")})${retClause} {`);
+      const bodyIndent = `${indent}  `;
+      for (const st of item.body) out.push(...emitStmtLines(st, bodyIndent));
+      out.push(`${indent}}`);
       return out;
     }
   }
@@ -141,9 +163,8 @@ export function writeRustProgram(program: RustProgram, opts?: { readonly header?
   for (const h of opts?.header ?? []) parts.push(h);
   for (const item of program.items) {
     if (parts.length > 0) parts.push("");
-    parts.push(...emitItem(item));
+    parts.push(...emitItem(item, ""));
   }
   parts.push("");
   return parts.join("\n");
 }
-
