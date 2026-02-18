@@ -1,5 +1,6 @@
 import ts from "typescript";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 import type { RustExpr, RustItem, RustParam, RustProgram, RustStmt, RustType, Span } from "./ir.js";
 import { identExpr, pathType, unitExpr, unitType } from "./ir.js";
@@ -26,14 +27,32 @@ export type CompileHostOptions = {
   readonly entryFile: string;
 };
 
+export type CrateDep = {
+  readonly name: string;
+  readonly version: string;
+  readonly features?: readonly string[];
+};
+
 export type CompileHostOutput = {
   readonly mainRs: string;
   readonly kernels: readonly KernelDecl[];
+  readonly crates: readonly CrateDep[];
 };
 
 type EmitCtx = {
   readonly checker: ts.TypeChecker;
   readonly thisName?: string;
+};
+
+type BindingsManifest = {
+  readonly schema: number;
+  readonly kind: "crate";
+  readonly crate: {
+    readonly name: string;
+    readonly version: string;
+    readonly features?: readonly string[];
+  };
+  readonly modules: Record<string, string>;
 };
 
 function normalizePath(p: string): string {
@@ -57,6 +76,71 @@ function rustModuleNameFromFileName(fileName: string): string {
 
 function splitRustPath(path: string): readonly string[] {
   return path.split("::").filter((s) => s.length > 0);
+}
+
+const markerModuleSpecifiers = new Set<string>([
+  "@tsuba/core/lang.js",
+  "@tsuba/core/types.js",
+  "@tsuba/std/prelude.js",
+  "@tsuba/std/macros.js",
+  "@tsuba/gpu/lang.js",
+  "@tsuba/gpu/types.js",
+]);
+
+function isMarkerModuleSpecifier(spec: string): boolean {
+  return markerModuleSpecifiers.has(spec);
+}
+
+function packageNameFromSpecifier(spec: string): string {
+  if (spec.startsWith("@")) {
+    const parts = spec.split("/");
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : spec;
+  }
+  const idx = spec.indexOf("/");
+  return idx === -1 ? spec : spec.slice(0, idx);
+}
+
+function findNodeModulesPackageRoot(fromFileName: string, packageName: string): string | undefined {
+  const packagePath = join("node_modules", ...packageName.split("/"));
+  let cur = resolve(dirname(fromFileName));
+  while (true) {
+    const candidate = join(cur, packagePath);
+    if (existsSync(join(candidate, "package.json"))) return candidate;
+    const parent = dirname(cur);
+    if (parent === cur) return undefined;
+    cur = parent;
+  }
+}
+
+function readBindingsManifest(path: string, specNode: ts.Node): BindingsManifest {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+  } catch (e) {
+    failAt(specNode, "TSB3220", `Failed to read ${path}: ${String(e)}`);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    failAt(specNode, "TSB3221", `${path} must be a JSON object.`);
+  }
+  const m = parsed as Partial<BindingsManifest>;
+  if (m.schema !== 1) {
+    failAt(specNode, "TSB3222", `${path}: unsupported schema (expected 1).`);
+  }
+  if (m.kind !== "crate") {
+    failAt(specNode, "TSB3223", `${path}: unsupported kind (expected "crate").`);
+  }
+  if (!m.crate || typeof m.crate.name !== "string" || typeof m.crate.version !== "string") {
+    failAt(specNode, "TSB3224", `${path}: missing crate.name/crate.version.`);
+  }
+  if (m.crate.features !== undefined) {
+    if (!Array.isArray(m.crate.features) || !m.crate.features.every((x) => typeof x === "string")) {
+      failAt(specNode, "TSB3227", `${path}: crate.features must be an array of strings when present.`);
+    }
+  }
+  if (!m.modules || typeof m.modules !== "object") {
+    failAt(specNode, "TSB3225", `${path}: missing modules mapping.`);
+  }
+  return m as BindingsManifest;
 }
 
 function spanFromNode(node: ts.Node): Span {
@@ -944,6 +1028,34 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   const ctx: EmitCtx = { checker };
   const kernels = collectKernelDecls(ctx, sf);
+  const usedCratesByName = new Map<string, CrateDep>();
+
+  function addUsedCrate(node: ts.Node, dep: CrateDep): void {
+    const normalize = (d: CrateDep): CrateDep => {
+      const features = (d.features ?? []).filter((x): x is string => typeof x === "string");
+      const unique = [...new Set(features)].sort((a, b) => a.localeCompare(b));
+      return unique.length === 0 ? { name: d.name, version: d.version } : { name: d.name, version: d.version, features: unique };
+    };
+
+    const prev = usedCratesByName.get(dep.name);
+    if (!prev) {
+      usedCratesByName.set(dep.name, normalize(dep));
+      return;
+    }
+    if (prev.version !== dep.version) {
+      failAt(
+        node,
+        "TSB3226",
+        `Conflicting crate versions for '${dep.name}': '${prev.version}' vs '${dep.version}'.`
+      );
+    }
+    const mergedFeatures = new Set<string>([...(prev.features ?? []), ...(dep.features ?? [])]);
+    const features = [...mergedFeatures].sort((a, b) => a.localeCompare(b));
+    usedCratesByName.set(
+      dep.name,
+      features.length === 0 ? { name: dep.name, version: dep.version } : { name: dep.name, version: dep.version, features }
+    );
+  }
 
   const items: RustItem[] = [];
   if (kernels.length > 0) {
@@ -1043,7 +1155,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         const spec = specNode.text;
 
         // Marker/facade imports: compile-time only, no Rust `use` emitted.
-        if (spec.startsWith("@tsuba/")) continue;
+        if (isMarkerModuleSpecifier(spec)) continue;
 
         const clause = st.importClause;
         if (!clause) {
@@ -1066,15 +1178,56 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
           failAt(bindings, "TSB3210", "Unsupported import binding form in v0.");
         }
 
-        const resolved = resolveRelativeImport(f.fileName, spec);
-        for (const el of bindings.elements) {
-          const exported = el.propertyName?.text ?? el.name.text;
-          const local = el.name.text;
-          uses.push({
-            kind: "use",
-            path: { segments: ["crate", resolved.mod, exported] },
-            alias: local !== exported ? local : undefined,
+        if (spec.startsWith(".")) {
+          const resolved = resolveRelativeImport(f.fileName, spec);
+          for (const el of bindings.elements) {
+            const exported = el.propertyName?.text ?? el.name.text;
+            const local = el.name.text;
+            uses.push({
+              kind: "use",
+              path: { segments: ["crate", resolved.mod, exported] },
+              alias: local !== exported ? local : undefined,
+            });
+          }
+        } else {
+          const pkgName = packageNameFromSpecifier(spec);
+          const pkgRoot = findNodeModulesPackageRoot(f.fileName, pkgName);
+          if (!pkgRoot) {
+            failAt(specNode, "TSB3211", `Could not resolve package '${pkgName}' for import ${JSON.stringify(spec)}.`);
+          }
+          const manifestPath = join(pkgRoot, "tsuba.bindings.json");
+          if (!existsSync(manifestPath)) {
+            failAt(
+              specNode,
+              "TSB3212",
+              `No tsuba.bindings.json found for package '${pkgName}' (needed for import ${JSON.stringify(spec)}).`
+            );
+          }
+          const manifest = readBindingsManifest(manifestPath, specNode);
+          const rustModule = manifest.modules[spec];
+          if (!rustModule) {
+            failAt(
+              specNode,
+              "TSB3213",
+              `No module mapping for ${JSON.stringify(spec)} in ${manifestPath}.`
+            );
+          }
+          addUsedCrate(specNode, {
+            name: manifest.crate.name,
+            version: manifest.crate.version,
+            features: manifest.crate.features,
           });
+
+          const baseSegs = splitRustPath(rustModule);
+          for (const el of bindings.elements) {
+            const exported = el.propertyName?.text ?? el.name.text;
+            const local = el.name.text;
+            uses.push({
+              kind: "use",
+              path: { segments: [...baseSegs, exported] },
+              alias: local !== exported ? local : undefined,
+            });
+          }
         }
         continue;
       }
@@ -1178,5 +1331,6 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const rustProgram: RustProgram = { kind: "program", items };
   const mainRs = writeRustProgram(rustProgram, { header: ["// Generated by @tsuba/compiler (v0)"] });
 
-  return { mainRs, kernels };
+  const crates = [...usedCratesByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return { mainRs, kernels, crates };
 }

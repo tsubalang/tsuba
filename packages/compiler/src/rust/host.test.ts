@@ -355,4 +355,41 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("let mut c: Counter = Counter::new();");
     expect(out.mainRs).to.contain("c.inc();");
   });
+
+  it("resolves non-relative imports via tsuba.bindings.json and records crate deps", () => {
+    const dir = makeRepoTempDir("compiler-bindings-");
+    const entry = join(dir, "main.ts");
+
+    const pkgRoot = join(dir, "node_modules", "@tsuba", "fake");
+    mkdirSync(pkgRoot, { recursive: true });
+    writeFileSync(join(pkgRoot, "package.json"), JSON.stringify({ name: "@tsuba/fake", version: "0.0.1" }) + "\n", "utf-8");
+    writeFileSync(join(pkgRoot, "index.js"), "export {};\n", "utf-8");
+    writeFileSync(join(pkgRoot, "index.d.ts"), "export declare class Foo {}\n", "utf-8");
+    writeFileSync(
+      join(pkgRoot, "tsuba.bindings.json"),
+      JSON.stringify(
+        {
+          schema: 1,
+          kind: "crate",
+          crate: { name: "fake_crate", version: "0.1.0" },
+          modules: { "@tsuba/fake/index.js": "fake_crate" },
+        },
+        null,
+        2
+      ) + "\n",
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      ['import { Foo } from "@tsuba/fake/index.js";', "", "export function main(): void {", "  void Foo;", "}", ""].join(
+        "\n"
+      ),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("use fake_crate::Foo;");
+    expect(out.crates).to.deep.equal([{ name: "fake_crate", version: "0.1.0" }]);
+  });
 });

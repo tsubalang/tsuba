@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 
 import { compileHostToRust } from "@tsuba/compiler";
 
+import { mergeCargoDependencies, renderCargoToml } from "./cargo.js";
+
 type WorkspaceConfig = {
   readonly schema: number;
   readonly rustEdition: "2021" | "2024";
@@ -22,6 +24,13 @@ type ProjectConfig = {
   readonly entry: string;
   readonly crate: {
     readonly name: string;
+  };
+  readonly deps?: {
+    readonly crates?: readonly {
+      readonly id: string;
+      readonly version: string;
+      readonly features?: readonly string[];
+    }[];
   };
 };
 
@@ -102,15 +111,18 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   const generatedSrcDir = join(generatedRoot, "src");
   mkdirSync(generatedSrcDir, { recursive: true });
 
-  const cargoToml = [
-    "[package]",
-    `name = ${JSON.stringify(project.crate.name)}`,
-    'version = "0.0.0"',
-    `edition = ${JSON.stringify(workspace.rustEdition)}`,
-    "",
-    "[dependencies]",
-    "",
-  ].join("\n");
+  const declaredCrates =
+    project.deps?.crates?.map((d) => ({
+      name: d.id,
+      version: d.version,
+      features: d.features,
+    })) ?? [];
+  const crates = mergeCargoDependencies(declaredCrates, out.crates);
+  const cargoToml = renderCargoToml({
+    crateName: project.crate.name,
+    rustEdition: workspace.rustEdition,
+    deps: crates,
+  });
 
   writeFileSync(join(generatedRoot, "Cargo.toml"), cargoToml, "utf-8");
   writeFileSync(join(generatedSrcDir, "main.rs"), out.mainRs, "utf-8");
