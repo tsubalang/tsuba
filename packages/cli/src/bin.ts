@@ -2,8 +2,9 @@ import { argv, cwd, exit } from "node:process";
 
 import { runBuild } from "./internal/commands/build.js";
 import { runInit } from "./internal/commands/init.js";
+import { runRun } from "./internal/commands/run.js";
 
-type Cmd = "init" | "build" | "help";
+type Cmd = "init" | "build" | "run" | "help";
 
 function usage(): void {
   // Keep this minimal for now.
@@ -15,6 +16,7 @@ function usage(): void {
       "Usage:",
       "  tsuba init",
       "  tsuba build",
+      "  tsuba run",
       "",
     ].join("\n")
   );
@@ -23,7 +25,7 @@ function usage(): void {
 function parseCommand(args: readonly string[]): Cmd {
   const [cmd] = args;
   if (!cmd) return "help";
-  if (cmd === "init" || cmd === "build" || cmd === "help") return cmd;
+  if (cmd === "init" || cmd === "build" || cmd === "run" || cmd === "help") return cmd;
   return "help";
 }
 
@@ -35,6 +37,9 @@ async function main(): Promise<void> {
       return;
     case "build":
       await runBuild({ dir: cwd() });
+      return;
+    case "run":
+      await runRun({ dir: cwd(), stdio: "inherit" });
       return;
     default:
       usage();

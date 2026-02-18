@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc -b",
     "build": "npm run typecheck",
+    "run-all": "bash test/scripts/run-all.sh",
     "test": "npm test --workspaces",
     "test:cli": "cd packages/cli && npm test --",
     "test:compiler": "cd packages/compiler && npm test --"
@@ -30,4 +31,3 @@
   },
   "license": "MIT"
 }
-

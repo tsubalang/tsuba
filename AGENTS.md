@@ -17,5 +17,4 @@ Fast iteration (allowed while developing):
 
 Final verification (required before merge/publish):
 
-- `npm test`
-
+- `npm run run-all`
