@@ -840,6 +840,51 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.kernels[0]!.cuSource).to.contain("for (uint32_t stride = (");
   });
 
+  it("lowers MoE dispatch building-block kernels (v0, compile-only)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-moe-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX, blockIdxX, blockDimX, atomicAdd, addr } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { u32 } from "@tsuba/core/types.js";',
+        "",
+        'const countExperts = kernel({ name: "countExperts" } as const, (expertIds: global_ptr<u32>, counts: global_ptr<u32>, n: u32): void => {',
+        "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+        "  if (i < n) {",
+        "    const e = expertIds[i];",
+        "    atomicAdd(addr(counts, e), 1 as u32);",
+        "  }",
+        "});",
+        "",
+        'const permuteByExpert = kernel({ name: "permuteByExpert" } as const, (src: global_ptr<u32>, dst: global_ptr<u32>, expertIds: global_ptr<u32>, offsets: global_ptr<u32>, n: u32): void => {',
+        "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+        "  if (i < n) {",
+        "    const e = expertIds[i];",
+        "    const pos = atomicAdd(addr(offsets, e), 1 as u32);",
+        "    dst[pos] = src[i];",
+        "  }",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(2);
+    const count = out.kernels.find((k) => k.name === "countExperts");
+    const permute = out.kernels.find((k) => k.name === "permuteByExpert");
+    expect(count?.cuSource).to.contain("atomicAdd(");
+    expect(count?.cuSource).to.contain("counts");
+    expect(permute?.cuSource).to.contain("atomicAdd(");
+    expect(permute?.cuSource).to.contain("offsets");
+    expect(permute?.cuSource).to.contain("dst[pos] = src[i]");
+  });
+
   it("errors (airplane-grade) on kernel numeric literals without explicit cast", () => {
     const dir = makeRepoTempDir("compiler-kernel-");
     const entry = join(dir, "main.ts");
