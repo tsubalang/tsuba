@@ -10,12 +10,17 @@ This is a **language feature**: the facade determines what users can write ergon
 
 - `@tsuba/core` — marker APIs (`lang.js`) and core types.
 - `@tsuba/std` — Rust `std` facades.
+- `@tsuba/gpu` — GPU kernel authoring + launch facades (CUDA/PTX first).
 
 Optional but expected for “majority use cases”:
 
 - `@tsuba/tokio` — async runtime facade.
 - `@tsuba/serde` — serde derive + JSON facade.
 - `@tsuba/web` — thin facades over a chosen Rust web stack (likely `axum`).
+
+Likely (but may be split out from `@tsuba/gpu`):
+
+- `@tsuba/tensor` — explicit tensor/view types (dtype/layout/device) built on `@tsuba/gpu`.
 
 ---
 
@@ -90,4 +95,3 @@ Tsuba must provide a compile-time way to request derives:
 - `Deserialize`
 
 This can be done via a Tsuba attribute DSL (future) or minimal markers.
-

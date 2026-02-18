@@ -8,6 +8,7 @@ This is the **initial** specification for Tsuba.
 - Tsuba is **Rust-first**: Rust semantics are the source of truth.
 - Tsuba is **airplane-grade**: Tsuba must never silently miscompile.
 - Tsuba will intentionally **reject** many valid TypeScript programs.
+- Tsuba is **GPU-first**: writing real GPU kernels (CUDA/PTX first) is a v0 requirement.
 
 **Key policy:**
 - If Tsuba cannot map a construct to Rust **deterministically**, Tsuba must error.
@@ -22,6 +23,7 @@ This is the **initial** specification for Tsuba.
 
 - Let users write Rust programs using TypeScript syntax and tooling.
 - Make the result feel like **real Rust** (enums/traits/borrows/async/FFI).
+- Make it possible to write **real, high-performance GPU kernels** (FlashAttention-class) from TS (see `gpu.md`).
 - Keep the surface syntax within what `tsc` can typecheck.
 
 ### 1.2 Non-goals
@@ -53,6 +55,7 @@ For each project, Tsuba produces:
 - Rust sources under `packages/<name>/generated/` (or `generated-rs/`)
 - A Cargo crate under `packages/<name>/generated-crate/` (or directly in `packages/<name>/`)
 - Final artifacts under `packages/<name>/out/` (binary or library)
+- When kernels are present: device artifacts (e.g. PTX) plus launch metadata (see `gpu.md`)
 
 Tsuba should be able to:
 - `tsuba build` (generate + cargo build)
@@ -64,6 +67,14 @@ Tsuba should be able to:
 v0 supports:
 - `bin` (executable)
 - `lib` (rlib / cdylib / staticlib) as explicit config
+
+### 2.4 GPU kernels (v0 must-have)
+
+GPU support is defined in `gpu.md` and includes:
+
+- a kernel dialect embedded in TS via `kernel(spec, fn)` intrinsics
+- explicit memory + launch configuration (no hidden transfers)
+- CUDA/PTX as the first-class backend
 
 ---
 
@@ -83,6 +94,7 @@ Tsuba accepts a strict subset of TypeScript.
 - `switch` over discriminants → `match`
 - `for`, `while` in restricted forms
 - `async` / `await` → Rust `async` / `.await` (runtime via configured executor)
+- GPU kernel bodies in a restricted kernel dialect (see `gpu.md`)
 
 ### 3.2 Forbidden / rejected in v0
 
@@ -252,7 +264,7 @@ Arrow functions lower to Rust closures.
 Tsuba provides a marker function `move(fn)` which forces Rust `move` capture.
 
 ```ts
-import { move } from "@tsuba/core/types.js";
+import { move } from "@tsuba/core/lang.js";
 spawn(move(() => { println(name); }));
 ```
 
@@ -380,6 +392,7 @@ Rust errors should be surfaced with the generated Rust snippet location and orig
 
 Must-have for “majority Rust use cases”:
 
+- GPU kernel dialect (CUDA/PTX first) with shared memory + barriers + atomics
 - enums + match
 - traits + impl
 - Option/Result + ?
