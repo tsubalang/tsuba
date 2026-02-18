@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,11 @@ describe("@tsuba/cli build", () => {
     await runInit({ dir: root });
 
     const projectRoot = join(root, "packages", projectName);
+    const projectJsonPath = join(projectRoot, "tsuba.json");
+    const projectJson = JSON.parse(readFileSync(projectJsonPath, "utf-8")) as any;
+    projectJson.gpu = { enabled: true };
+    writeFileSync(projectJsonPath, JSON.stringify(projectJson, null, 2) + "\n", "utf-8");
+
     const mainTs = join(projectRoot, "src", "main.ts");
     writeFileSync(
       mainTs,
@@ -199,5 +204,78 @@ describe("@tsuba/cli build", () => {
     }
     expect(String(err)).to.contain("src/main.ts");
     expect(String(err)).to.contain("cargo build failed");
+  });
+
+  it("compiles kernels when gpu.backend is cuda and the project enables gpu", async () => {
+    const root = makeRepoTempDir("cli-build-cuda-");
+    const projectName = basename(root);
+
+    await runInit({ dir: root });
+
+    const cudaRoot = join(root, "fake-cuda");
+    const nvccPath = join(cudaRoot, "bin", "nvcc");
+    mkdirSync(join(cudaRoot, "bin"), { recursive: true });
+    writeFileSync(
+      nvccPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        'if [[ "${1:-}" == "--version" ]]; then',
+        '  echo "Cuda compilation tools, release 12.0, V12.0.0"',
+        "  exit 0",
+        "fi",
+        "",
+        'out=""',
+        'args=("$@")',
+        "for ((i=0; i<${#args[@]}; i++)); do",
+        '  if [[ "${args[$i]}" == "-o" ]]; then',
+        '    out="${args[$((i+1))]}"',
+        "  fi",
+        "done",
+        "",
+        'if [[ -z "$out" ]]; then',
+        '  echo "missing -o" >&2',
+        "  exit 1",
+        "fi",
+        "",
+        'echo "// fake ptx" > "$out"',
+        "",
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+    chmodSync(nvccPath, 0o755);
+
+    const wsPath = join(root, "tsuba.workspace.json");
+    const ws = JSON.parse(readFileSync(wsPath, "utf-8")) as any;
+    ws.gpu = { backend: "cuda", cuda: { toolkitPath: cudaRoot, sm: 80 } };
+    writeFileSync(wsPath, JSON.stringify(ws, null, 2) + "\n", "utf-8");
+
+    const projectRoot = join(root, "packages", projectName);
+    const projectJsonPath = join(projectRoot, "tsuba.json");
+    const projectJson = JSON.parse(readFileSync(projectJsonPath, "utf-8")) as any;
+    projectJson.gpu = { enabled: true };
+    writeFileSync(projectJsonPath, JSON.stringify(projectJson, null, 2) + "\n", "utf-8");
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      [
+        'import { kernel } from "@tsuba/gpu/lang.js";',
+        "",
+        'const k = kernel({ name: "k" } as const, () => {});',
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    await runBuild({ dir: projectRoot });
+
+    const ptx = join(projectRoot, "generated", "kernels", "k.ptx");
+    expect(existsSync(ptx)).to.equal(true);
   });
 });
