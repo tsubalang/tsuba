@@ -73,6 +73,10 @@ export function deviceMalloc<T>(_len: u32): global_ptr<T> {
   void _len;
   return marker("deviceMalloc");
 }
+export function deviceFree<T>(_ptr: global_ptr<T>): void {
+  void _ptr;
+  marker("deviceFree");
+}
 export function memcpyHtoD<T>(_dst: global_ptr<T>, _src: ref<Vec<T>>): void {
   void _dst;
   void _src;

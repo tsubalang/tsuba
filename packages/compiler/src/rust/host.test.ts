@@ -798,7 +798,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import { deviceMalloc, memcpyHtoD, memcpyDtoH } from "@tsuba/gpu/lang.js";',
+        'import { deviceMalloc, deviceFree, memcpyHtoD, memcpyDtoH } from "@tsuba/gpu/lang.js";',
         'import { Vec } from "@tsuba/std/prelude.js";',
         'import type { f32, u32, mut } from "@tsuba/core/types.js";',
         "",
@@ -808,6 +808,7 @@ describe("@tsuba/compiler host emitter", () => {
         "  const ptr = deviceMalloc<f32>(n);",
         "  memcpyHtoD(ptr, host);",
         "  memcpyDtoH(host, ptr);",
+        "  deviceFree(ptr);",
         "}",
         "",
       ].join("\n"),
@@ -818,6 +819,7 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("__tsuba_cuda::device_malloc::<f32>(n)");
     expect(out.mainRs).to.contain("__tsuba_cuda::memcpy_htod(ptr, &(host))");
     expect(out.mainRs).to.contain("__tsuba_cuda::memcpy_dtoh(&mut (host), ptr)");
+    expect(out.mainRs).to.contain("__tsuba_cuda::device_free(ptr)");
     expect(out.mainRs).to.contain("mod __tsuba_cuda {");
   });
 });
