@@ -530,6 +530,20 @@ function lowerKernelExprToCuda(env: CudaEnv, expr: ts.Expression): { readonly te
       return { text: `atomicAdd(${ptr.text}, ${value.text})`, type: { kind: "scalar", scalar: "u32" } };
     }
 
+    if (name === "expf") {
+      if ((expr.typeArguments?.length ?? 0) !== 0) {
+        failAt(expr, "TSB1425", "expf(x) in kernel code must not have type arguments in v0.");
+      }
+      if (expr.arguments.length !== 1) {
+        failAt(expr, "TSB1425", "expf(x) in kernel code must have exactly 1 arg in v0.");
+      }
+      const x = lowerKernelExprToCuda(env, expr.arguments[0]!);
+      if (x.type.kind !== "scalar" || x.type.scalar !== "f32") {
+        failAt(expr.arguments[0]!, "TSB1425", "expf(x) requires x to be f32 in v0.");
+      }
+      return { text: `expf(${x.text})`, type: { kind: "scalar", scalar: "f32" } };
+    }
+
     if (expr.arguments.length !== 0) {
       failAt(expr, "TSB1425", `${name}(...) in kernel code is not supported in v0.`);
     }
@@ -869,6 +883,7 @@ function lowerKernelToCudaSource(
   lines.push("");
   lines.push("#include <stdint.h>");
   lines.push("#include <stdbool.h>");
+  lines.push("#include <math.h>");
   lines.push("");
 
   const sigParams = params.map((p) => `${cudaTypeToCType(p.ty)} ${p.name}`).join(", ");

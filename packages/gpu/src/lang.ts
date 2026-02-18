@@ -1,7 +1,7 @@
 // @tsuba/gpu/lang.js
 // Marker functions only. Tsuba erases these at compile time.
 
-import type { u32 } from "@tsuba/core/types.js";
+import type { f32, u32 } from "@tsuba/core/types.js";
 import type { mutref, ref } from "@tsuba/core/types.js";
 import type { Vec } from "@tsuba/std/prelude.js";
 import type { global_ptr, shared_ptr } from "./types.js";
@@ -102,6 +102,12 @@ export function atomicAdd(_ptr: global_ptr<u32>, _value: u32): u32 {
   void _ptr;
   void _value;
   return marker("atomicAdd");
+}
+
+// Math intrinsics (kernel-only)
+export function expf(_x: f32): f32 {
+  void _x;
+  return marker("expf");
 }
 
 // Pointer helpers (kernel-only)

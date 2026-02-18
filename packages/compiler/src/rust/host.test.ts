@@ -733,6 +733,113 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.kernels[0]!.cuSource).to.contain("sum = (sum + (a[");
   });
 
+  it("lowers a shared-memory tiled matmul kernel (v0 credibility, compile-only)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-matmul-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX, threadIdxY, blockIdxX, blockIdxY, blockDimX, blockDimY, sharedArray, syncthreads } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        "",
+        'const matmul = kernel({ name: "matmul" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
+        "  const TILE = 16 as u32;",
+        "  const tileA = sharedArray<f32, 256>();",
+        "  const tileB = sharedArray<f32, 256>();",
+        "",
+        "  const row = (blockIdxY() * blockDimY() + threadIdxY()) as u32;",
+        "  const col = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+        "",
+        "  let sum = 0.0 as f32;",
+        "  for (let t = 0 as u32; t < (n / TILE); t++) {",
+        "    const aCol = (t * TILE + threadIdxX()) as u32;",
+        "    const bRow = (t * TILE + threadIdxY()) as u32;",
+        "    tileA[threadIdxY() * TILE + threadIdxX()] = a[row * n + aCol];",
+        "    tileB[threadIdxY() * TILE + threadIdxX()] = b[bRow * n + col];",
+        "    syncthreads();",
+        "    for (let kk = 0 as u32; kk < TILE; kk++) {",
+        "      sum = sum + tileA[threadIdxY() * TILE + kk] * tileB[kk * TILE + threadIdxX()];",
+        "    }",
+        "    syncthreads();",
+        "  }",
+        "  out[row * n + col] = sum;",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(1);
+    expect(out.kernels[0]!.cuSource).to.contain("__shared__ float __tsuba_smem0[256];");
+    expect(out.kernels[0]!.cuSource).to.contain("__shared__ float __tsuba_smem1[256];");
+    expect(out.kernels[0]!.cuSource).to.contain("__syncthreads();");
+    expect(out.kernels[0]!.cuSource).to.contain("for (uint32_t t = ((uint32_t)(0));");
+    expect(out.kernels[0]!.cuSource).to.contain("for (uint32_t kk = ((uint32_t)(0));");
+  });
+
+  it("lowers a numerically-stable softmax kernel (v0 credibility, compile-only)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-softmax-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX, blockDimX, sharedArray, syncthreads, expf } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        "",
+        'const softmax = kernel({ name: "softmax" } as const, (xs: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
+        "  const tid = threadIdxX();",
+        "  const smem = sharedArray<f32, 256>();",
+        "  smem[tid] = xs[tid];",
+        "  syncthreads();",
+        "",
+        "  // max reduction (assumes n == blockDimX() == 256 in this v0 example)",
+        "  for (let stride = blockDimX() / (2 as u32); stride > (0 as u32); stride = stride / (2 as u32)) {",
+        "    if (tid < stride) {",
+        "      const other = smem[tid + stride];",
+        "      if (other > smem[tid]) {",
+        "        smem[tid] = other;",
+        "      }",
+        "    }",
+        "    syncthreads();",
+        "  }",
+        "",
+        "  const maxVal = smem[0 as u32];",
+        "  smem[tid] = expf(smem[tid] - maxVal);",
+        "  syncthreads();",
+        "",
+        "  // sum reduction",
+        "  for (let stride = blockDimX() / (2 as u32); stride > (0 as u32); stride = stride / (2 as u32)) {",
+        "    if (tid < stride) {",
+        "      smem[tid] = smem[tid] + smem[tid + stride];",
+        "    }",
+        "    syncthreads();",
+        "  }",
+        "",
+        "  const denom = smem[0 as u32];",
+        "  out[tid] = smem[tid] / denom;",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(1);
+    expect(out.kernels[0]!.cuSource).to.contain("__shared__ float __tsuba_smem0[256];");
+    expect(out.kernels[0]!.cuSource).to.contain("expf(");
+    expect(out.kernels[0]!.cuSource).to.contain("__syncthreads();");
+    expect(out.kernels[0]!.cuSource).to.contain("for (uint32_t stride = (");
+  });
+
   it("errors (airplane-grade) on kernel numeric literals without explicit cast", () => {
     const dir = makeRepoTempDir("compiler-kernel-");
     const entry = join(dir, "main.ts");
