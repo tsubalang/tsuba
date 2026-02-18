@@ -329,7 +329,7 @@ export type KernelParamSig =
 
 type CudaType =
   | { readonly kind: "scalar"; readonly scalar: KernelScalar }
-  | { readonly kind: "ptr"; readonly addrSpace: "global"; readonly inner: KernelScalar };
+  | { readonly kind: "ptr"; readonly addrSpace: "global" | "shared"; readonly inner: KernelScalar };
 
 function cudaTypeFromTypeNode(node: ts.TypeNode, at: ts.Node): CudaType {
   if (node.kind === ts.SyntaxKind.VoidKeyword) {
@@ -374,6 +374,18 @@ function cudaTypeFromTypeNode(node: ts.TypeNode, at: ts.Node): CudaType {
     return { kind: "ptr", addrSpace: "global", inner: inner.scalar };
   }
 
+  if (tn.text === "shared_ptr") {
+    const args = node.typeArguments ?? [];
+    if (args.length !== 1) {
+      failAt(node, "TSB1417", `shared_ptr<T> must have exactly one type argument in v0 (got ${node.getText()}).`);
+    }
+    const inner = cudaTypeFromTypeNode(args[0]!, args[0]!);
+    if (inner.kind !== "scalar") {
+      failAt(args[0]!, "TSB1418", `shared_ptr<T> inner type must be a scalar in v0 (got ${args[0]!.getText()}).`);
+    }
+    return { kind: "ptr", addrSpace: "shared", inner: inner.scalar };
+  }
+
   failAt(node, "TSB1410", `Unsupported kernel type annotation in v0: ${node.getText()}`);
 }
 
@@ -403,6 +415,8 @@ function cudaTypeToCType(t: CudaType): string {
 
 type CudaEnv = {
   readonly vars: Map<string, CudaType>;
+  readonly sharedDecls: string[];
+  nextSharedId: number;
 };
 
 function lowerKernelExprToCuda(env: CudaEnv, expr: ts.Expression): { readonly text: string; readonly type: CudaType } {
@@ -415,6 +429,23 @@ function lowerKernelExprToCuda(env: CudaEnv, expr: ts.Expression): { readonly te
     const t = env.vars.get(expr.text);
     if (!t) failAt(expr, "TSB1420", `Unknown kernel identifier '${expr.text}'.`);
     return { text: expr.text, type: t };
+  }
+
+  if (ts.isAsExpression(expr)) {
+    const castTy = cudaTypeFromTypeNode(expr.type, expr.type);
+    if (castTy.kind !== "scalar") {
+      failAt(expr.type, "TSB1423", `Only scalar casts are supported in kernel code in v0 (got ${expr.type.getText()}).`);
+    }
+    const innerText = (() => {
+      if (ts.isNumericLiteral(expr.expression)) return expr.expression.text;
+      const inner = lowerKernelExprToCuda(env, expr.expression);
+      if (inner.type.kind !== "scalar") {
+        failAt(expr.expression, "TSB1424", "Pointer casts are not supported in kernel code in v0.");
+      }
+      return inner.text;
+    })();
+    const cTy = cudaScalarToCType(castTy.scalar);
+    return { text: `((${cTy})(${innerText}))`, type: castTy };
   }
 
   if (ts.isNumericLiteral(expr)) {
@@ -434,23 +465,73 @@ function lowerKernelExprToCuda(env: CudaEnv, expr: ts.Expression): { readonly te
     return { text: "false", type: { kind: "scalar", scalar: "bool" } };
   }
 
-  if (ts.isAsExpression(expr)) {
-    const inner = lowerKernelExprToCuda(env, expr.expression);
-    const castTy = cudaTypeFromTypeNode(expr.type, expr.type);
-    if (castTy.kind !== "scalar") {
-      failAt(expr.type, "TSB1423", `Only scalar casts are supported in kernel code in v0 (got ${expr.type.getText()}).`);
-    }
-    if (inner.type.kind !== "scalar") {
-      failAt(expr.expression, "TSB1424", "Pointer casts are not supported in kernel code in v0.");
-    }
-    const cTy = cudaScalarToCType(castTy.scalar);
-    return { text: `((${cTy})(${inner.text}))`, type: castTy };
-  }
-
   if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
     const name = expr.expression.text;
+
+    if (name === "sharedArray") {
+      if ((expr.arguments?.length ?? 0) !== 0) {
+        failAt(expr, "TSB1436", "sharedArray<T,N>() in kernel code must have 0 args in v0.");
+      }
+      const args = expr.typeArguments ?? [];
+      if (args.length !== 2) {
+        failAt(expr, "TSB1437", `sharedArray<T,N>() must have exactly 2 type arguments in v0 (got ${expr.getText()}).`);
+      }
+      const elTy = cudaTypeFromTypeNode(args[0]!, args[0]!);
+      if (elTy.kind !== "scalar") {
+        failAt(args[0]!, "TSB1438", `sharedArray<T,N>() element type must be a scalar in v0 (got ${args[0]!.getText()}).`);
+      }
+      const lenTy = args[1]!;
+      if (!ts.isLiteralTypeNode(lenTy) || !ts.isNumericLiteral(lenTy.literal)) {
+        failAt(lenTy, "TSB1439", `sharedArray<T,N>() length must be a numeric literal type in v0 (got ${lenTy.getText()}).`);
+      }
+      const len = Number.parseInt(lenTy.literal.text, 10);
+      if (!Number.isFinite(len) || len <= 0) {
+        failAt(lenTy.literal, "TSB1439", `sharedArray<T,N>() length must be a positive integer literal in v0 (got ${lenTy.literal.getText()}).`);
+      }
+
+      const sharedName = `__tsuba_smem${env.nextSharedId++}`;
+      env.sharedDecls.push(`__shared__ ${cudaScalarToCType(elTy.scalar)} ${sharedName}[${lenTy.literal.text}];`);
+      return { text: sharedName, type: { kind: "ptr", addrSpace: "shared", inner: elTy.scalar } };
+    }
+
+    if (name === "addr") {
+      if ((expr.typeArguments?.length ?? 0) !== 0) {
+        failAt(expr, "TSB1425", "addr(ptr, index) in kernel code must not have type arguments in v0.");
+      }
+      if (expr.arguments.length !== 2) {
+        failAt(expr, "TSB1425", "addr(ptr, index) in kernel code must have exactly 2 args in v0.");
+      }
+      const base = lowerKernelExprToCuda(env, expr.arguments[0]!);
+      if (base.type.kind !== "ptr") {
+        failAt(expr.arguments[0]!, "TSB1425", "addr(ptr, index) requires ptr to be a pointer type in v0.");
+      }
+      const idx = lowerKernelExprToCuda(env, expr.arguments[1]!);
+      if (idx.type.kind !== "scalar" || (idx.type.scalar !== "u32" && idx.type.scalar !== "i32")) {
+        failAt(expr.arguments[1]!, "TSB1425", "addr(ptr, index) index must be i32 or u32 in v0.");
+      }
+      return { text: `(&(${base.text}[${idx.text}]))`, type: base.type };
+    }
+
+    if (name === "atomicAdd") {
+      if ((expr.typeArguments?.length ?? 0) !== 0) {
+        failAt(expr, "TSB1425", "atomicAdd(ptr, value) in kernel code must not have type arguments in v0.");
+      }
+      if (expr.arguments.length !== 2) {
+        failAt(expr, "TSB1425", "atomicAdd(ptr, value) in kernel code must have exactly 2 args in v0.");
+      }
+      const ptr = lowerKernelExprToCuda(env, expr.arguments[0]!);
+      if (ptr.type.kind !== "ptr" || ptr.type.inner !== "u32") {
+        failAt(expr.arguments[0]!, "TSB1425", "atomicAdd(ptr, value) requires ptr to be global_ptr<u32> in v0.");
+      }
+      const value = lowerKernelExprToCuda(env, expr.arguments[1]!);
+      if (value.type.kind !== "scalar" || value.type.scalar !== "u32") {
+        failAt(expr.arguments[1]!, "TSB1425", "atomicAdd(ptr, value) requires value to be u32 in v0.");
+      }
+      return { text: `atomicAdd(${ptr.text}, ${value.text})`, type: { kind: "scalar", scalar: "u32" } };
+    }
+
     if (expr.arguments.length !== 0) {
-      failAt(expr, "TSB1425", `${name}() in kernel code must have 0 args in v0.`);
+      failAt(expr, "TSB1425", `${name}(...) in kernel code is not supported in v0.`);
     }
     // Intrinsics (CUDA-like)
     switch (name) {
@@ -594,6 +675,15 @@ function lowerKernelStmtToCuda(env: CudaEnv, st: ts.Statement, indent: string): 
 
   if (ts.isExpressionStatement(st)) {
     const e = st.expression;
+    if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "syncthreads") {
+      if ((e.typeArguments?.length ?? 0) !== 0) {
+        failAt(e, "TSB1447", "syncthreads() in kernel code must not have type arguments in v0.");
+      }
+      if (e.arguments.length !== 0) {
+        failAt(e, "TSB1447", "syncthreads() in kernel code must have 0 args in v0.");
+      }
+      return [`${indent}__syncthreads();`];
+    }
     if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const left = e.left;
       const right = e.right;
@@ -659,7 +749,7 @@ function lowerKernelToCudaSource(
     failAt(fn.type, "TSB1414", "Kernel function must return void in v0.");
   }
 
-  const env: CudaEnv = { vars: new Map<string, CudaType>() };
+  const env: CudaEnv = { vars: new Map<string, CudaType>(), sharedDecls: [], nextSharedId: 0 };
   const params: { readonly name: string; readonly ty: CudaType }[] = [];
   for (const p of fn.parameters) {
     if (!ts.isIdentifier(p.name)) {
@@ -669,6 +759,9 @@ function lowerKernelToCudaSource(
       failAt(p, "TSB1416", `Kernel parameter '${p.name.text}' must have a type annotation in v0.`);
     }
     const ty = cudaTypeFromTypeNode(p.type, p.type);
+    if (ty.kind === "ptr" && ty.addrSpace !== "global") {
+      failAt(p.type, "TSB1419", "Kernel parameters may only use global_ptr<T> in v0.");
+    }
     env.vars.set(p.name.text, ty);
     params.push({ name: p.name.text, ty });
   }
@@ -690,7 +783,10 @@ function lowerKernelToCudaSource(
 
   const sigParams = params.map((p) => `${cudaTypeToCType(p.ty)} ${p.name}`).join(", ");
   lines.push(`extern "C" __global__ void ${name}(${sigParams}) {`);
-  for (const st of bodyStmts) lines.push(...lowerKernelStmtToCuda(env, st, "  "));
+  const bodyLines: string[] = [];
+  for (const st of bodyStmts) bodyLines.push(...lowerKernelStmtToCuda(env, st, "  "));
+  for (const decl of env.sharedDecls) lines.push(`  ${decl}`);
+  for (const line of bodyLines) lines.push(line);
   lines.push("}");
   lines.push("");
   const paramSigs: KernelParamSig[] = params.map((p) => {

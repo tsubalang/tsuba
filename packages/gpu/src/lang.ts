@@ -103,3 +103,10 @@ export function atomicAdd(_ptr: global_ptr<u32>, _value: u32): u32 {
   void _value;
   return marker("atomicAdd");
 }
+
+// Pointer helpers (kernel-only)
+export function addr<T>(_ptr: global_ptr<T>, _index: u32): global_ptr<T> {
+  void _ptr;
+  void _index;
+  return marker("addr");
+}

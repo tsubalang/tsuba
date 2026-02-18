@@ -640,6 +640,65 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.kernels[0]!.cuSource).to.contain("out[i] = (a[i] + b[i]);");
   });
 
+  it("allows numeric literals only when explicitly cast in kernel code (v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-cast-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { u32 } from "@tsuba/core/types.js";',
+        "",
+        'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
+        "  const x = 1 as u32;",
+        "  out[threadIdxX()] = x;",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(1);
+    expect(out.kernels[0]!.cuSource).to.contain("const uint32_t x = ((uint32_t)(1));");
+  });
+
+  it("lowers shared memory + barriers + atomics in kernel code (v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-shared-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX, sharedArray, syncthreads, atomicAdd, addr } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { u32 } from "@tsuba/core/types.js";',
+        "",
+        'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
+        "  const smem = sharedArray<u32, 256>();",
+        "  const tid = threadIdxX();",
+        "  smem[tid] = tid;",
+        "  syncthreads();",
+        "  atomicAdd(addr(out, 0 as u32), smem[0 as u32]);",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(1);
+    expect(out.kernels[0]!.cuSource).to.contain("__shared__ uint32_t __tsuba_smem0[256];");
+    expect(out.kernels[0]!.cuSource).to.contain("__syncthreads();");
+    expect(out.kernels[0]!.cuSource).to.contain("atomicAdd((&(out[((uint32_t)(0))])), smem[((uint32_t)(0))])");
+  });
+
   it("errors (airplane-grade) on kernel numeric literals without explicit cast", () => {
     const dir = makeRepoTempDir("compiler-kernel-");
     const entry = join(dir, "main.ts");
