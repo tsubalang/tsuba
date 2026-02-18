@@ -671,4 +671,153 @@ describe("@tsuba/compiler host emitter", () => {
     const ce = err as CompileError;
     expect(ce.code).to.equal("TSB1421");
   });
+
+  it("lowers kernel launches to runtime calls and erases kernel imports (v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-launch-");
+    const kernelFile = join(dir, "add.ts");
+    const entry = join(dir, "main.ts");
+
+    writeFileSync(
+      kernelFile,
+      [
+        'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        "",
+        'export const add = kernel({ name: "add" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
+        "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+        "  if (i < n) {",
+        "    out[i] = a[i] + b[i];",
+        "  }",
+        "});",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      [
+        'import { deviceMalloc } from "@tsuba/gpu/lang.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import { add as addKernel } from "./add.js";',
+        "",
+        "export function main(): void {",
+        "  const n = 1024 as u32;",
+        "  const a = deviceMalloc<f32>(n);",
+        "  addKernel.launch({ grid: [1, 1, 1], block: [256, 1, 1] } as const, a, a, a, n);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("__tsuba_cuda::device_malloc::<f32>(n)");
+    expect(out.mainRs).to.contain("__tsuba_cuda::launch_add(1, 1, 1, 256, 1, 1");
+    expect(out.mainRs).to.contain("mod __tsuba_cuda {");
+    expect(out.mainRs).to.not.contain("use crate::add::add");
+  });
+
+  it("errors when kernel values are used as normal host values (v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-value-");
+    const kernelFile = join(dir, "k.ts");
+    const entry = join(dir, "main.ts");
+
+    writeFileSync(
+      kernelFile,
+      [
+        'import { kernel } from "@tsuba/gpu/lang.js";',
+        'import type { u32 } from "@tsuba/core/types.js";',
+        "",
+        'export const k = kernel({ name: "k" } as const, (n: u32): void => {',
+        "  if (n < n) {",
+        "    return;",
+        "  }",
+        "});",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      [
+        'import { k } from "./k.js";',
+        "",
+        "export function main(): void {",
+        "  void k;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceof(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1406");
+  });
+
+  it("errors on host calls to kernel-only intrinsics (v0)", () => {
+    const dir = makeRepoTempDir("compiler-host-gpu-intrinsic-");
+    const entry = join(dir, "main.ts");
+
+    writeFileSync(
+      entry,
+      [
+        'import { threadIdxX } from "@tsuba/gpu/lang.js";',
+        "",
+        "export function main(): void {",
+        "  const x = threadIdxX();",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceof(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1476");
+  });
+
+  it("lowers device/memcpy markers to runtime calls with borrow insertion (v0)", () => {
+    const dir = makeRepoTempDir("compiler-gpu-memcpy-");
+    const entry = join(dir, "main.ts");
+
+    writeFileSync(
+      entry,
+      [
+        'import { deviceMalloc, memcpyHtoD, memcpyDtoH } from "@tsuba/gpu/lang.js";',
+        'import { Vec } from "@tsuba/std/prelude.js";',
+        'import type { f32, u32, mut } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const n = 4 as u32;",
+        "  let host: mut<Vec<f32>> = Vec.new<f32>();",
+        "  const ptr = deviceMalloc<f32>(n);",
+        "  memcpyHtoD(ptr, host);",
+        "  memcpyDtoH(host, ptr);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("__tsuba_cuda::device_malloc::<f32>(n)");
+    expect(out.mainRs).to.contain("__tsuba_cuda::memcpy_htod(ptr, &(host))");
+    expect(out.mainRs).to.contain("__tsuba_cuda::memcpy_dtoh(&mut (host), ptr)");
+    expect(out.mainRs).to.contain("mod __tsuba_cuda {");
+  });
 });

@@ -77,6 +77,8 @@ type EmitCtx = {
   readonly structs: ReadonlyMap<string, StructDef>;
   readonly shapeStructsByKey: Map<string, StructDef>;
   readonly shapeStructsByFile: Map<string, StructDef[]>;
+  readonly kernelDeclBySymbol: Map<ts.Symbol, KernelDecl>;
+  readonly gpuRuntime: { used: boolean };
   readonly fieldBindings?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 };
 
@@ -304,17 +306,30 @@ function isClassValue(ctx: EmitCtx, ident: ts.Identifier): boolean {
   );
 }
 
+function kernelDeclForIdentifier(ctx: EmitCtx, ident: ts.Identifier): KernelDecl | undefined {
+  const sym0 = ctx.checker.getSymbolAtLocation(ident);
+  const sym =
+    sym0 && (sym0.flags & ts.SymbolFlags.Alias) !== 0 ? ctx.checker.getAliasedSymbol(sym0) : sym0;
+  if (!sym) return undefined;
+  return ctx.kernelDeclBySymbol.get(sym);
+}
+
 export type KernelDecl = {
   readonly name: string;
   readonly specText: string;
   readonly cuSource: string;
+  readonly params: readonly KernelParamSig[];
 };
 
-type CudaScalar = "i32" | "u32" | "f32" | "f64" | "bool";
+export type KernelScalar = "i32" | "u32" | "f32" | "f64" | "bool";
+
+export type KernelParamSig =
+  | { readonly name: string; readonly kind: "scalar"; readonly scalar: KernelScalar }
+  | { readonly name: string; readonly kind: "global_ptr"; readonly scalar: KernelScalar };
 
 type CudaType =
-  | { readonly kind: "scalar"; readonly scalar: CudaScalar }
-  | { readonly kind: "ptr"; readonly addrSpace: "global"; readonly inner: CudaScalar };
+  | { readonly kind: "scalar"; readonly scalar: KernelScalar }
+  | { readonly kind: "ptr"; readonly addrSpace: "global"; readonly inner: KernelScalar };
 
 function cudaTypeFromTypeNode(node: ts.TypeNode, at: ts.Node): CudaType {
   if (node.kind === ts.SyntaxKind.VoidKeyword) {
@@ -335,7 +350,7 @@ function cudaTypeFromTypeNode(node: ts.TypeNode, at: ts.Node): CudaType {
       case "f32":
       case "f64":
       case "bool":
-        return tn.text as CudaScalar;
+        return tn.text as KernelScalar;
       default:
         return undefined;
     }
@@ -362,7 +377,7 @@ function cudaTypeFromTypeNode(node: ts.TypeNode, at: ts.Node): CudaType {
   failAt(node, "TSB1410", `Unsupported kernel type annotation in v0: ${node.getText()}`);
 }
 
-function cudaScalarToCType(s: CudaScalar): string {
+function cudaScalarToCType(s: KernelScalar): string {
   switch (s) {
     case "i32":
       return "int32_t";
@@ -635,7 +650,11 @@ function lowerKernelStmtToCuda(env: CudaEnv, st: ts.Statement, indent: string): 
   failAt(st, "TSB1460", `Unsupported kernel statement in v0: ${st.getText()}`);
 }
 
-function lowerKernelToCudaSource(name: string, fn: ts.ArrowFunction, specText: string): string {
+function lowerKernelToCudaSource(
+  name: string,
+  fn: ts.ArrowFunction,
+  specText: string
+): { readonly cuSource: string; readonly params: readonly KernelParamSig[] } {
   if (fn.type && fn.type.kind !== ts.SyntaxKind.VoidKeyword) {
     failAt(fn.type, "TSB1414", "Kernel function must return void in v0.");
   }
@@ -674,7 +693,11 @@ function lowerKernelToCudaSource(name: string, fn: ts.ArrowFunction, specText: s
   for (const st of bodyStmts) lines.push(...lowerKernelStmtToCuda(env, st, "  "));
   lines.push("}");
   lines.push("");
-  return lines.join("\n");
+  const paramSigs: KernelParamSig[] = params.map((p) => {
+    if (p.ty.kind === "scalar") return { name: p.name, kind: "scalar", scalar: p.ty.scalar };
+    return { name: p.name, kind: "global_ptr", scalar: p.ty.inner };
+  });
+  return { cuSource: lines.join("\n"), params: paramSigs };
 }
 
 function isAsConstObjectLiteral(expr: ts.Expression): expr is ts.AsExpression {
@@ -685,9 +708,8 @@ function isAsConstObjectLiteral(expr: ts.Expression): expr is ts.AsExpression {
   return ts.isObjectLiteralExpression(expr.expression);
 }
 
-function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDecl[] {
+function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile, seen: Set<string>): readonly KernelDecl[] {
   const out: KernelDecl[] = [];
-  const seen = new Set<string>();
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
@@ -702,6 +724,10 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDec
           failAt(node, "TSB1400", "kernel(...) must appear as a const initializer: const k = kernel(...).");
         }
         const declList = node.parent.parent;
+        const declStmt = declList.parent;
+        if (!ts.isVariableStatement(declStmt) || declStmt.parent !== sf) {
+          failAt(node, "TSB1400", "kernel(...) must be declared in a top-level const statement in v0.");
+        }
         const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
         if (!isConst) failAt(declList, "TSB1401", "kernel(...) must be assigned to a const in v0.");
 
@@ -721,8 +747,17 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDec
         }
 
         const specText = specArg.expression.getText(sf);
-        const cuSource = lowerKernelToCudaSource(name, fnArg, specText);
-        out.push({ name, specText, cuSource });
+        const lowered = lowerKernelToCudaSource(name, fnArg, specText);
+        const decl: KernelDecl = { name, specText, cuSource: lowered.cuSource, params: lowered.params };
+        out.push(decl);
+
+        const sym0 = ctx.checker.getSymbolAtLocation(node.parent.name);
+        const sym =
+          sym0 && (sym0.flags & ts.SymbolFlags.Alias) !== 0 ? ctx.checker.getAliasedSymbol(sym0) : sym0;
+        if (!sym) {
+          failAt(node.parent.name, "TSB1402", `Could not resolve kernel symbol for '${name}'.`);
+        }
+        ctx.kernelDeclBySymbol.set(sym, decl);
       }
     }
     ts.forEachChild(node, visit);
@@ -730,6 +765,61 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDec
 
   visit(sf);
   return out;
+}
+
+function renderCudaRuntimeModule(kernels: readonly KernelDecl[]): string {
+  const lines: string[] = [];
+  lines.push("// @tsuba/gpu runtime scaffolding (v0)");
+  lines.push("#[allow(dead_code)]");
+  lines.push("#[allow(non_snake_case)]");
+  lines.push("#[allow(non_camel_case_types)]");
+  lines.push("mod __tsuba_cuda {");
+  lines.push("  use std::marker::PhantomData;");
+  lines.push("");
+  lines.push("  #[derive(Copy, Clone)]");
+  lines.push("  pub struct DevicePtr<T> {");
+  lines.push("    pub raw: u64,");
+  lines.push("    _marker: PhantomData<T>,");
+  lines.push("  }");
+  lines.push("");
+  lines.push("  pub fn device_malloc<T>(_len: u32) -> DevicePtr<T> {");
+  lines.push('    unimplemented!("@tsuba/gpu: device_malloc runtime is not implemented in v0 yet");');
+  lines.push("  }");
+  lines.push("");
+  lines.push("  pub fn memcpy_htod<T>(_dst: DevicePtr<T>, _src: &Vec<T>) {");
+  lines.push('    unimplemented!("@tsuba/gpu: memcpy_htod runtime is not implemented in v0 yet");');
+  lines.push("  }");
+  lines.push("");
+  lines.push("  pub fn memcpy_dtoh<T>(_dst: &mut Vec<T>, _src: DevicePtr<T>) {");
+  lines.push('    unimplemented!("@tsuba/gpu: memcpy_dtoh runtime is not implemented in v0 yet");');
+  lines.push("  }");
+
+  for (const k of kernels) {
+    const argList = k.params
+      .map((p, idx) => {
+        const rustTy = p.kind === "scalar" ? p.scalar : `DevicePtr<${p.scalar}>`;
+        return `p${idx}: ${rustTy}`;
+      })
+      .join(", ");
+    const args = argList.length === 0 ? "" : `, ${argList}`;
+    lines.push("");
+    lines.push(
+      `  pub fn launch_${k.name}(grid_x: u32, grid_y: u32, grid_z: u32, block_x: u32, block_y: u32, block_z: u32${args}) {`
+    );
+    lines.push(
+      `    let _ptx: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/${k.name}.ptx"));`
+    );
+    lines.push("    let _ = (_ptx, grid_x, grid_y, grid_z, block_x, block_y, block_z);");
+    if (k.params.length > 0) {
+      const ps = k.params.map((_, idx) => `p${idx}`).join(", ");
+      lines.push(`    let _ = (${ps});`);
+    }
+    lines.push('    unimplemented!("@tsuba/gpu: kernel launch runtime is not implemented in v0 yet");');
+    lines.push("  }");
+  }
+
+  lines.push("}");
+  return lines.join("\n");
 }
 
 const rustPrimitiveTypes = new Map<string, RustType>([
@@ -837,6 +927,12 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
         return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
       }
 
+      if (tn.text === "global_ptr") {
+        const [inner] = typeNode.typeArguments ?? [];
+        if (!inner) failAt(typeNode, "TSB1020", "global_ptr<T> must have exactly one type argument.");
+        return pathType(["__tsuba_cuda", "DevicePtr"], [typeNodeToRust(inner)]);
+      }
+
       // Nominal/user-defined types (including Rust types) are allowed as bare identifiers.
       // v0 does not support generic type application for nominal types yet.
       if ((typeNode.typeArguments?.length ?? 0) > 0) {
@@ -874,6 +970,10 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isIdentifier(expr)) {
     if (expr.text === "undefined") {
       failAt(expr, "TSB1101", "The value 'undefined' is not supported in v0; use Option/None or () explicitly.");
+    }
+    const kernel = kernelDeclForIdentifier(ctx, expr);
+    if (kernel) {
+      failAt(expr, "TSB1406", `Kernel values are compile-time only in v0; use ${expr.text}.launch(...).`);
     }
     return identExpr(expr.text);
   }
@@ -1112,6 +1212,135 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   }
 
   if (ts.isCallExpression(expr)) {
+    // Kernel launch syntax: k.launch({ grid, block }, ...args)
+    if (ts.isPropertyAccessExpression(expr.expression) && expr.expression.name.text === "launch") {
+      const recv = expr.expression.expression;
+      if (ts.isIdentifier(recv)) {
+        const kernel = kernelDeclForIdentifier(ctx, recv);
+        if (kernel) {
+          if (expr.arguments.length < 1) {
+            failAt(expr, "TSB1470", "kernel.launch(...) requires a launch config argument in v0.");
+          }
+          const [cfg, ...rest] = expr.arguments;
+          if (!cfg) {
+            failAt(expr, "TSB1470", "kernel.launch(...) requires a launch config argument in v0.");
+          }
+
+          const unwrap = (e: ts.Expression): ts.Expression => {
+            if (ts.isParenthesizedExpression(e)) return unwrap(e.expression);
+            if (ts.isAsExpression(e)) return unwrap(e.expression);
+            return e;
+          };
+
+          const cfg0 = unwrap(cfg);
+          if (!ts.isObjectLiteralExpression(cfg0)) {
+            failAt(cfg, "TSB1471", "kernel.launch(config, ...) requires an object-literal config in v0.");
+          }
+
+          const props = new Map<string, ts.Expression>();
+          for (const p of cfg0.properties) {
+            if (ts.isSpreadAssignment(p)) {
+              failAt(p, "TSB1471", "kernel.launch(config, ...) does not support object spread in v0.");
+            }
+            if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name)) {
+              failAt(p, "TSB1471", "kernel.launch(config, ...) requires identifier-named properties in v0.");
+            }
+            if (props.has(p.name.text)) {
+              failAt(p.name, "TSB1471", `Duplicate property '${p.name.text}' in kernel launch config.`);
+            }
+            props.set(p.name.text, p.initializer);
+          }
+
+          const parseDim3 = (e: ts.Expression, label: string): readonly [ts.Expression, ts.Expression, ts.Expression] => {
+            const e0 = unwrap(e);
+            if (!ts.isArrayLiteralExpression(e0)) {
+              failAt(e, "TSB1472", `kernel.launch config '${label}' must be a [x,y,z] array literal in v0.`);
+            }
+            if (e0.elements.length !== 3) {
+              failAt(e0, "TSB1472", `kernel.launch config '${label}' must have exactly 3 elements in v0.`);
+            }
+            const els = e0.elements.map((el) => {
+              if (ts.isSpreadElement(el)) {
+                failAt(el, "TSB1472", `kernel.launch config '${label}' does not support spreads in v0.`);
+              }
+              return el as ts.Expression;
+            });
+            return [els[0]!, els[1]!, els[2]!];
+          };
+
+          const gridExpr = props.get("grid");
+          const blockExpr = props.get("block");
+          if (!gridExpr || !blockExpr) {
+            failAt(cfg0, "TSB1473", "kernel.launch config must include both { grid, block } in v0.");
+          }
+          for (const k0 of props.keys()) {
+            if (k0 !== "grid" && k0 !== "block") {
+              failAt(cfg0, "TSB1473", `Unknown kernel.launch config property '${k0}' in v0.`);
+            }
+          }
+
+          const grid = parseDim3(gridExpr, "grid");
+          const block = parseDim3(blockExpr, "block");
+
+          const dims = [
+            lowerExpr(ctx, grid[0]),
+            lowerExpr(ctx, grid[1]),
+            lowerExpr(ctx, grid[2]),
+            lowerExpr(ctx, block[0]),
+            lowerExpr(ctx, block[1]),
+            lowerExpr(ctx, block[2]),
+          ];
+          const kernelArgs = rest.map((a) => lowerExpr(ctx, a));
+
+          ctx.gpuRuntime.used = true;
+          return {
+            kind: "call",
+            callee: pathExpr(["__tsuba_cuda", `launch_${kernel.name}`]),
+            args: [...dims, ...kernelArgs],
+          };
+        }
+      }
+    }
+
+    let gpuCalleeOverride: RustExpr | undefined;
+    if (ts.isIdentifier(expr.expression) && isFromTsubaGpuLang(ctx, expr.expression)) {
+      const name = expr.expression.text;
+      if (name === "kernel") {
+        failAt(expr, "TSB1400", "kernel(...) is compile-time only and must appear as a top-level const initializer.");
+      }
+      if (name === "deviceMalloc") {
+        if (expr.arguments.length !== 1) {
+          failAt(expr, "TSB1474", "deviceMalloc<T>(len) must have exactly one argument in v0.");
+        }
+        if ((expr.typeArguments?.length ?? 0) !== 1) {
+          failAt(expr, "TSB1475", "deviceMalloc<T>(len) requires exactly one explicit type argument in v0.");
+        }
+        const len = lowerExpr(ctx, expr.arguments[0]!);
+        const t0 = expr.typeArguments?.[0];
+        if (!t0) {
+          failAt(expr, "TSB1475", "deviceMalloc<T>(len) requires exactly one explicit type argument in v0.");
+        }
+        const ty = typeNodeToRust(t0);
+        ctx.gpuRuntime.used = true;
+        return {
+          kind: "path_call",
+          path: { segments: ["__tsuba_cuda", "device_malloc"] },
+          typeArgs: [ty],
+          args: [len],
+        };
+      }
+      if (name === "memcpyHtoD") {
+        ctx.gpuRuntime.used = true;
+        gpuCalleeOverride = pathExpr(["__tsuba_cuda", "memcpy_htod"]);
+      } else if (name === "memcpyDtoH") {
+        ctx.gpuRuntime.used = true;
+        gpuCalleeOverride = pathExpr(["__tsuba_cuda", "memcpy_dtoh"]);
+      }
+      else {
+        failAt(expr.expression, "TSB1476", `@tsuba/gpu '${name}' is only supported inside kernel code in v0.`);
+      }
+    }
+
     // std prelude helpers
     if (ts.isIdentifier(expr.expression) && isFromTsubaStdPrelude(ctx, expr.expression)) {
       if (expr.expression.text === "Ok") {
@@ -1125,13 +1354,6 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
         ) {
           return { kind: "call", callee: identExpr("Ok"), args: [unitExpr()] };
         }
-      }
-    }
-
-    // GPU kernel markers (compile-time only)
-    if (ts.isIdentifier(expr.expression) && isFromTsubaGpuLang(ctx, expr.expression)) {
-      if (expr.expression.text === "kernel") {
-        return identExpr("__tsuba_kernel_placeholder");
       }
     }
 
@@ -1194,7 +1416,7 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       return { kind: "macro_call", name: expr.expression.text, args };
     }
 
-    const callee = lowerExpr(ctx, expr.expression);
+    const callee = gpuCalleeOverride ?? lowerExpr(ctx, expr.expression);
     let callArgs = args;
     const sig = ctx.checker.getResolvedSignature(expr);
     const decl = sig?.declaration;
@@ -1411,6 +1633,8 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
         structs: ctx.structs,
         shapeStructsByKey: ctx.shapeStructsByKey,
         shapeStructsByFile: ctx.shapeStructsByFile,
+        kernelDeclBySymbol: ctx.kernelDeclBySymbol,
+        gpuRuntime: ctx.gpuRuntime,
         thisName: ctx.thisName,
         fieldBindings: inherited,
       };
@@ -1743,6 +1967,8 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       structs: ctx.structs,
       shapeStructsByKey: ctx.shapeStructsByKey,
       shapeStructsByFile: ctx.shapeStructsByFile,
+      kernelDeclBySymbol: ctx.kernelDeclBySymbol,
+      gpuRuntime: ctx.gpuRuntime,
       thisName: "self",
     };
     for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
@@ -2015,14 +2241,17 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const structAliasesByKey = new Map<string, StructDef>();
   const shapeStructsByKey = new Map<string, StructDef>();
   const shapeStructsByFile = new Map<string, StructDef[]>();
+  const kernelDeclBySymbol = new Map<ts.Symbol, KernelDecl>();
+  const gpuRuntime = { used: false };
   const ctx: EmitCtx = {
     checker,
     unions: unionsByKey,
     structs: structAliasesByKey,
     shapeStructsByKey,
     shapeStructsByFile,
+    kernelDeclBySymbol,
+    gpuRuntime,
   };
-  const kernels = collectKernelDecls(ctx, sf);
   const usedCratesByName = new Map<string, CrateDep>();
 
   function addUsedCrate(node: ts.Node, dep: CrateDep): void {
@@ -2079,20 +2308,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     }
   }
 
-  const items: RustItem[] = [];
-  if (kernels.length > 0) {
-    items.push({
-      kind: "struct",
-      vis: "private",
-      name: "__tsuba_kernel_placeholder",
-      attrs: ["#[allow(dead_code)]"],
-      fields: [],
-    });
-  }
-
   const userSourceFiles = program
     .getSourceFiles()
     .filter((f) => !f.isDeclarationFile && !isInNodeModules(f.fileName));
+
+  const seenKernelNames = new Set<string>();
+  const kernels = userSourceFiles
+    .flatMap((f) => collectKernelDecls(ctx, f, seenKernelNames))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const items: RustItem[] = [];
 
   const entryFileName = normalizePath(sf.fileName);
 
@@ -2265,6 +2490,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         if (spec.startsWith(".")) {
           const resolved = resolveRelativeImport(f.fileName, spec);
           for (const el of bindings.elements) {
+            if (kernelDeclForIdentifier(ctx, el.name)) continue;
             const exported = el.propertyName?.text ?? el.name.text;
             const local = el.name.text;
             uses.push({
@@ -2310,6 +2536,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
           const baseSegs = splitRustPath(rustModule);
           for (const el of bindings.elements) {
+            if (kernelDeclForIdentifier(ctx, el.name)) continue;
             const exported = el.propertyName?.text ?? el.name.text;
             const local = el.name.text;
             uses.push({
@@ -2541,7 +2768,10 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   items.push(mainItem);
 
   const rustProgram: RustProgram = { kind: "program", items };
-  const mainRs = writeRustProgram(rustProgram, { header: ["// Generated by @tsuba/compiler (v0)"] });
+  let mainRs = writeRustProgram(rustProgram, { header: ["// Generated by @tsuba/compiler (v0)"] });
+  if (ctx.gpuRuntime.used) {
+    mainRs = `${mainRs}\n${renderCudaRuntimeModule(kernels)}\n`;
+  }
 
   const crates = [...usedCratesByName.values()].sort((a, b) => a.name.localeCompare(b.name));
   return { mainRs, kernels, crates };

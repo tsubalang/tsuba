@@ -2,6 +2,8 @@
 // Marker functions only. Tsuba erases these at compile time.
 
 import type { u32 } from "@tsuba/core/types.js";
+import type { mutref, ref } from "@tsuba/core/types.js";
+import type { Vec } from "@tsuba/std/prelude.js";
 import type { global_ptr, shared_ptr } from "./types.js";
 
 function marker(name: string): never {
@@ -71,12 +73,12 @@ export function deviceMalloc<T>(_len: u32): global_ptr<T> {
   void _len;
   return marker("deviceMalloc");
 }
-export function memcpyHtoD<T>(_dst: global_ptr<T>, _src: unknown): void {
+export function memcpyHtoD<T>(_dst: global_ptr<T>, _src: ref<Vec<T>>): void {
   void _dst;
   void _src;
   marker("memcpyHtoD");
 }
-export function memcpyDtoH<T>(_dst: unknown, _src: global_ptr<T>): void {
+export function memcpyDtoH<T>(_dst: mutref<Vec<T>>, _src: global_ptr<T>): void {
   void _dst;
   void _src;
   marker("memcpyDtoH");
