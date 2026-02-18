@@ -27,6 +27,16 @@ describe("@tsuba/cli cargo helpers", () => {
     expect(String(err)).to.contain("Conflicting crate versions");
   });
 
+  it("errors on conflicting crate sources (version vs path)", () => {
+    let err: unknown;
+    try {
+      mergeCargoDependencies([{ name: "simple", version: "0.0.0" }], [{ name: "simple", path: "/tmp/simple" }]);
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err)).to.contain("Conflicting crate sources");
+  });
+
   it("renders Cargo.toml with feature deps as inline tables", () => {
     const toml = renderCargoToml({
       crateName: "my_api",
@@ -41,5 +51,17 @@ describe("@tsuba/cli cargo helpers", () => {
     expect(toml).to.contain('axum = "0.7.5"');
     expect(toml).to.contain('serde = { version = "1.0", features = ["derive"] }');
   });
-});
 
+  it("renders Cargo.toml with path deps", () => {
+    const toml = renderCargoToml({
+      crateName: "my_api",
+      rustEdition: "2021",
+      deps: [
+        { name: "simple", path: "/tmp/simple" },
+        { name: "serde", version: "1.0", features: ["derive"] },
+      ],
+    });
+    expect(toml).to.contain('simple = { path = "/tmp/simple" }');
+    expect(toml).to.contain('serde = { version = "1.0", features = ["derive"] }');
+  });
+});

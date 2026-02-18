@@ -28,7 +28,8 @@ type ProjectConfig = {
   readonly deps?: {
     readonly crates?: readonly {
       readonly id: string;
-      readonly version: string;
+      readonly version?: string;
+      readonly path?: string;
       readonly features?: readonly string[];
     }[];
   };
@@ -112,11 +113,17 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   mkdirSync(generatedSrcDir, { recursive: true });
 
   const declaredCrates =
-    project.deps?.crates?.map((d) => ({
-      name: d.id,
-      version: d.version,
-      features: d.features,
-    })) ?? [];
+    project.deps?.crates?.map((d) => {
+      if ((d.version ? 1 : 0) + (d.path ? 1 : 0) !== 1) {
+        throw new Error(
+          `Invalid crate dep '${d.id}': expected exactly one of {version,path} in tsuba.json.`
+        );
+      }
+      if (d.path) {
+        return { name: d.id, path: resolve(projectRoot, d.path), features: d.features };
+      }
+      return { name: d.id, version: d.version!, features: d.features };
+    }) ?? [];
   const crates = mergeCargoDependencies(declaredCrates, out.crates);
   const cargoToml = renderCargoToml({
     crateName: project.crate.name,

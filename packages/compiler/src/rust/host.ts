@@ -29,9 +29,8 @@ export type CompileHostOptions = {
 
 export type CrateDep = {
   readonly name: string;
-  readonly version: string;
   readonly features?: readonly string[];
-};
+} & ({ readonly version: string } | { readonly path: string });
 
 export type CompileHostOutput = {
   readonly mainRs: string;
@@ -64,7 +63,8 @@ type BindingsManifest = {
   readonly kind: "crate";
   readonly crate: {
     readonly name: string;
-    readonly version: string;
+    readonly version?: string;
+    readonly path?: string;
     readonly features?: readonly string[];
   };
   readonly modules: Record<string, string>;
@@ -162,18 +162,32 @@ function readBindingsManifest(path: string, specNode: ts.Node): BindingsManifest
   if (!parsed || typeof parsed !== "object") {
     failAt(specNode, "TSB3221", `${path} must be a JSON object.`);
   }
-  const m = parsed as Partial<BindingsManifest>;
+  let m = parsed as Partial<BindingsManifest>;
   if (m.schema !== 1) {
     failAt(specNode, "TSB3222", `${path}: unsupported schema (expected 1).`);
   }
   if (m.kind !== "crate") {
     failAt(specNode, "TSB3223", `${path}: unsupported kind (expected "crate").`);
   }
-  if (!m.crate || typeof m.crate.name !== "string" || typeof m.crate.version !== "string") {
-    failAt(specNode, "TSB3224", `${path}: missing crate.name/crate.version.`);
+  const crate = m.crate;
+  if (!crate || typeof crate.name !== "string") {
+    failAt(specNode, "TSB3224", `${path}: missing crate.name.`);
   }
-  if (m.crate.features !== undefined) {
-    if (!Array.isArray(m.crate.features) || !m.crate.features.every((x) => typeof x === "string")) {
+  const hasVersion = typeof crate.version === "string";
+  const hasPath = typeof crate.path === "string";
+  if (hasVersion && hasPath) {
+    failAt(specNode, "TSB3228", `${path}: crate must specify either version or path, not both.`);
+  }
+  if (!hasVersion && !hasPath) {
+    failAt(specNode, "TSB3224", `${path}: crate must specify either version or path.`);
+  }
+  if (hasPath) {
+    const abs = normalizePath(resolve(dirname(path), crate.path!));
+    m = { ...m, crate: { ...crate, path: abs } };
+  }
+  const features = (m.crate ?? crate).features;
+  if (features !== undefined) {
+    if (!Array.isArray(features) || !features.every((x) => typeof x === "string")) {
       failAt(specNode, "TSB3227", `${path}: crate.features must be an array of strings when present.`);
     }
   }
@@ -1433,7 +1447,10 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     const normalize = (d: CrateDep): CrateDep => {
       const features = (d.features ?? []).filter((x): x is string => typeof x === "string");
       const unique = [...new Set(features)].sort((a, b) => a.localeCompare(b));
-      return unique.length === 0 ? { name: d.name, version: d.version } : { name: d.name, version: d.version, features: unique };
+      if ("version" in d) {
+        return unique.length === 0 ? { name: d.name, version: d.version } : { name: d.name, version: d.version, features: unique };
+      }
+      return unique.length === 0 ? { name: d.name, path: d.path } : { name: d.name, path: d.path, features: unique };
     };
 
     const prev = usedCratesByName.get(dep.name);
@@ -1441,19 +1458,34 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       usedCratesByName.set(dep.name, normalize(dep));
       return;
     }
-    if (prev.version !== dep.version) {
+    if ("version" in prev && "version" in dep && prev.version !== dep.version) {
       failAt(
         node,
         "TSB3226",
         `Conflicting crate versions for '${dep.name}': '${prev.version}' vs '${dep.version}'.`
       );
     }
+    if ("path" in prev && "path" in dep && prev.path !== dep.path) {
+      failAt(node, "TSB3226", `Conflicting crate paths for '${dep.name}': '${prev.path}' vs '${dep.path}'.`);
+    }
+    if ("version" in prev !== "version" in dep) {
+      const left = "version" in prev ? `version '${prev.version}'` : `path '${prev.path}'`;
+      const right = "version" in dep ? `version '${dep.version}'` : `path '${dep.path}'`;
+      failAt(node, "TSB3226", `Conflicting crate sources for '${dep.name}': ${left} vs ${right}.`);
+    }
     const mergedFeatures = new Set<string>([...(prev.features ?? []), ...(dep.features ?? [])]);
     const features = [...mergedFeatures].sort((a, b) => a.localeCompare(b));
-    usedCratesByName.set(
-      dep.name,
-      features.length === 0 ? { name: dep.name, version: dep.version } : { name: dep.name, version: dep.version, features }
-    );
+    if ("version" in dep) {
+      usedCratesByName.set(
+        dep.name,
+        features.length === 0 ? { name: dep.name, version: dep.version } : { name: dep.name, version: dep.version, features }
+      );
+    } else {
+      usedCratesByName.set(
+        dep.name,
+        features.length === 0 ? { name: dep.name, path: dep.path } : { name: dep.name, path: dep.path, features }
+      );
+    }
   }
 
   const items: RustItem[] = [];
@@ -1673,11 +1705,12 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
               `No module mapping for ${JSON.stringify(spec)} in ${manifestPath}.`
             );
           }
-          addUsedCrate(specNode, {
-            name: manifest.crate.name,
-            version: manifest.crate.version,
-            features: manifest.crate.features,
-          });
+          const depBase = { name: manifest.crate.name, features: manifest.crate.features };
+          if (manifest.crate.path) {
+            addUsedCrate(specNode, { ...depBase, path: manifest.crate.path });
+          } else {
+            addUsedCrate(specNode, { ...depBase, version: manifest.crate.version! });
+          }
 
           const baseSegs = splitRustPath(rustModule);
           for (const el of bindings.elements) {
