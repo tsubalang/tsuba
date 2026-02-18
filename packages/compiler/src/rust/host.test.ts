@@ -94,4 +94,29 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("Vec::<i32>::new()");
     expect(out.mainRs).to.contain("std::collections::HashMap::<std::string::String, i32>::new()");
   });
+
+  it("emits helper functions declared in the entry file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "function add(a: i32, b: i32): i32 {",
+        "  return a + b;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const x = add(3 as i32, 4 as i32);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("fn add(a: i32, b: i32) -> i32");
+    expect(out.mainRs).to.contain("let x = add((3) as i32, (4) as i32);");
+  });
 });

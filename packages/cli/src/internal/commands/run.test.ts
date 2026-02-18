@@ -17,12 +17,19 @@ describe("@tsuba/cli run", () => {
     writeFileSync(
       mainTs,
       [
+        "type i32 = number;",
+        "",
         "type Macro<Fn extends (...args: any[]) => unknown> = Fn & {",
         "  readonly __tsuba_macro: unique symbol;",
         "};",
         "declare const println: Macro<(msg: string) => void>;",
         "",
+        "function add(a: i32, b: i32): i32 {",
+        "  return a + b;",
+        "}",
+        "",
         "export function main(): void {",
+        "  add(3 as i32, 4 as i32);",
         '  println(\"hello\");',
         "}",
         "",
@@ -34,4 +41,3 @@ describe("@tsuba/cli run", () => {
     expect(out.stdout).to.contain("hello");
   });
 });
-
