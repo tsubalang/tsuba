@@ -1,5 +1,9 @@
 import ts from "typescript";
 
+import type { RustExpr, RustItem, RustParam, RustProgram, RustStmt, RustType } from "./ir.js";
+import { identExpr, pathType, unitExpr, unitType } from "./ir.js";
+import { writeRustProgram } from "./write.js";
+
 export type CompileIssue = {
   readonly code: string;
   readonly message: string;
@@ -30,6 +34,10 @@ type EmitCtx = {
 
 function normalizePath(p: string): string {
   return p.replaceAll("\\", "/");
+}
+
+function splitRustPath(path: string): readonly string[] {
+  return path.split("::").filter((s) => s.length > 0);
 }
 
 function isFromTsubaCoreLang(ctx: EmitCtx, ident: ts.Identifier): boolean {
@@ -145,21 +153,21 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDec
   return out;
 }
 
-const rustPrimitiveTypes = new Map<string, string>([
-  ["i8", "i8"],
-  ["i16", "i16"],
-  ["i32", "i32"],
-  ["i64", "i64"],
-  ["isize", "isize"],
-  ["u8", "u8"],
-  ["u16", "u16"],
-  ["u32", "u32"],
-  ["u64", "u64"],
-  ["usize", "usize"],
-  ["f32", "f32"],
-  ["f64", "f64"],
-  ["bool", "bool"],
-  ["String", "std::string::String"],
+const rustPrimitiveTypes = new Map<string, RustType>([
+  ["i8", pathType(["i8"])],
+  ["i16", pathType(["i16"])],
+  ["i32", pathType(["i32"])],
+  ["i64", pathType(["i64"])],
+  ["isize", pathType(["isize"])],
+  ["u8", pathType(["u8"])],
+  ["u16", pathType(["u16"])],
+  ["u32", pathType(["u32"])],
+  ["u64", pathType(["u64"])],
+  ["usize", pathType(["usize"])],
+  ["f32", pathType(["f32"])],
+  ["f64", pathType(["f64"])],
+  ["bool", pathType(["bool"])],
+  ["String", pathType(["std", "string", "String"])],
 ]);
 
 function fail(code: string, message: string): never {
@@ -190,9 +198,9 @@ function hasModifier(
   return node.modifiers?.some((m: ts.ModifierLike) => m.kind === kind) ?? false;
 }
 
-function typeNodeToRust(typeNode: ts.TypeNode | undefined): string {
-  if (!typeNode) return "()";
-  if (typeNode.kind === ts.SyntaxKind.VoidKeyword) return "()";
+function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
+  if (!typeNode) return unitType();
+  if (typeNode.kind === ts.SyntaxKind.VoidKeyword) return unitType();
   if (ts.isTypeReferenceNode(typeNode)) {
     const tn = typeNode.typeName;
     if (ts.isIdentifier(tn)) {
@@ -209,25 +217,25 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): string {
       if (tn.text === "Option") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) fail("TSB1012", "Option<T> must have exactly one type argument.");
-        return `Option<${typeNodeToRust(inner)}>`;
+        return pathType(["Option"], [typeNodeToRust(inner)]);
       }
 
       if (tn.text === "Result") {
         const [okTy, errTy] = typeNode.typeArguments ?? [];
         if (!okTy || !errTy) fail("TSB1013", "Result<T,E> must have exactly two type arguments.");
-        return `Result<${typeNodeToRust(okTy)}, ${typeNodeToRust(errTy)}>`;
+        return pathType(["Result"], [typeNodeToRust(okTy), typeNodeToRust(errTy)]);
       }
 
       if (tn.text === "Vec") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) fail("TSB1014", "Vec<T> must have exactly one type argument.");
-        return `Vec<${typeNodeToRust(inner)}>`;
+        return pathType(["Vec"], [typeNodeToRust(inner)]);
       }
 
       if (tn.text === "HashMap") {
         const [k, v] = typeNode.typeArguments ?? [];
         if (!k || !v) fail("TSB1015", "HashMap<K,V> must have exactly two type arguments.");
-        return `std::collections::HashMap<${typeNodeToRust(k)}, ${typeNodeToRust(v)}>`;
+        return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
       }
     }
   }
@@ -247,74 +255,88 @@ function isMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
   return ty.getProperty("__tsuba_macro") !== undefined;
 }
 
-function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
-  if (ts.isParenthesizedExpression(expr)) return `(${emitExpr(ctx, expr.expression)})`;
+function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
+  if (ts.isParenthesizedExpression(expr)) return { kind: "paren", expr: lowerExpr(ctx, expr.expression) };
 
-  if (ts.isIdentifier(expr)) return expr.text;
-  if (ts.isNumericLiteral(expr)) return expr.text;
-  if (ts.isStringLiteral(expr)) return JSON.stringify(expr.text);
-  if (expr.kind === ts.SyntaxKind.TrueKeyword) return "true";
-  if (expr.kind === ts.SyntaxKind.FalseKeyword) return "false";
+  if (ts.isIdentifier(expr)) {
+    if (expr.text === "undefined") {
+      fail("TSB1101", "The value 'undefined' is not supported in v0; use Option/None or () explicitly.");
+    }
+    return identExpr(expr.text);
+  }
+  if (ts.isNumericLiteral(expr)) return { kind: "number", text: expr.text };
+  if (ts.isStringLiteral(expr)) return { kind: "string", value: expr.text };
+  if (expr.kind === ts.SyntaxKind.TrueKeyword) return { kind: "bool", value: true };
+  if (expr.kind === ts.SyntaxKind.FalseKeyword) return { kind: "bool", value: false };
 
   if (ts.isVoidExpression(expr)) {
-    const inner = emitExpr(ctx, expr.expression);
-    return `{ let _ = ${inner}; () }`;
+    const inner = lowerExpr(ctx, expr.expression);
+    return {
+      kind: "block",
+      stmts: [{ kind: "let", pattern: { kind: "wild" }, mut: false, init: inner }],
+      tail: unitExpr(),
+    };
   }
 
   if (ts.isAsExpression(expr)) {
-    const inner = emitExpr(ctx, expr.expression);
+    const inner = lowerExpr(ctx, expr.expression);
     const ty = typeNodeToRust(expr.type);
-    return `(${inner}) as ${ty}`;
+    return { kind: "cast", expr: inner, type: ty };
   }
 
   if (ts.isPropertyAccessExpression(expr)) {
-    return `${emitExpr(ctx, expr.expression)}.${expr.name.text}`;
+    return { kind: "field", expr: lowerExpr(ctx, expr.expression), name: expr.name.text };
   }
 
   if (ts.isBinaryExpression(expr)) {
-    const left = emitExpr(ctx, expr.left);
-    const right = emitExpr(ctx, expr.right);
-    switch (expr.operatorToken.kind) {
-      case ts.SyntaxKind.PlusToken:
-        return `${left} + ${right}`;
-      case ts.SyntaxKind.MinusToken:
-        return `${left} - ${right}`;
-      case ts.SyntaxKind.AsteriskToken:
-        return `${left} * ${right}`;
-      case ts.SyntaxKind.SlashToken:
-        return `${left} / ${right}`;
-      case ts.SyntaxKind.EqualsEqualsEqualsToken:
-        return `${left} == ${right}`;
-      case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-        return `${left} != ${right}`;
-      case ts.SyntaxKind.LessThanToken:
-        return `${left} < ${right}`;
-      case ts.SyntaxKind.LessThanEqualsToken:
-        return `${left} <= ${right}`;
-      case ts.SyntaxKind.GreaterThanToken:
-        return `${left} > ${right}`;
-      case ts.SyntaxKind.GreaterThanEqualsToken:
-        return `${left} >= ${right}`;
-      case ts.SyntaxKind.AmpersandAmpersandToken:
-        return `${left} && ${right}`;
-      case ts.SyntaxKind.BarBarToken:
-        return `${left} || ${right}`;
-      default:
-        fail("TSB1200", `Unsupported binary operator: ${expr.operatorToken.getText()}`);
-    }
+    const left = lowerExpr(ctx, expr.left);
+    const right = lowerExpr(ctx, expr.right);
+    const op = (() => {
+      switch (expr.operatorToken.kind) {
+        case ts.SyntaxKind.PlusToken:
+          return "+";
+        case ts.SyntaxKind.MinusToken:
+          return "-";
+        case ts.SyntaxKind.AsteriskToken:
+          return "*";
+        case ts.SyntaxKind.SlashToken:
+          return "/";
+        case ts.SyntaxKind.EqualsEqualsEqualsToken:
+          return "==";
+        case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+          return "!=";
+        case ts.SyntaxKind.LessThanToken:
+          return "<";
+        case ts.SyntaxKind.LessThanEqualsToken:
+          return "<=";
+        case ts.SyntaxKind.GreaterThanToken:
+          return ">";
+        case ts.SyntaxKind.GreaterThanEqualsToken:
+          return ">=";
+        case ts.SyntaxKind.AmpersandAmpersandToken:
+          return "&&";
+        case ts.SyntaxKind.BarBarToken:
+          return "||";
+        default:
+          fail("TSB1200", `Unsupported binary operator: ${expr.operatorToken.getText()}`);
+      }
+    })();
+    return { kind: "binary", op, left, right };
   }
 
   if (ts.isCallExpression(expr)) {
     // std prelude helpers
     if (ts.isIdentifier(expr.expression) && isFromTsubaStdPrelude(ctx, expr.expression)) {
       if (expr.expression.text === "Ok") {
-        if (expr.arguments.length === 0) return "Ok(())";
+        if (expr.arguments.length === 0) {
+          return { kind: "call", callee: identExpr("Ok"), args: [unitExpr()] };
+        }
         if (
           expr.arguments.length === 1 &&
           ts.isIdentifier(expr.arguments[0]!) &&
           expr.arguments[0]!.text === "undefined"
         ) {
-          return "Ok(())";
+          return { kind: "call", callee: identExpr("Ok"), args: [unitExpr()] };
         }
       }
     }
@@ -322,7 +344,7 @@ function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
     // GPU kernel markers (compile-time only)
     if (ts.isIdentifier(expr.expression) && isFromTsubaGpuLang(ctx, expr.expression)) {
       if (expr.expression.text === "kernel") {
-        return "__tsuba_kernel_placeholder";
+        return identExpr("__tsuba_kernel_placeholder");
       }
     }
 
@@ -330,8 +352,8 @@ function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
     if (ts.isIdentifier(expr.expression) && isFromTsubaCoreLang(ctx, expr.expression)) {
       if (expr.expression.text === "q") {
         if (expr.arguments.length !== 1) fail("TSB1300", "q(...) must have exactly one argument.");
-        const inner = emitExpr(ctx, expr.arguments[0]!);
-        return `(${inner})?`;
+        const inner = lowerExpr(ctx, expr.arguments[0]!);
+        return { kind: "try", expr: inner };
       }
       if (expr.expression.text === "unsafe") {
         if (expr.arguments.length !== 1) {
@@ -344,8 +366,8 @@ function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
         if (ts.isBlock(arg.body)) {
           fail("TSB1304", "unsafe(() => { ... }) blocks are not supported in v0 (use expression body).");
         }
-        const inner = emitExpr(ctx, arg.body);
-        return `unsafe { ${inner} }`;
+        const inner = lowerExpr(ctx, arg.body);
+        return { kind: "unsafe", expr: inner };
       }
     }
 
@@ -360,129 +382,118 @@ function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
             ? "std::collections::HashMap"
             : obj.text;
 
-        const typeArgs = expr.typeArguments ?? [];
-        const genericPart =
-          typeArgs.length > 0
-            ? `::<${typeArgs.map((t) => typeNodeToRust(t)).join(", ")}>`
-            : "";
-
-        const args = expr.arguments.map((a) => emitExpr(ctx, a)).join(", ");
-        return `${baseRust}${genericPart}::${member}(${args})`;
+        const typeArgs = (expr.typeArguments ?? []).map((t) => typeNodeToRust(t));
+        const args = expr.arguments.map((a) => lowerExpr(ctx, a));
+        return {
+          kind: "assoc_call",
+          typePath: { segments: splitRustPath(baseRust) },
+          typeArgs,
+          member,
+          args,
+        };
       }
     }
 
-    const args = expr.arguments.map((a) => emitExpr(ctx, a)).join(", ");
+    const args = expr.arguments.map((a) => lowerExpr(ctx, a));
 
     if (isMacroType(ctx.checker, expr.expression)) {
       if (!ts.isIdentifier(expr.expression)) {
         fail("TSB1301", "Macro calls must use an identifier callee in v0.");
       }
-      return `${expr.expression.text}!(${args})`;
+      return { kind: "macro_call", name: expr.expression.text, args };
     }
 
-    const callee = emitExpr(ctx, expr.expression);
-    return `${callee}(${args})`;
+    return { kind: "call", callee: lowerExpr(ctx, expr.expression), args };
   }
 
   fail("TSB1100", `Unsupported expression: ${expr.getText()}`);
 }
 
-function emitStmt(ctx: EmitCtx, st: ts.Statement, indent: string): string[] {
+function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
   if (ts.isVariableStatement(st)) {
-    const declKind = st.declarationList.flags & ts.NodeFlags.Const ? "const" : "let";
-    void declKind;
-    const lines: string[] = [];
+    const out: RustStmt[] = [];
     for (const decl of st.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name)) fail("TSB2001", "Destructuring declarations are not supported in v0.");
       if (!decl.initializer) fail("TSB2002", `Variable '${decl.name.text}' must have an initializer in v0.`);
 
       const isMut = isMutMarkerType(decl.type);
-      const rustTy = decl.type && !isMut ? typeNodeToRust(decl.type) : undefined;
-      const init = emitExpr(ctx, decl.initializer);
-
-      if (rustTy) {
-        lines.push(`${indent}let ${decl.name.text}: ${rustTy} = ${init};`);
-      } else if (isMut && decl.type && ts.isTypeReferenceNode(decl.type)) {
+      if (isMut && decl.type && ts.isTypeReferenceNode(decl.type)) {
         const inner = decl.type.typeArguments?.[0];
         if (!inner) fail("TSB2010", "mut<T> must have exactly one type argument.");
-        const innerTy = typeNodeToRust(inner);
-        lines.push(`${indent}let mut ${decl.name.text}: ${innerTy} = ${init};`);
-      } else {
-        lines.push(`${indent}let ${decl.name.text} = ${init};`);
+        out.push({
+          kind: "let",
+          pattern: { kind: "ident", name: decl.name.text },
+          mut: true,
+          type: typeNodeToRust(inner),
+          init: lowerExpr(ctx, decl.initializer),
+        });
+        continue;
       }
+
+      out.push({
+        kind: "let",
+        pattern: { kind: "ident", name: decl.name.text },
+        mut: false,
+        type: decl.type ? typeNodeToRust(decl.type) : undefined,
+        init: lowerExpr(ctx, decl.initializer),
+      });
     }
-    return lines;
+    return out;
   }
 
   if (ts.isExpressionStatement(st)) {
-    return [`${indent}${emitExpr(ctx, st.expression)};`];
+    return [{ kind: "expr", expr: lowerExpr(ctx, st.expression) }];
   }
 
   if (ts.isReturnStatement(st)) {
-    if (!st.expression) return [`${indent}return;`];
-    return [`${indent}return ${emitExpr(ctx, st.expression)};`];
+    return [{ kind: "return", expr: st.expression ? lowerExpr(ctx, st.expression) : undefined }];
   }
 
   if (ts.isIfStatement(st)) {
-    const cond = emitExpr(ctx, st.expression);
-    const thenLines = emitStmtBlock(ctx, st.thenStatement, indent);
-    const elseLines = st.elseStatement ? emitStmtBlock(ctx, st.elseStatement, indent) : undefined;
-
-    const out: string[] = [];
-    out.push(`${indent}if ${cond} {`);
-    out.push(...thenLines);
-    if (elseLines) {
-      out.push(`${indent}} else {`);
-      out.push(...elseLines);
-    }
-    out.push(`${indent}}`);
-    return out;
+    const cond = lowerExpr(ctx, st.expression);
+    const then = lowerStmtBlock(ctx, st.thenStatement);
+    const elseStmts = st.elseStatement ? lowerStmtBlock(ctx, st.elseStatement) : undefined;
+    return [{ kind: "if", cond, then, else: elseStmts }];
   }
 
   fail("TSB2100", `Unsupported statement: ${st.getText()}`);
 }
 
-function emitStmtBlock(ctx: EmitCtx, st: ts.Statement, indent: string): string[] {
-  const innerIndent = `${indent}  `;
+function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
   if (ts.isBlock(st)) {
-    const lines: string[] = [];
-    for (const s of st.statements) lines.push(...emitStmt(ctx, s, innerIndent));
-    return lines;
+    const out: RustStmt[] = [];
+    for (const s of st.statements) out.push(...lowerStmt(ctx, s));
+    return out;
   }
-  return emitStmt(ctx, st, innerIndent);
+  return lowerStmt(ctx, st);
 }
 
-function emitFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): string {
+function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) fail("TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
 
-  const params: string[] = [];
+  const params: RustParam[] = [];
   for (const p of fnDecl.parameters) {
     if (!ts.isIdentifier(p.name)) {
       fail("TSB3002", `Function '${fnDecl.name.text}': destructuring params are not supported in v0.`);
     }
     if (!p.type) {
-      fail("TSB3003", `Function '${fnDecl.name.text}': parameter '${p.name.text}' needs a type annotation in v0.`);
+      fail(
+        "TSB3003",
+        `Function '${fnDecl.name.text}': parameter '${p.name.text}' needs a type annotation in v0.`
+      );
     }
     if (p.questionToken || p.initializer) {
       fail("TSB3004", `Function '${fnDecl.name.text}': optional/default params are not supported in v0.`);
     }
-    const ty = typeNodeToRust(p.type);
-    params.push(`${p.name.text}: ${ty}`);
+    params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
   }
 
   const ret = typeNodeToRust(fnDecl.type);
-  const retClause = ret === "()" ? "" : ` -> ${ret}`;
+  const body: RustStmt[] = [];
+  for (const st of fnDecl.body.statements) body.push(...lowerStmt(ctx, st));
 
-  const bodyLines: string[] = [];
-  for (const st of fnDecl.body.statements) bodyLines.push(...emitStmt(ctx, st, "  "));
-
-  return [
-    `fn ${fnDecl.name.text}(${params.join(", ")})${retClause} {`,
-    ...bodyLines,
-    "}",
-    "",
-  ].join("\n");
+  return { kind: "fn", name: fnDecl.name.text, params, ret, body };
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
@@ -534,8 +545,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     fail("TSB1003", "main() must return void or Result<void, E> in v0.");
   })();
 
-  const rustReturnType =
-    returnKind === "result" ? typeNodeToRust(returnTypeNode) : undefined;
+  const rustReturnType = returnKind === "result" ? typeNodeToRust(returnTypeNode) : undefined;
 
   const ctx: EmitCtx = { checker };
   const kernels = collectKernelDecls(ctx, sf);
@@ -611,26 +621,27 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     return a.pos - b.pos;
   });
 
-  const helperFns = helperFnDecls.map((x) => emitFunction(ctx, x.decl)).join("");
-
-  const bodyLines: string[] = [];
-  for (const st of mainFn.body!.statements) bodyLines.push(...emitStmt(ctx, st, "  "));
-
-  const mainRsParts: string[] = ["// Generated by @tsuba/compiler (v0)", ""];
+  const items: RustItem[] = [];
   if (kernels.length > 0) {
-    mainRsParts.push("#[allow(dead_code)]", "struct __tsuba_kernel_placeholder;", "");
+    items.push({ kind: "struct", name: "__tsuba_kernel_placeholder", attrs: ["#[allow(dead_code)]"] });
   }
-  if (helperFns.length > 0) {
-    mainRsParts.push(helperFns.trimEnd(), "");
-  }
-  mainRsParts.push(
-    returnKind === "unit" ? "fn main() {" : `fn main() -> ${rustReturnType} {`,
-    ...bodyLines,
-    "}",
-    ""
-  );
 
-  const mainRs = mainRsParts.join("\n");
+  for (const h of helperFnDecls) items.push(lowerFunction(ctx, h.decl));
+
+  const mainBody: RustStmt[] = [];
+  for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(ctx, st));
+
+  const mainItem: RustItem = {
+    kind: "fn",
+    name: "main",
+    params: [],
+    ret: returnKind === "unit" ? unitType() : (rustReturnType ?? unitType()),
+    body: mainBody,
+  };
+  items.push(mainItem);
+
+  const rustProgram: RustProgram = { kind: "program", items };
+  const mainRs = writeRustProgram(rustProgram, { header: ["// Generated by @tsuba/compiler (v0)"] });
 
   return { mainRs, kernels };
 }
