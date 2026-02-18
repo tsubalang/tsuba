@@ -699,6 +699,40 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.kernels[0]!.cuSource).to.contain("atomicAdd((&(out[((uint32_t)(0))])), smem[((uint32_t)(0))])");
   });
 
+  it("supports scalar assignments and for-loops in kernel code (v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-for-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX, blockIdxX } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        "",
+        'const k = kernel({ name: "k" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>): void => {',
+        "  const row = blockIdxX();",
+        "  const col = threadIdxX();",
+        "  let sum = 0.0 as f32;",
+        "  for (let kk = 0 as u32; kk < (4 as u32); kk++) {",
+        "    sum = sum + a[row * (4 as u32) + kk] * b[kk * (4 as u32) + col];",
+        "  }",
+        "  out[row * (4 as u32) + col] = sum;",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(1);
+    expect(out.kernels[0]!.cuSource).to.contain("for (uint32_t kk = ((uint32_t)(0));");
+    expect(out.kernels[0]!.cuSource).to.contain("kk++");
+    expect(out.kernels[0]!.cuSource).to.contain("sum = (sum + (a[");
+  });
+
   it("errors (airplane-grade) on kernel numeric literals without explicit cast", () => {
     const dir = makeRepoTempDir("compiler-kernel-");
     const entry = join(dir, "main.ts");

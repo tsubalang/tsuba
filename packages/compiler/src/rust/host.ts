@@ -687,18 +687,34 @@ function lowerKernelStmtToCuda(env: CudaEnv, st: ts.Statement, indent: string): 
     if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const left = e.left;
       const right = e.right;
-      if (!ts.isElementAccessExpression(left) || !left.argumentExpression) {
-        failAt(left, "TSB1444", "Kernel assignments must be to pointer element access (p[i] = ...) in v0.");
+      if (ts.isElementAccessExpression(left) && left.argumentExpression) {
+        const target = lowerKernelExprToCuda(env, left);
+        const value = lowerKernelExprToCuda(env, right);
+        if (target.type.kind !== "scalar") {
+          failAt(left, "TSB1445", "Kernel pointer element assignment target must be a scalar element type in v0.");
+        }
+        if (value.type.kind !== "scalar" || value.type.scalar !== target.type.scalar) {
+          failAt(right, "TSB1446", "Kernel pointer element assignment value type must match target element type in v0.");
+        }
+        return [`${indent}${target.text} = ${value.text};`];
       }
-      const target = lowerKernelExprToCuda(env, left);
-      const value = lowerKernelExprToCuda(env, right);
-      if (target.type.kind !== "scalar") {
-        failAt(left, "TSB1445", "Kernel assignment target must be a scalar element type in v0.");
+
+      if (ts.isIdentifier(left)) {
+        const targetTy = env.vars.get(left.text);
+        if (!targetTy) {
+          failAt(left, "TSB1444", `Unknown kernel assignment target '${left.text}' in v0.`);
+        }
+        if (targetTy.kind !== "scalar") {
+          failAt(left, "TSB1444", `Kernel scalar assignment target '${left.text}' must be a scalar in v0.`);
+        }
+        const value = lowerKernelExprToCuda(env, right);
+        if (value.type.kind !== "scalar" || value.type.scalar !== targetTy.scalar) {
+          failAt(right, "TSB1446", `Kernel scalar assignment value type must match '${left.text}' in v0.`);
+        }
+        return [`${indent}${left.text} = ${value.text};`];
       }
-      if (value.type.kind !== "scalar" || value.type.scalar !== target.type.scalar) {
-        failAt(right, "TSB1446", "Kernel assignment value type must match target element type in v0.");
-      }
-      return [`${indent}${target.text} = ${value.text};`];
+
+      failAt(left, "TSB1444", "Kernel assignments must be to pointer elements (p[i] = ...) or scalar variables (x = ...) in v0.");
     }
     const ex = lowerKernelExprToCuda(env, e);
     return [`${indent}${ex.text};`];
@@ -733,6 +749,80 @@ function lowerKernelStmtToCuda(env: CudaEnv, st: ts.Statement, indent: string): 
     const out: string[] = [];
     out.push(`${indent}{`);
     for (const s of st.statements) out.push(...lowerKernelStmtToCuda(env, s, `${indent}  `));
+    out.push(`${indent}}`);
+    return out;
+  }
+
+  if (ts.isForStatement(st)) {
+    if (!st.initializer || !ts.isVariableDeclarationList(st.initializer)) {
+      failAt(st, "TSB1452", "Kernel for-loops must use a let initializer in v0 (for (let i = ...; ...; ...) ...).");
+    }
+    const declList = st.initializer;
+    const isLet = (declList.flags & ts.NodeFlags.Let) !== 0;
+    const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
+    if (!isLet || isConst) {
+      failAt(declList, "TSB1452", "Kernel for-loop initializer must be a let declaration in v0.");
+    }
+    if (declList.declarations.length !== 1) {
+      failAt(declList, "TSB1453", "Kernel for-loop initializer must declare exactly one variable in v0.");
+    }
+    const decl = declList.declarations[0]!;
+    if (!ts.isIdentifier(decl.name)) {
+      failAt(decl.name, "TSB1454", "Kernel for-loop initializer name must be an identifier in v0.");
+    }
+    if (!decl.initializer) {
+      failAt(decl, "TSB1455", "Kernel for-loop initializer must have an initializer in v0.");
+    }
+    const init = lowerKernelExprToCuda(env, decl.initializer);
+    const ty = decl.type ? cudaTypeFromTypeNode(decl.type, decl.type) : init.type;
+    if (ty.kind !== init.type.kind || (ty.kind === "scalar" && init.type.kind === "scalar" && ty.scalar !== init.type.scalar)) {
+      failAt(decl, "TSB1456", `Kernel for-loop initializer type does not match declared type for '${decl.name.text}' in v0.`);
+    }
+    if (ty.kind !== "scalar") {
+      failAt(decl, "TSB1457", "Kernel for-loop index variable must be a scalar in v0.");
+    }
+    env.vars.set(decl.name.text, ty);
+    const initText = `${cudaTypeToCType(ty)} ${decl.name.text} = ${init.text}`;
+
+    if (!st.condition) {
+      failAt(st, "TSB1458", "Kernel for-loop must have a condition expression in v0.");
+    }
+    const cond = lowerKernelExprToCuda(env, st.condition);
+    if (cond.type.kind !== "scalar" || cond.type.scalar !== "bool") {
+      failAt(st.condition, "TSB1458", "Kernel for-loop condition must be bool in v0.");
+    }
+
+    if (!st.incrementor) {
+      failAt(st, "TSB1459", "Kernel for-loop must have an incrementor expression in v0.");
+    }
+    const incText = (() => {
+      const inc = st.incrementor!;
+      if (ts.isPostfixUnaryExpression(inc) && ts.isIdentifier(inc.operand)) {
+        if (inc.operator === ts.SyntaxKind.PlusPlusToken) return `${inc.operand.text}++`;
+        if (inc.operator === ts.SyntaxKind.MinusMinusToken) return `${inc.operand.text}--`;
+      }
+      if (ts.isPrefixUnaryExpression(inc) && ts.isIdentifier(inc.operand)) {
+        if (inc.operator === ts.SyntaxKind.PlusPlusToken) return `++${inc.operand.text}`;
+        if (inc.operator === ts.SyntaxKind.MinusMinusToken) return `--${inc.operand.text}`;
+      }
+      if (ts.isBinaryExpression(inc) && inc.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(inc.left)) {
+        const targetTy = env.vars.get(inc.left.text);
+        if (!targetTy || targetTy.kind !== "scalar") {
+          failAt(inc.left, "TSB1459", "Kernel for-loop incrementor target must be a scalar variable in v0.");
+        }
+        const rhs = lowerKernelExprToCuda(env, inc.right);
+        if (rhs.type.kind !== "scalar" || rhs.type.scalar !== targetTy.scalar) {
+          failAt(inc.right, "TSB1459", "Kernel for-loop incrementor value type must match target in v0.");
+        }
+        return `${inc.left.text} = ${rhs.text}`;
+      }
+      failAt(inc, "TSB1459", "Unsupported kernel for-loop incrementor in v0 (use i++, ++i, i = i + 1, etc).");
+    })();
+
+    const out: string[] = [];
+    out.push(`${indent}for (${initText}; ${cond.text}; ${incText}) {`);
+    const bodyStmts = ts.isBlock(st.statement) ? st.statement.statements : [st.statement];
+    for (const s of bodyStmts) out.push(...lowerKernelStmtToCuda(env, s, `${indent}  `));
     out.push(`${indent}}`);
     return out;
   }
