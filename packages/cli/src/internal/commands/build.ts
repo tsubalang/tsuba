@@ -1,12 +1,15 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 
 import { compileHostToRust } from "@tsuba/compiler";
 
 type WorkspaceConfig = {
   readonly schema: number;
+  readonly rustEdition: "2021" | "2024";
   readonly packagesDir: string;
   readonly generatedDirName: string;
+  readonly cargoTargetDir: string;
 };
 
 type ProjectConfig = {
@@ -14,6 +17,9 @@ type ProjectConfig = {
   readonly name: string;
   readonly kind: "bin" | "lib";
   readonly entry: string;
+  readonly crate: {
+    readonly name: string;
+  };
 };
 
 export type BuildArgs = {
@@ -68,6 +74,8 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   if (workspace.schema !== 1) throw new Error("Unsupported tsuba.workspace.json schema.");
   if (project.schema !== 1) throw new Error("Unsupported tsuba.json schema.");
 
+  if (project.kind !== "bin") throw new Error("Only kind=bin is supported in v0.");
+
   const entryFile = resolve(projectRoot, project.entry);
   const out = compileHostToRust({ entryFile });
 
@@ -75,6 +83,31 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   const generatedSrcDir = join(generatedRoot, "src");
   mkdirSync(generatedSrcDir, { recursive: true });
 
-  writeFileSync(join(generatedRoot, "Cargo.toml"), out.cargoToml, "utf-8");
+  const cargoToml = [
+    "[package]",
+    `name = ${JSON.stringify(project.crate.name)}`,
+    'version = "0.0.0"',
+    `edition = ${JSON.stringify(workspace.rustEdition)}`,
+    "",
+    "[dependencies]",
+    "",
+  ].join("\n");
+
+  writeFileSync(join(generatedRoot, "Cargo.toml"), cargoToml, "utf-8");
   writeFileSync(join(generatedSrcDir, "main.rs"), out.mainRs, "utf-8");
+
+  const cargoTargetDir = resolve(workspaceRoot, workspace.cargoTargetDir);
+  mkdirSync(cargoTargetDir, { recursive: true });
+
+  const res = spawnSync("cargo", ["build", "--quiet"], {
+    cwd: generatedRoot,
+    env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+    encoding: "utf-8",
+  });
+
+  if (res.status !== 0) {
+    const stdout = res.stdout ?? "";
+    const stderr = res.stderr ?? "";
+    throw new Error(`cargo build failed.\n${stdout}${stderr}`);
+  }
 }

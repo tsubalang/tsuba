@@ -20,7 +20,6 @@ export type CompileHostOptions = {
 };
 
 export type CompileHostOutput = {
-  readonly cargoToml: string;
   readonly mainRs: string;
 };
 
@@ -278,16 +277,5 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     "",
   ].join("\n");
 
-  // Minimal Cargo.toml (no deps yet). CLI will fill deps from tsuba.json later.
-  const cargoToml = [
-    "[package]",
-    'name = "tsuba_app"',
-    'version = "0.0.0"',
-    'edition = "2021"',
-    "",
-    "[dependencies]",
-    "",
-  ].join("\n");
-
-  return { cargoToml, mainRs };
+  return { mainRs };
 }
