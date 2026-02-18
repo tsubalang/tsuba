@@ -10,6 +10,9 @@ type WorkspaceConfig = {
   readonly packagesDir: string;
   readonly generatedDirName: string;
   readonly cargoTargetDir: string;
+  readonly gpu: {
+    readonly backend: "none" | "cuda";
+  };
 };
 
 type ProjectConfig = {
@@ -78,6 +81,22 @@ export async function runBuild(args: BuildArgs): Promise<void> {
 
   const entryFile = resolve(projectRoot, project.entry);
   const out = compileHostToRust({ entryFile });
+
+  if (out.kernels.length > 0) {
+    if (workspace.gpu.backend !== "cuda") {
+      throw new Error(
+        "GPU kernels were found, but tsuba.workspace.json has gpu.backend='none'. Set it to 'cuda' to enable kernel compilation."
+      );
+    }
+
+    const nvcc = spawnSync("nvcc", ["--version"], { encoding: "utf-8" });
+    if (nvcc.status !== 0) {
+      const stderr = nvcc.stderr ?? "";
+      throw new Error(`gpu.backend='cuda' but nvcc was not found.\n${stderr}`);
+    }
+
+    throw new Error("gpu.backend='cuda' is not implemented yet in v0 (kernel compilation pending).");
+  }
 
   const generatedRoot = join(projectRoot, workspace.generatedDirName);
   const generatedSrcDir = join(generatedRoot, "src");
