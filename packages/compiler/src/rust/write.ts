@@ -14,6 +14,11 @@ function emitPath(segments: readonly string[]): string {
 
 function emitType(ty: RustType): string {
   if (ty.kind === "unit") return "()";
+  if (ty.kind === "ref") {
+    const lt = ty.lifetime ? `'${ty.lifetime} ` : "";
+    const mut = ty.mut ? "mut " : "";
+    return `&${lt}${mut}${emitType(ty.inner)}`;
+  }
   const base = emitPath(ty.path.segments);
   if (ty.args.length === 0) return base;
   return `${base}<${ty.args.map(emitType).join(", ")}>`;

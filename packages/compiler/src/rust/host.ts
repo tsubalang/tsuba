@@ -238,6 +238,26 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
       const mapped = rustPrimitiveTypes.get(tn.text);
       if (mapped) return mapped;
 
+      if (tn.text === "ref" || tn.text === "mutref") {
+        const [inner] = typeNode.typeArguments ?? [];
+        if (!inner) failAt(typeNode, "TSB1016", `${tn.text}<T> must have exactly one type argument.`);
+        return { kind: "ref", mut: tn.text === "mutref", inner: typeNodeToRust(inner) };
+      }
+
+      if (tn.text === "refLt" || tn.text === "mutrefLt") {
+        const [lt, inner] = typeNode.typeArguments ?? [];
+        if (!lt || !inner) failAt(typeNode, "TSB1017", `${tn.text}<L,T> must have exactly two type arguments.`);
+        if (!ts.isLiteralTypeNode(lt) || !ts.isStringLiteral(lt.literal)) {
+          failAt(lt, "TSB1018", `${tn.text} lifetime must be a string literal (e.g., refLt<\"a\", T>).`);
+        }
+        return {
+          kind: "ref",
+          mut: tn.text === "mutrefLt",
+          lifetime: lt.literal.text,
+          inner: typeNodeToRust(inner),
+        };
+      }
+
       // mut<T> marker -> let mut + T
       if (tn.text === "mut") {
         const [inner] = typeNode.typeArguments ?? [];

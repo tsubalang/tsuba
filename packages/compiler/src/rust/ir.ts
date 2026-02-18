@@ -16,6 +16,12 @@ export type RustVisibility = "private" | "pub";
 
 export type RustType =
   | (NodeBase & { readonly kind: "unit" })
+  | (NodeBase & {
+      readonly kind: "ref";
+      readonly mut: boolean;
+      readonly lifetime?: string;
+      readonly inner: RustType;
+    })
   | (NodeBase & { readonly kind: "path"; readonly path: RustPath; readonly args: readonly RustType[] });
 
 export type RustPattern =

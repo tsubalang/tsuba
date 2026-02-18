@@ -286,4 +286,30 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("while (i < ((3) as i32)) {");
     expect(out.mainRs).to.contain("i = (i + 1);");
   });
+
+  it("maps ref/mutref marker types to Rust references (&T / &mut T / &'a T)", () => {
+    const dir = makeRepoTempDir("compiler-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref, mutref, refLt } from "@tsuba/core/types.js";',
+        "",
+        "function f(x: ref<i32>, y: mutref<i32>, z: refLt<\"a\", i32>): void {",
+        "  void x;",
+        "  void y;",
+        "  void z;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void f;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("fn f(x: &i32, y: &mut i32, z: &'a i32)");
+  });
 });

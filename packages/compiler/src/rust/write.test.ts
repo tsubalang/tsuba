@@ -86,6 +86,29 @@ describe("@tsuba/compiler rust writer", () => {
     expect(rust).to.contain("    return a;");
   });
 
+  it("writes reference types (&T / &mut T / &'a T) deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "fn",
+          vis: "private",
+          name: "f",
+          params: [
+            { name: "x", type: { kind: "ref", mut: false, inner: pathType(["i32"]) } },
+            { name: "y", type: { kind: "ref", mut: true, inner: pathType(["i32"]) } },
+            { name: "z", type: { kind: "ref", mut: false, lifetime: "a", inner: pathType(["i32"]) } },
+          ],
+          ret: unitType(),
+          body: [],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("fn f(x: &i32, y: &mut i32, z: &'a i32) {");
+  });
+
   it("writes block expressions in a stable single-line form (v0)", () => {
     const program: RustProgram = {
       kind: "program",
