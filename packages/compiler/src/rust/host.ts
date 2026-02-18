@@ -33,6 +33,7 @@ export type CompileHostOutput = {
 
 type EmitCtx = {
   readonly checker: ts.TypeChecker;
+  readonly thisName?: string;
 };
 
 function normalizePath(p: string): string {
@@ -288,6 +289,13 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
         if (!k || !v) failAt(typeNode, "TSB1015", "HashMap<K,V> must have exactly two type arguments.");
         return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
       }
+
+      // Nominal/user-defined types (including Rust types) are allowed as bare identifiers.
+      // v0 does not support generic type application for nominal types yet.
+      if ((typeNode.typeArguments?.length ?? 0) > 0) {
+        failAt(typeNode, "TSB1019", `Generic nominal types are not supported in v0: ${typeNode.getText()}`);
+      }
+      return pathType([tn.text]);
     }
   }
   failAt(typeNode, "TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
@@ -308,6 +316,13 @@ function isMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
 
 function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isParenthesizedExpression(expr)) return { kind: "paren", expr: lowerExpr(ctx, expr.expression) };
+
+  if (expr.kind === ts.SyntaxKind.ThisKeyword) {
+    if (!ctx.thisName) {
+      failAt(expr, "TSB1112", "`this` is only supported inside methods/constructors in v0.");
+    }
+    return identExpr(ctx.thisName);
+  }
 
   if (ts.isIdentifier(expr)) {
     if (expr.text === "undefined") {
@@ -354,6 +369,23 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       args.push(lowerExpr(ctx, el));
     }
     return { kind: "macro_call", name: "vec", args };
+  }
+
+  if (ts.isNewExpression(expr)) {
+    if (!ts.isIdentifier(expr.expression)) {
+      failAt(expr.expression, "TSB1113", "new expressions must use an identifier constructor in v0.");
+    }
+    if ((expr.typeArguments?.length ?? 0) > 0) {
+      failAt(expr, "TSB1114", "Generic `new` expressions are not supported in v0.");
+    }
+    const args = (expr.arguments ?? []).map((a) => lowerExpr(ctx, a));
+    return {
+      kind: "assoc_call",
+      typePath: { segments: [expr.expression.text] },
+      typeArgs: [],
+      member: "new",
+      args,
+    };
   }
 
   if (ts.isBinaryExpression(expr)) {
@@ -653,6 +685,212 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   return { kind: "fn", vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, body };
 }
 
+function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { readonly mut: boolean; readonly lifetime?: string } | undefined {
+  if (!typeNode) return undefined;
+  if (!ts.isTypeReferenceNode(typeNode)) return undefined;
+  if (!ts.isIdentifier(typeNode.typeName)) return undefined;
+  const name = typeNode.typeName.text;
+  if (name === "ref" || name === "mutref") return { mut: name === "mutref" };
+  if (name === "refLt" || name === "mutrefLt") {
+    const [lt] = typeNode.typeArguments ?? [];
+    if (!lt || !ts.isLiteralTypeNode(lt) || !ts.isStringLiteral(lt.literal)) return undefined;
+    return { mut: name === "mutrefLt", lifetime: lt.literal.text };
+  }
+  return undefined;
+}
+
+function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration): readonly RustItem[] {
+  if (!cls.name) failAt(cls, "TSB4000", "Anonymous classes are not supported in v0.");
+  if (cls.typeParameters && cls.typeParameters.length > 0) {
+    failAt(cls, "TSB4001", "Generic classes are not supported in v0.");
+  }
+  if (cls.heritageClauses && cls.heritageClauses.length > 0) {
+    failAt(cls, "TSB4002", "Class extends/implements is not supported in v0 (use composition/traits).");
+  }
+
+  const hasExport = cls.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+  const classVis = hasExport ? "pub" : "private";
+  const className = cls.name.text;
+
+  const fields: { readonly name: string; readonly vis: "pub" | "private"; readonly type: RustType; readonly init?: RustExpr }[] =
+    [];
+  const fieldByName = new Map<string, number>();
+
+  let ctor: ts.ConstructorDeclaration | undefined;
+  const methods: ts.MethodDeclaration[] = [];
+
+  for (const m of cls.members) {
+    if (ts.isPropertyDeclaration(m)) {
+      if (m.modifiers?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword) ?? false) {
+        failAt(m, "TSB4010", "Static fields are not supported in v0.");
+      }
+      if (!ts.isIdentifier(m.name)) {
+        failAt(m.name, "TSB4011", "Only identifier-named fields are supported in v0.");
+      }
+      const name = m.name.text;
+      if (fieldByName.has(name)) failAt(m.name, "TSB4012", `Duplicate field '${name}'.`);
+      if (!m.type) failAt(m, "TSB4013", `Field '${name}' must have a type annotation in v0.`);
+
+      const isPrivate =
+        m.modifiers?.some((x) => x.kind === ts.SyntaxKind.PrivateKeyword || x.kind === ts.SyntaxKind.ProtectedKeyword) ??
+        false;
+      const vis = isPrivate ? "private" : "pub";
+
+      const init = m.initializer ? lowerExpr(ctx, m.initializer) : undefined;
+      const ty = typeNodeToRust(m.type);
+
+      fieldByName.set(name, fields.length);
+      fields.push({ name, vis, type: ty, init });
+      continue;
+    }
+
+    if (ts.isConstructorDeclaration(m)) {
+      if (ctor) failAt(m, "TSB4020", "Only one constructor is supported in v0.");
+      if (!m.body) failAt(m, "TSB4021", "Constructor must have a body in v0.");
+      ctor = m;
+      continue;
+    }
+
+    if (ts.isMethodDeclaration(m)) {
+      methods.push(m);
+      continue;
+    }
+
+    if (
+      ts.isSemicolonClassElement(m) ||
+      ts.isIndexSignatureDeclaration(m) ||
+      ts.isGetAccessorDeclaration(m) ||
+      ts.isSetAccessorDeclaration(m)
+    ) {
+      failAt(m, "TSB4030", "Unsupported class member in v0.");
+    }
+
+    failAt(m, "TSB4031", "Unsupported class member in v0.");
+  }
+
+  const structFields = fields.map((f): { readonly vis: "pub" | "private"; readonly name: string; readonly type: RustType } => ({
+    vis: f.vis,
+    name: f.name,
+    type: f.type,
+  }));
+
+  const structItem: RustItem = {
+    kind: "struct",
+    vis: classVis,
+    name: className,
+    attrs: [],
+    fields: structFields,
+  };
+
+  // Build `new(...) -> Self` from constructor assignments + field initializers.
+  const ctorParams: RustParam[] = [];
+  const assigned = new Map<string, RustExpr>();
+
+  if (ctor) {
+    for (const p of ctor.parameters) {
+      if (!ts.isIdentifier(p.name)) failAt(p.name, "TSB4022", "Destructuring ctor params are not supported in v0.");
+      if (!p.type) failAt(p, "TSB4023", `Constructor param '${p.name.text}' must have a type annotation in v0.`);
+      if (p.questionToken || p.initializer) {
+        failAt(p, "TSB4024", "Optional/default ctor params are not supported in v0.");
+      }
+      ctorParams.push({ name: p.name.text, type: typeNodeToRust(p.type) });
+    }
+
+    for (const st of ctor.body!.statements) {
+      if (!ts.isExpressionStatement(st)) failAt(st, "TSB4025", "Constructor body is restricted in v0.");
+      const e = st.expression;
+      if (!ts.isBinaryExpression(e) || e.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+        failAt(e, "TSB4026", "Constructor body must only contain assignments in v0.");
+      }
+      if (!ts.isPropertyAccessExpression(e.left) || e.left.expression.kind !== ts.SyntaxKind.ThisKeyword) {
+        failAt(e.left, "TSB4027", "Constructor assignments must be of the form this.field = expr in v0.");
+      }
+      const fieldName = e.left.name.text;
+      if (!fieldByName.has(fieldName)) {
+        failAt(e.left.name, "TSB4028", `Unknown field '${fieldName}' in constructor assignment.`);
+      }
+      assigned.set(fieldName, lowerExpr(ctx, e.right));
+    }
+  }
+
+  const initFields: { readonly name: string; readonly expr: RustExpr }[] = [];
+  for (const f of fields) {
+    const v = assigned.get(f.name) ?? f.init;
+    if (!v) failAt(cls, "TSB4029", `Field '${f.name}' is not initialized (add an initializer or assign in constructor).`);
+    initFields.push({ name: f.name, expr: v });
+  }
+
+  const newItem: RustItem = {
+    kind: "fn",
+    vis: "pub",
+    receiver: { kind: "none" },
+    name: "new",
+    params: ctorParams,
+    ret: pathType([className]),
+    body: [{ kind: "return", expr: { kind: "struct_lit", typePath: { segments: [className] }, fields: initFields } }],
+  };
+
+  const implItems: RustItem[] = [newItem];
+
+  for (const m of methods) {
+    if (m.modifiers?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword) ?? false) {
+      failAt(m, "TSB4100", "Static methods are not supported in v0.");
+    }
+    if (!ts.isIdentifier(m.name)) failAt(m.name, "TSB4101", "Only identifier-named methods are supported in v0.");
+    if (!m.body) failAt(m, "TSB4102", "Method must have a body in v0.");
+    if (m.typeParameters && m.typeParameters.length > 0) {
+      failAt(m, "TSB4103", "Generic methods are not supported in v0.");
+    }
+
+    const isPrivate =
+      m.modifiers?.some((x) => x.kind === ts.SyntaxKind.PrivateKeyword || x.kind === ts.SyntaxKind.ProtectedKeyword) ??
+      false;
+    const vis = isPrivate ? "private" : "pub";
+
+    let receiver: { readonly kind: "ref_self"; readonly mut: boolean; readonly lifetime?: string } = {
+      kind: "ref_self",
+      mut: false,
+    };
+    const params: RustParam[] = [];
+    for (let i = 0; i < m.parameters.length; i++) {
+      const p = m.parameters[i]!;
+      if (!ts.isIdentifier(p.name)) failAt(p.name, "TSB4104", "Destructuring params are not supported in v0.");
+      if (p.name.text === "this" && i === 0) {
+        const rec = methodReceiverFromThisParam(p.type);
+        if (!rec) {
+          failAt(p, "TSB4105", "Method `this:` parameter must be ref<...> or mutref<...> in v0.");
+        }
+        receiver = { kind: "ref_self", mut: rec.mut, lifetime: rec.lifetime };
+        continue;
+      }
+      if (!p.type) failAt(p, "TSB4106", `Method param '${p.name.text}' must have a type annotation in v0.`);
+      if (p.questionToken || p.initializer) {
+        failAt(p, "TSB4107", "Optional/default params are not supported in v0.");
+      }
+      params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
+    }
+
+    const ret = typeNodeToRust(m.type);
+    const body: RustStmt[] = [];
+    const methodCtx: EmitCtx = { checker: ctx.checker, thisName: "self" };
+    for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
+
+    implItems.push({
+      kind: "fn",
+      vis,
+      receiver,
+      name: m.name.text,
+      params,
+      ret,
+      body,
+    });
+  }
+
+  const implItem: RustItem = { kind: "impl", typePath: { segments: [className] }, items: implItems };
+
+  return [structItem, implItem];
+}
+
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const compilerOptions: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2022,
@@ -784,6 +1022,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     readonly fileName: string;
     readonly sourceFile: ts.SourceFile;
     readonly uses: RustItem[];
+    readonly classes: { readonly pos: number; readonly decl: ts.ClassDeclaration }[];
     readonly functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[];
   };
 
@@ -792,6 +1031,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   for (const f of userSourceFiles) {
     const fileName = normalizePath(f.fileName);
     const uses: RustItem[] = [];
+    const classes: { readonly pos: number; readonly decl: ts.ClassDeclaration }[] = [];
     const functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[] = [];
 
     for (const st of f.statements) {
@@ -882,10 +1122,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         continue;
       }
 
+      if (ts.isClassDeclaration(st)) {
+        if (!st.name) failAt(st, "TSB4000", "Anonymous classes are not supported in v0.");
+        classes.push({ pos: st.pos, decl: st });
+        continue;
+      }
+
       failAt(st, "TSB3102", `Unsupported top-level statement: ${st.getText()}`);
     }
 
-    loweredByFile.set(fileName, { fileName, sourceFile: f, uses, functions });
+    loweredByFile.set(fileName, { fileName, sourceFile: f, uses, classes, functions });
   }
 
   // Root (entry file) uses
@@ -898,18 +1144,22 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   for (const [fileName, modName] of moduleFiles) {
     const lowered = loweredByFile.get(fileName);
     if (!lowered) continue;
-    const fnItems = lowered.functions
-      .sort((a, b) => a.pos - b.pos)
-      .map((f) => lowerFunction(ctx, f.decl));
-    const modItems: RustItem[] = [...sortUses(lowered.uses), ...fnItems];
+    const itemGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
+    for (const c of lowered.classes) itemGroups.push({ pos: c.pos, items: lowerClass(ctx, c.decl) });
+    for (const f0 of lowered.functions) itemGroups.push({ pos: f0.pos, items: [lowerFunction(ctx, f0.decl)] });
+    itemGroups.sort((a, b) => a.pos - b.pos);
+    const declItems = itemGroups.flatMap((g) => g.items);
+
+    const modItems: RustItem[] = [...sortUses(lowered.uses), ...declItems];
     items.push({ kind: "mod", name: modName, items: modItems });
   }
 
-  // Root helper functions (entry file only, excluding main)
-  const rootFns = rootLowered.functions
-    .sort((a, b) => a.pos - b.pos)
-    .map((f) => lowerFunction(ctx, f.decl));
-  items.push(...rootFns);
+  // Root declarations (entry file only, excluding main)
+  const rootGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
+  for (const c of rootLowered.classes) rootGroups.push({ pos: c.pos, items: lowerClass(ctx, c.decl) });
+  for (const f0 of rootLowered.functions) rootGroups.push({ pos: f0.pos, items: [lowerFunction(ctx, f0.decl)] });
+  rootGroups.sort((a, b) => a.pos - b.pos);
+  items.push(...rootGroups.flatMap((g) => g.items));
 
   const mainBody: RustStmt[] = [];
   for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(ctx, st));

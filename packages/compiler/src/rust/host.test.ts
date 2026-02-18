@@ -312,4 +312,47 @@ describe("@tsuba/compiler host emitter", () => {
     const out = compileHostToRust({ entryFile: entry });
     expect(out.mainRs).to.contain("fn f(x: &i32, y: &mut i32, z: &'a i32)");
   });
+
+  it("lowers a minimal class to a Rust struct + impl with constructor and methods", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "type mut<T> = T;",
+        "type mutref<T> = T;",
+        "",
+        "class Counter {",
+        "  value: i32 = 0 as i32;",
+        "",
+        "  constructor() {",
+        "    this.value = 1 as i32;",
+        "  }",
+        "",
+        "  inc(this: mutref<Counter>): void {",
+        "    this.value = this.value + (1 as i32);",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  let c: mut<Counter> = new Counter();",
+        "  c.inc();",
+        "  void c.value;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("struct Counter {");
+    expect(out.mainRs).to.contain("pub value: i32,");
+    expect(out.mainRs).to.contain("impl Counter {");
+    expect(out.mainRs).to.contain("pub fn new() -> Counter {");
+    expect(out.mainRs).to.contain("return Counter { value: (1) as i32 }");
+    expect(out.mainRs).to.contain("pub fn inc(&mut self)");
+    expect(out.mainRs).to.contain("let mut c: Counter = Counter::new();");
+    expect(out.mainRs).to.contain("c.inc();");
+  });
 });
