@@ -166,6 +166,7 @@ Shared memory must be explicit and fixed-size:
 import type { f16 } from "@tsuba/gpu/types.js";
 import { sharedArray, syncthreads } from "@tsuba/gpu/lang.js";
 
+// inside a kernel body:
 const smem = sharedArray<f16, 1024>(); // fixed element count, compile-time constant
 syncthreads();
 ```
@@ -244,13 +245,16 @@ v0 rule:
 Example:
 
 ```ts
-export const k = kernel(
-  { name: "reduce", block: [256, 1, 1] as const, specialize: { VEC: 4 as const } } as const,
-  (spec, xs: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {
-    const vec = spec.specialize.VEC; // compile-time constant
-    // ...
-  }
-);
+const reduceSpec = {
+  name: "reduce",
+  block: [256, 1, 1] as const,
+  specialize: { VEC: 4 as const }
+} as const;
+
+export const k = kernel(reduceSpec, (xs: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {
+  const vec = reduceSpec.specialize.VEC; // compile-time constant
+  // ...
+});
 ```
 
 ---
@@ -291,4 +295,3 @@ Tsuba must ship a testing strategy that catches miscompiles:
 - deterministic seed + tolerance policies for floating-point checks
 
 If a kernel feature cannot be tested reliably, it should not ship in v0.
-
