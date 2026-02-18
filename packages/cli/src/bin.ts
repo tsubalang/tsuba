@@ -27,7 +27,7 @@ function usage(): void {
       "  tsuba build",
       "  tsuba run",
       "  tsuba test",
-      "  tsuba bindgen --manifest-path <Cargo.toml> --out <dir> [--package <@scope/name>]",
+      "  tsuba bindgen --manifest-path <Cargo.toml> --out <dir> [--package <@scope/name>] [--bundle-crate]",
       "",
     ].join("\n")
   );

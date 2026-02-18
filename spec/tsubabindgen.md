@@ -22,6 +22,7 @@ A generated Tsuba package contains:
 
 - `.d.ts` (facade modules)
 - `tsuba.bindings.json` (module → Rust path mapping)
+- (optional) a bundled crate directory for offline/path-backed consumption
 
 Example:
 
@@ -31,6 +32,7 @@ node_modules/@tsuba/axum/
   routing.d.ts
   extract.d.ts
   tsuba.bindings.json
+  crate/            # optional (when --bundle-crate is used)
 ```
 
 ---
@@ -105,6 +107,18 @@ Recommended:
 
 `tsuba.bindings.json` is the authoritative mapping.
 
+### 5.1 Cargo package vs crate name
+
+Cargo distinguishes between:
+
+- **package name** (`[package] name = "simple-crate"`)
+- **crate name** (`[lib] name = "simple_crate"` / Rust `use simple_crate::...`)
+
+In v0, bindgen records both when needed:
+
+- `crate.name`: Rust crate name (used for `use` paths)
+- `crate.package` (optional): Cargo package name (used for Cargo dependency resolution when it differs)
+
 ---
 
 ## 6. tsuba add crate
@@ -125,6 +139,20 @@ Bindgen is primarily:
 - a tool for internal development
 - a power-user tool
 - a fallback when no pre-generated package exists
+
+## 6. Bundling crates for offline consumption
+
+If the generated facades are intended to be consumed via npm without requiring crates.io downloads at build time,
+bindgen can bundle the crate sources:
+
+- `tsubabindgen ... --bundle-crate`
+
+This emits:
+
+- `tsuba.bindings.json` with `crate.path` (relative path like `./crate`)
+- `crate/` containing the crate sources copied from the manifest directory (excluding `target/`, `.git/`, etc)
+
+Tsuba then uses `crate.path` as a Cargo `path` dependency.
 
 ---
 
