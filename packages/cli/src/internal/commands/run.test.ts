@@ -14,6 +14,21 @@ describe("@tsuba/cli run", () => {
     await runInit({ dir: root });
 
     const mainTs = join(root, "packages", "demo", "src", "main.ts");
+    const mathTs = join(root, "packages", "demo", "src", "math.ts");
+
+    writeFileSync(
+      mathTs,
+      [
+        "type i32 = number;",
+        "",
+        "export function add(a: i32, b: i32): i32 {",
+        "  return a + b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
     writeFileSync(
       mainTs,
       [
@@ -24,9 +39,7 @@ describe("@tsuba/cli run", () => {
         "};",
         "declare const println: Macro<(msg: string) => void>;",
         "",
-        "function add(a: i32, b: i32): i32 {",
-        "  return a + b;",
-        "}",
+        'import { add } from "./math.js";',
         "",
         "export function main(): void {",
         "  add(3 as i32, 4 as i32);",

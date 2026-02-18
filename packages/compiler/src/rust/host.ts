@@ -179,16 +179,15 @@ function getExportedMain(sf: ts.SourceFile): ts.FunctionDeclaration {
   fail("TSB1000", "Entry file must export function main().");
 }
 
-function getOtherFunctionDecls(sf: ts.SourceFile): readonly ts.FunctionDeclaration[] {
-  const out: ts.FunctionDeclaration[] = [];
-  for (const st of sf.statements) {
-    if (!ts.isFunctionDeclaration(st)) continue;
-    if (!st.name) continue;
-    if (st.name.text === "main") continue;
-    if (!st.body) continue;
-    out.push(st);
-  }
-  return out;
+function isInNodeModules(fileName: string): boolean {
+  return normalizePath(fileName).includes("/node_modules/");
+}
+
+function hasModifier(
+  node: ts.Node & { readonly modifiers?: readonly ts.ModifierLike[] },
+  kind: ts.SyntaxKind
+): boolean {
+  return node.modifiers?.some((m: ts.ModifierLike) => m.kind === kind) ?? false;
 }
 
 function typeNodeToRust(typeNode: ts.TypeNode | undefined): string {
@@ -540,7 +539,79 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
   const ctx: EmitCtx = { checker };
   const kernels = collectKernelDecls(ctx, sf);
-  const helperFns = getOtherFunctionDecls(sf).map((f) => emitFunction(ctx, f)).join("");
+
+  // Collect helper functions from all user source files (entry + its imports),
+  // ignoring type-only and ambient declarations.
+  const helperFnDecls: { readonly fileName: string; readonly pos: number; readonly decl: ts.FunctionDeclaration }[] =
+    [];
+  const seenFnNames = new Map<string, string>();
+
+  const userSourceFiles = program
+    .getSourceFiles()
+    .filter((f) => !f.isDeclarationFile && !isInNodeModules(f.fileName));
+
+  for (const f of userSourceFiles) {
+    for (const st of f.statements) {
+      if (
+        ts.isImportDeclaration(st) ||
+        ts.isExportDeclaration(st) ||
+        ts.isTypeAliasDeclaration(st) ||
+        ts.isInterfaceDeclaration(st) ||
+        ts.isEmptyStatement(st)
+      ) {
+        continue;
+      }
+
+      if (ts.isVariableStatement(st)) {
+        if (hasModifier(st, ts.SyntaxKind.DeclareKeyword)) continue;
+
+        // Allow kernel declarations (compile-time only):
+        //   const k = kernel({ ... } as const, (...) => ...)
+        const declList = st.declarationList;
+        const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
+        if (!isConst) fail("TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
+
+        const allKernelDecls = declList.declarations.every((d) => {
+          if (!ts.isIdentifier(d.name)) return false;
+          if (!d.initializer) return false;
+          if (!ts.isCallExpression(d.initializer)) return false;
+          if (!ts.isIdentifier(d.initializer.expression)) return false;
+          return (
+            d.initializer.expression.text === "kernel" &&
+            isFromTsubaGpuLang(ctx, d.initializer.expression)
+          );
+        });
+
+        if (allKernelDecls) continue;
+
+        fail("TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
+      }
+
+      if (ts.isFunctionDeclaration(st)) {
+        if (!st.body) continue; // ambient
+        if (!st.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
+        if (st.name.text === "main" && f === sf) continue;
+
+        const prev = seenFnNames.get(st.name.text);
+        if (prev) fail("TSB3101", `Duplicate function '${st.name.text}' in ${prev} and ${f.fileName}.`);
+        seenFnNames.set(st.name.text, f.fileName);
+
+        helperFnDecls.push({ fileName: f.fileName, pos: st.pos, decl: st });
+        continue;
+      }
+
+      fail("TSB3102", `Unsupported top-level statement: ${st.getText()}`);
+    }
+  }
+
+  helperFnDecls.sort((a, b) => {
+    const fa = normalizePath(a.fileName);
+    const fb = normalizePath(b.fileName);
+    if (fa !== fb) return fa.localeCompare(fb);
+    return a.pos - b.pos;
+  });
+
+  const helperFns = helperFnDecls.map((x) => emitFunction(ctx, x.decl)).join("");
 
   const bodyLines: string[] = [];
   for (const st of mainFn.body!.statements) bodyLines.push(...emitStmt(ctx, st, "  "));
