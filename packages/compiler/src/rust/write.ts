@@ -25,6 +25,9 @@ function emitType(ty: RustType): string {
     const mut = ty.mut ? "mut " : "";
     return `&${lt}${mut}${emitType(ty.inner)}`;
   }
+  if (ty.kind === "slice") {
+    return `[${emitType(ty.inner)}]`;
+  }
   const base = emitPath(ty.path.segments);
   if (ty.args.length === 0) return base;
   return `${base}<${ty.args.map(emitType).join(", ")}>`;

@@ -30,6 +30,9 @@ export type String = string;
 // Borrowed string marker (maps to Rust `str`; only valid behind `ref`/`mutref`)
 export type Str = string;
 
+// Borrowed slice marker (maps to Rust `[T]`; only valid behind `ref`/`mutref`)
+export type Slice<T> = T[];
+
 // Borrow markers
 export type ref<T> = T;
 export type mutref<T> = T;

@@ -40,8 +40,10 @@ node_modules/@tsuba/axum/
 ## 2. Airplane-grade rules
 
 - Generation is deterministic.
-- Missing representation is an error (no silent omission).
-- If a public item cannot be represented in Tsuba TS, bindgen errors with an actionable message.
+- Bindgen is **best-effort**:
+  - If a public item cannot be represented in Tsuba TS, bindgen **skips** that item.
+  - Skips must be **explicit and deterministic** (no silent omission): bindgen emits `tsubabindgen.report.json` listing every skipped item + reason.
+- Bindgen must never “guess” a type mapping that could miscompile; when in doubt, skip with a report entry.
 
 ---
 
@@ -65,14 +67,18 @@ Macros are supported, but only under Tsuba’s TS-valid macro model (see `macros
 v0 focuses on owned, explicit types:
 
 - primitives (`i32`, `u64`, `bool`, `f64`)
-- `String`
+- `String` (owned)
+- `Str` (borrow-only, Rust `str`)
+- `Slice<T>` (borrow-only, Rust `[T]`)
 - `Vec<T>`, `Option<T>`, `Result<T,E>`
 - selected `std` types (PathBuf, Duration) once facades exist
 
-**References** (`&T`, `&str`) are tricky:
+**References** are supported via marker types in public signatures:
 
-- If an API exposes references in the public surface, bindgen should error in v0.
-- The recommended workaround is a small Rust wrapper crate exposing owned types.
+- `&T` → `ref<T>`
+- `&mut T` → `mutref<T>`
+- `&'a T` → `refLt<"a", T>`
+- `&'a mut T` → `mutrefLt<"a", T>`
 
 This keeps Tsuba semantics explicit and avoids hidden allocations.
 
@@ -130,15 +136,9 @@ Tsuba CLI can provide:
 Behavior:
 
 - updates `Cargo.toml` for the project (or workspace lockfile)
-- runs `tsubabindgen` (or fetches a pre-generated `@tsuba/axum` package)
+- runs `tsubabindgen` to generate a facade package (`.d.ts` + `tsuba.bindings.json`)
 
-**Important:** Tsuba should prefer consuming **pre-generated** packages for popular crates.
-
-Bindgen is primarily:
-
-- a tool for internal development
-- a power-user tool
-- a fallback when no pre-generated package exists
+Tsuba does not rely on a curated set of pre-generated crate packages in v0; bindgen is the standard mechanism.
 
 ## 6. Bundling crates for offline consumption
 

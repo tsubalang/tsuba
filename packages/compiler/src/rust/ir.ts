@@ -26,6 +26,7 @@ export type RustType =
       readonly lifetime?: string;
       readonly inner: RustType;
     })
+  | (NodeBase & { readonly kind: "slice"; readonly inner: RustType })
   | (NodeBase & { readonly kind: "path"; readonly path: RustPath; readonly args: readonly RustType[] });
 
 export type RustPattern =

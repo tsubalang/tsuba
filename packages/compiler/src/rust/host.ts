@@ -1421,6 +1421,12 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
         return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
       }
 
+      if (typeNameSegments.length === 1 && baseName === "Slice") {
+        const [inner] = typeNode.typeArguments ?? [];
+        if (!inner) failAt(typeNode, "TSB1021", "Slice<T> must have exactly one type argument.");
+        return { kind: "slice", inner: typeNodeToRust(inner) };
+      }
+
       if (typeNameSegments.length === 1 && baseName === "global_ptr") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) failAt(typeNode, "TSB1020", "global_ptr<T> must have exactly one type argument.");

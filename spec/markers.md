@@ -14,6 +14,16 @@ Tsuba must not require comments to affect codegen.
 
 Marker types are declared as TS aliases so that user code typechecks, but the compiler can lower them to Rust concepts.
 
+### 1.0 Primitive and core Rust types (v0)
+
+Tsuba provides explicit primitive markers (e.g. `i32`, `u32`, `bool`) and a small set of “core Rust” markers:
+
+- `String` → `std::string::String` (owned)
+- `Str` → `str` (borrow-only)
+- `Slice<T>` → `[T]` (borrow-only)
+
+`Str` and `Slice<T>` are only valid behind borrow markers (`ref`/`mutref`), since `str` and `[T]` are unsized in Rust.
+
 ### 1.1 Borrow markers
 
 ```ts
@@ -46,6 +56,28 @@ Rust:
 ```rs
 pub fn sum(xs: &Vec<i32>) -> i32 { /* ... */ }
 pub fn push(xs: &mut Vec<i32>, v: i32) { /* ... */ }
+```
+
+### 1.1.1 Borrowed `Str` and `Slice<T>`
+
+```ts
+import type { i32, ref, Slice, Str } from "@tsuba/core/types.js";
+
+export function len(s: ref<Str>): i32 {
+  // ...
+  return 0 as i32;
+}
+
+export function first(xs: ref<Slice<i32>>): i32 {
+  return xs[0]!;
+}
+```
+
+Rust:
+
+```rs
+pub fn len(s: &str) -> i32 { /* ... */ }
+pub fn first(xs: &[i32]) -> i32 { xs[0] }
 ```
 
 ### 1.2 Lifetime tie markers (v0 optional)

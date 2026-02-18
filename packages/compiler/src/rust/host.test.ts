@@ -313,6 +313,31 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("fn f(x: &i32, y: &mut i32, z: &'a i32)");
   });
 
+  it("maps Slice<T> marker types to Rust slices ([T]) behind references in v0", () => {
+    const dir = makeRepoTempDir("compiler-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, Slice, ref, mutref } from "@tsuba/core/types.js";',
+        "",
+        "function f(xs: ref<Slice<i32>>, ys: mutref<Slice<i32>>): void {",
+        "  void xs;",
+        "  void ys;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void f;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("fn f(xs: &[i32], ys: &mut [i32])");
+  });
+
   it("borrows arguments when calling functions that expect ref/mutref", () => {
     const dir = makeRepoTempDir("compiler-");
     const entry = join(dir, "main.ts");
