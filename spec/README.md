@@ -16,6 +16,7 @@ Specs:
 - `markers.md` — marker APIs in `@tsuba/core/types.js` + `@tsuba/core/lang.js`.
 - `gpu.md` — GPU-first kernel dialect + CUDA/PTX direction.
 - `examples.md` — side-by-side Python/Rust/Tsuba examples (host + kernels).
+- `macros.md` — macro + attribute model (no blessed macro list).
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
 - `tsubabindgen.md` — bindgen design and v0 constraints.

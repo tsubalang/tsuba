@@ -219,7 +219,22 @@ Tsuba rejects `.then(...)` chaining in Tsuba code.
 
 ---
 
-## 12. Unsupported TS features (v0)
+## 12. Macros and attributes
+
+Tsuba does not parse Rust `foo!(...)` syntax from TS source.
+
+Instead, macros and attributes are expressed using TS-valid values and intrinsics:
+
+- **function-like macros** are imported as branded callable values (emitted by `tsubabindgen`)
+- **attribute macros** are imported as branded callable values that produce an `Attr` marker
+- **derive macros** are imported as `DeriveMacro` marker values
+- attributes/derives are attached to items using `annotate(...)`
+
+See `macros.md` for the full model.
+
+---
+
+## 13. Unsupported TS features (v0)
 
 Hard errors for:
 
@@ -230,4 +245,3 @@ Hard errors for:
 - conditional types
 - `any`
 - dynamic indexing without known keys
-

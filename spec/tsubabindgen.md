@@ -56,7 +56,7 @@ v0 bindgen supports crates whose public API uses a restricted set of types that 
 
 Traits may be supported if they use supported types.
 
-Macros are not supported in bindgen.
+Macros are supported, but only under Tsuba’s TS-valid macro model (see `macros.md`).
 
 ### 3.2 Supported types
 
@@ -126,3 +126,62 @@ Bindgen is primarily:
 - a power-user tool
 - a fallback when no pre-generated package exists
 
+---
+
+## 7. Macro + proc-macro support (v0)
+
+Tsuba avoids a curated “blessed macro list”.
+
+Instead, if a crate exports macros/proc-macros and they can be represented under Tsuba’s macro model,
+bindgen emits TS values for them.
+
+### 7.1 Function-like macros
+
+Bindgen emits exported function-like macros as branded callable values (e.g. `Macro<...>`).
+
+User code calls them as normal TS calls:
+
+```ts
+import { println } from "@tsuba/std/macros.js";
+println("hi");
+```
+
+Tsuba lowers to:
+
+```rs
+println!("hi");
+```
+
+If bindgen cannot infer a typed argument model, it must fall back to `Tokens` arguments, or error.
+
+### 7.2 Attribute macros
+
+Bindgen emits exported attribute macros as callable values that produce `Attr` markers.
+
+They are applied to items using `annotate(...)`:
+
+```ts
+import { annotate } from "@tsuba/core/lang.js";
+import { tokio_main } from "@tsuba/tokio/macros.js";
+
+export async function main(): Promise<void> { /* ... */ }
+annotate(main, tokio_main());
+```
+
+### 7.3 Derive macros
+
+Bindgen emits derive macros as `DeriveMacro` values that can be attached via `annotate(...)`:
+
+```ts
+import { annotate } from "@tsuba/core/lang.js";
+import { Serialize, Deserialize } from "@tsuba/serde/index.js";
+
+export class User { id: u64 = 0; }
+annotate(User, Serialize, Deserialize);
+```
+
+### 7.4 Airplane-grade constraints
+
+- Bindgen must never silently omit a macro: if exported and requested, it is emitted or errors.
+- All macro surfaces must be deterministic and stable.
+- If a macro would introduce new TS-visible symbols in user code (item-defining macros), v0 should reject it (see `macros.md`).
