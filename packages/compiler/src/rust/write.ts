@@ -1,0 +1,149 @@
+import type {
+  RustExpr,
+  RustItem,
+  RustParam,
+  RustPattern,
+  RustProgram,
+  RustStmt,
+  RustType,
+} from "./ir.js";
+
+function emitPath(segments: readonly string[]): string {
+  return segments.join("::");
+}
+
+function emitType(ty: RustType): string {
+  if (ty.kind === "unit") return "()";
+  const base = emitPath(ty.path.segments);
+  if (ty.args.length === 0) return base;
+  return `${base}<${ty.args.map(emitType).join(", ")}>`;
+}
+
+function emitPattern(p: RustPattern): string {
+  switch (p.kind) {
+    case "wild":
+      return "_";
+    case "ident":
+      return p.name;
+  }
+}
+
+function emitExpr(expr: RustExpr): string {
+  switch (expr.kind) {
+    case "unit":
+      return "()";
+    case "ident":
+      return expr.name;
+    case "number":
+      return expr.text;
+    case "string":
+      return JSON.stringify(expr.value);
+    case "bool":
+      return expr.value ? "true" : "false";
+    case "paren":
+      return `(${emitExpr(expr.expr)})`;
+    case "cast":
+      return `(${emitExpr(expr.expr)}) as ${emitType(expr.type)}`;
+    case "field":
+      return `${emitExpr(expr.expr)}.${expr.name}`;
+    case "binary":
+      return `(${emitExpr(expr.left)} ${expr.op} ${emitExpr(expr.right)})`;
+    case "call":
+      return `${emitExpr(expr.callee)}(${expr.args.map(emitExpr).join(", ")})`;
+    case "macro_call":
+      return `${expr.name}!(${expr.args.map(emitExpr).join(", ")})`;
+    case "assoc_call": {
+      const base = emitPath(expr.typePath.segments);
+      const turbofish =
+        expr.typeArgs.length > 0 ? `::<${expr.typeArgs.map(emitType).join(", ")}>` : "";
+      return `${base}${turbofish}::${expr.member}(${expr.args.map(emitExpr).join(", ")})`;
+    }
+    case "try":
+      return `(${emitExpr(expr.expr)})?`;
+    case "unsafe":
+      return `unsafe { ${emitExpr(expr.expr)} }`;
+    case "block": {
+      // v0: keep block-expressions as single-line for determinism and embedding.
+      const stmtText = expr.stmts.map((s) => emitStmtInline(s)).join(" ");
+      const tail = emitExpr(expr.tail);
+      return `{ ${stmtText} ${tail} }`.replaceAll(/\s+/g, " ").trim();
+    }
+  }
+}
+
+function emitStmtInline(st: RustStmt): string {
+  switch (st.kind) {
+    case "let": {
+      const mut = st.mut ? "mut " : "";
+      const ty = st.type ? `: ${emitType(st.type)}` : "";
+      return `let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`;
+    }
+    case "expr":
+      return `${emitExpr(st.expr)};`;
+    case "return":
+      return st.expr ? `return ${emitExpr(st.expr)};` : "return;";
+    case "if":
+      // Inline-if is never used inside expression blocks in v0.
+      return "__tsuba_unreachable_inline_if__;";
+  }
+}
+
+function emitStmtLines(st: RustStmt, indent: string): string[] {
+  switch (st.kind) {
+    case "let": {
+      const mut = st.mut ? "mut " : "";
+      const ty = st.type ? `: ${emitType(st.type)}` : "";
+      return [`${indent}let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`];
+    }
+    case "expr":
+      return [`${indent}${emitExpr(st.expr)};`];
+    case "return":
+      return [st.expr ? `${indent}return ${emitExpr(st.expr)};` : `${indent}return;`];
+    case "if": {
+      const out: string[] = [];
+      out.push(`${indent}if ${emitExpr(st.cond)} {`);
+      for (const s of st.then) out.push(...emitStmtLines(s, `${indent}  `));
+      if (st.else) {
+        out.push(`${indent}} else {`);
+        for (const s of st.else) out.push(...emitStmtLines(s, `${indent}  `));
+      }
+      out.push(`${indent}}`);
+      return out;
+    }
+  }
+}
+
+function emitParam(p: RustParam): string {
+  return `${p.name}: ${emitType(p.type)}`;
+}
+
+function emitItem(item: RustItem): string[] {
+  switch (item.kind) {
+    case "struct": {
+      const out: string[] = [];
+      for (const a of item.attrs) out.push(a);
+      out.push(`struct ${item.name};`);
+      return out;
+    }
+    case "fn": {
+      const out: string[] = [];
+      const retClause = item.ret.kind === "unit" ? "" : ` -> ${emitType(item.ret)}`;
+      out.push(`fn ${item.name}(${item.params.map(emitParam).join(", ")})${retClause} {`);
+      for (const st of item.body) out.push(...emitStmtLines(st, "  "));
+      out.push("}");
+      return out;
+    }
+  }
+}
+
+export function writeRustProgram(program: RustProgram, opts?: { readonly header?: readonly string[] }): string {
+  const parts: string[] = [];
+  for (const h of opts?.header ?? []) parts.push(h);
+  for (const item of program.items) {
+    if (parts.length > 0) parts.push("");
+    parts.push(...emitItem(item));
+  }
+  parts.push("");
+  return parts.join("\n");
+}
+

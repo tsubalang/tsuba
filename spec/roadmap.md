@@ -4,6 +4,9 @@ This roadmap is organized around **merge gates**: each phase is “done” only 
 
 Tsuba’s primary selling point is **GPU kernels**. GPU is not optional or “later”; it is on the critical path.
 
+“95% TypeScript” in this roadmap means: **95% of the syntax people use in “systems TS”** (strict, typed, no dynamic JS patterns), *not* “any JS program”.
+When a TS feature has no Rust-faithful lowering, we hard-error (airplane-grade) rather than emit an approximation.
+
 See also:
 
 - `carryover-from-tsonic.md` (process + architecture to reuse)
@@ -11,7 +14,20 @@ See also:
 
 ---
 
-## Phase 0 — Lock v0 semantics (spec → checklists)
+## Current status (implemented today)
+
+The repo already has a working v0 scaffold:
+
+- `tsuba init/build/run` exist and are covered by unit + E2E tests.
+- `@tsuba/compiler` emits a small, explicitly-whitelisted TS subset to a single Rust `main.rs` and runs `cargo build/run`.
+- `@tsuba/core/@tsuba/std/@tsuba/gpu` exist as marker/facade packages.
+- GPU kernels are **detected** and **gated** deterministically (backend not implemented yet).
+
+This roadmap is the plan to take that v0 scaffold to a “real language” implementation.
+
+---
+
+## Phase 0 — Lock v0 semantics (spec → checklists) (IN PROGRESS)
 
 Deliverables:
 
@@ -20,21 +36,22 @@ Deliverables:
 - Define explicit capability gating (`requires.sm`, tensor-core requirements, atomics availability).
 - Define determinism rules for generated artifacts (Rust + PTX + metadata).
 - Define the macro/attribute surface (already in `macros.md`) as a strict v0 contract.
+- Define the “no duck typing” contract:
+  - nominal types by default
+  - structural types only in tightly-scoped, spec’d contexts (if any)
 
 Merge gate:
 
-- Spec review complete; no code yet.
+- Spec review complete and frozen for v0.1; all items above are explicit checklists.
 
 ---
 
-## Phase 1 — Repo scaffolding + fast inner loop
+## Phase 1 — Repo scaffolding + fast inner loop (DONE)
 
 Deliverables (Tsonic-style monorepo):
 
 - `packages/cli` — `tsuba init/build/run/test/add/bindgen`
-- `packages/frontend` — TS parsing, IR, diagnostics skeleton
-- `packages/emitter-host` — Rust host emitter skeleton
-- `packages/gpu-backend` — kernel compiler skeleton (compile-only)
+- `packages/compiler` — TS parsing, diagnostics, host emission (Rust)
 - `packages/core` — `@tsuba/core/types.js`, `@tsuba/core/lang.js`
 - `packages/std` — `@tsuba/std` minimal prelude facade
 - `packages/gpu` — `@tsuba/gpu/types.js`, `@tsuba/gpu/lang.js`
@@ -54,17 +71,56 @@ Merge gate:
 
 ---
 
-## Phase 2 — Host compiler MVP (Rust-first subset)
+## Phase 1.5 — Airplane-grade compiler foundations (NEXT)
+
+Goal: make the compiler architecture provably safe to extend.
 
 Deliverables:
 
-- Module resolution via `tsuba.bindings.json`.
+- Introduce a typed internal IR (Rust-ish) for:
+  - types (`RustType`)
+  - expressions, statements
+  - items (functions, structs, impls, traits, enums)
+- Introduce a deterministic Rust writer:
+  - stable formatting
+  - stable ordering rules (files, items, declarations)
+  - no ad-hoc string concatenation in converters
+- Introduce span tracking + mapping:
+  - every IR node has an optional TS span (file+start+end)
+  - compiler errors include the originating TS span
+  - rustc errors can be mapped back to TS spans where possible
+- Add “no silent omission” enforcement:
+  - every unsupported TS node must raise a stable `TSBxxxx` error code
+  - add tests that assert we error (not skip) on representative unsupported constructs
+
+Merge gate:
+
+- Golden tests assert IR→Rust is deterministic.
+- E2E tests still run real `cargo` builds.
+
+---
+
+## Phase 2 — Host compiler MVP (Rust-first subset) (IN PROGRESS)
+
+Deliverables:
+
+- Module resolution via `tsuba.bindings.json`:
+  - TS module specifiers → Rust paths + crate identity
+  - deterministic import/name resolution rules
 - Core lowering:
   - functions, locals, control flow (restricted)
+  - blocks, assignments, loops (restricted)
+  - indexing + slices (restricted)
+  - strings (UTF-8) + formatting macros
+  - error model: `Result` is first-class (no exceptions)
+  - object/array literals with airplane-grade rules (no “dictionary surprise”):
+    1) contextually typed to a known nominal struct → struct construction
+    2) otherwise: generate a private “shape struct” with stable name + layout, usable within the module
   - classes → structs
   - interfaces → traits (nominal)
   - discriminated unions → enums + match exhaustiveness
-  - `ref<T>`, `mutref<T>`, `q(Result)` → `?`, `unsafe(() => ...)`
+  - `ref<T>`, `mutref<T>` borrowing model
+  - `q(Result)` → `?`, `unsafe(() => ...)`
 - Diagnostics with stable TS source mapping.
 
 Merge gate:
@@ -75,11 +131,15 @@ Merge gate:
 
 ---
 
-## Phase 3 — tsubabindgen MVP (crate → `.d.ts` + manifest)
+## Phase 3 — tsubabindgen MVP (crate → `.d.ts` + manifest) (TODO)
 
 Deliverables:
 
-- Metadata extraction pipeline (v0: `rustdoc-json` acceptable).
+- Decide the metadata extraction source of truth (explicit choice required):
+  - Option A: nightly `rustdoc -Z unstable-options --output-format json`
+  - Option B: rust-analyzer metadata extraction (protocol-driven)
+  - Option C: a small Rust helper binary using `cargo metadata` + parsing public source (restricted)
+  - (We should not ship something that works “sometimes”; choose one deterministic approach.)
 - Emit:
   - `.d.ts` per Rust module
   - curated `index.d.ts`
@@ -97,7 +157,7 @@ Merge gate:
 
 ---
 
-## Phase 4 — GPU kernel compiler MVP (CUDA/PTX first)
+## Phase 4 — GPU kernel compiler MVP (CUDA/PTX first) (TODO)
 
 Deliverables:
 
@@ -125,7 +185,7 @@ Merge gate:
 
 ---
 
-## Phase 5 — “Credibility kernels”: matmul + softmax building blocks
+## Phase 5 — “Credibility kernels”: matmul + softmax building blocks (TODO)
 
 Deliverables:
 
@@ -142,7 +202,7 @@ Merge gate:
 
 ---
 
-## Phase 6 — MoE dispatch + router building blocks
+## Phase 6 — MoE dispatch + router building blocks (TODO)
 
 Deliverables:
 
@@ -160,7 +220,7 @@ Merge gate:
 
 ---
 
-## Phase 7 — Proof projects + README-smoke discipline
+## Phase 7 — Proof projects + README-smoke discipline (TODO)
 
 Deliverables:
 
@@ -177,7 +237,7 @@ Merge gate:
 
 ---
 
-## Phase 8 — Publishing workflow (npm + crates)
+## Phase 8 — Publishing workflow (npm + crates) (TODO)
 
 Deliverables:
 
@@ -193,3 +253,22 @@ Merge gate:
 
 - Publishing scripts run deterministically and refuse unsafe states.
 
+---
+
+## Phase 9 — “95% systems TypeScript” reach (stretch, long-term)
+
+Goal: compile most *strict*, typed TS people write for systems work, while staying Rust-faithful.
+
+Deliverables:
+
+- Async/await (host):
+  - decide runtime policy (explicit choice required: no default runtime vs shipped minimal runtime helper)
+- Generics + trait bounds (restricted, explicit)
+- `match`-first ergonomics for enums/discriminated unions
+- Standard library surface that makes “real code” ergonomic without JS patterns:
+  - iterators, slices, owned/borrowed strings (`String`/`&str`)
+  - collections with explicit ownership
+
+Merge gate:
+
+- A “real” proof project compiles and runs (host + GPU), with no compiler hacks and no silent omissions.

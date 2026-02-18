@@ -1,0 +1,88 @@
+export type Span = {
+  readonly fileName: string;
+  readonly start: number;
+  readonly end: number;
+};
+
+export type NodeBase = {
+  readonly span?: Span;
+};
+
+export type RustPath = {
+  readonly segments: readonly string[];
+};
+
+export type RustType =
+  | (NodeBase & { readonly kind: "unit" })
+  | (NodeBase & { readonly kind: "path"; readonly path: RustPath; readonly args: readonly RustType[] });
+
+export type RustPattern =
+  | (NodeBase & { readonly kind: "wild" })
+  | (NodeBase & { readonly kind: "ident"; readonly name: string });
+
+export type RustExpr =
+  | (NodeBase & { readonly kind: "unit" })
+  | (NodeBase & { readonly kind: "ident"; readonly name: string })
+  | (NodeBase & { readonly kind: "number"; readonly text: string })
+  | (NodeBase & { readonly kind: "string"; readonly value: string })
+  | (NodeBase & { readonly kind: "bool"; readonly value: boolean })
+  | (NodeBase & { readonly kind: "paren"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "cast"; readonly expr: RustExpr; readonly type: RustType })
+  | (NodeBase & { readonly kind: "field"; readonly expr: RustExpr; readonly name: string })
+  | (NodeBase & { readonly kind: "binary"; readonly op: string; readonly left: RustExpr; readonly right: RustExpr })
+  | (NodeBase & { readonly kind: "call"; readonly callee: RustExpr; readonly args: readonly RustExpr[] })
+  | (NodeBase & { readonly kind: "macro_call"; readonly name: string; readonly args: readonly RustExpr[] })
+  | (NodeBase & { readonly kind: "assoc_call"; readonly typePath: RustPath; readonly typeArgs: readonly RustType[]; readonly member: string; readonly args: readonly RustExpr[] })
+  | (NodeBase & { readonly kind: "try"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "unsafe"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "block"; readonly stmts: readonly RustStmt[]; readonly tail: RustExpr });
+
+export type RustStmt =
+  | (NodeBase & {
+      readonly kind: "let";
+      readonly pattern: RustPattern;
+      readonly mut: boolean;
+      readonly type?: RustType;
+      readonly init: RustExpr;
+    })
+  | (NodeBase & { readonly kind: "expr"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "return"; readonly expr?: RustExpr })
+  | (NodeBase & {
+      readonly kind: "if";
+      readonly cond: RustExpr;
+      readonly then: readonly RustStmt[];
+      readonly else?: readonly RustStmt[];
+    });
+
+export type RustParam = NodeBase & { readonly name: string; readonly type: RustType };
+
+export type RustItem =
+  | (NodeBase & { readonly kind: "struct"; readonly name: string; readonly attrs: readonly string[] })
+  | (NodeBase & {
+      readonly kind: "fn";
+      readonly name: string;
+      readonly params: readonly RustParam[];
+      readonly ret: RustType;
+      readonly body: readonly RustStmt[];
+    });
+
+export type RustProgram = NodeBase & {
+  readonly kind: "program";
+  readonly items: readonly RustItem[];
+};
+
+export function unitType(): RustType {
+  return { kind: "unit" };
+}
+
+export function pathType(segments: readonly string[], args: readonly RustType[] = []): RustType {
+  return { kind: "path", path: { segments }, args };
+}
+
+export function unitExpr(): RustExpr {
+  return { kind: "unit" };
+}
+
+export function identExpr(name: string): RustExpr {
+  return { kind: "ident", name };
+}
