@@ -36,6 +36,12 @@ export type RustExpr =
   | (NodeBase & { readonly kind: "unit" })
   | (NodeBase & { readonly kind: "ident"; readonly name: string })
   | (NodeBase & { readonly kind: "path"; readonly path: RustPath })
+  | (NodeBase & {
+      readonly kind: "path_call";
+      readonly path: RustPath;
+      readonly typeArgs: readonly RustType[];
+      readonly args: readonly RustExpr[];
+    })
   | (NodeBase & { readonly kind: "number"; readonly text: string })
   | (NodeBase & { readonly kind: "string"; readonly value: string })
   | (NodeBase & { readonly kind: "bool"; readonly value: boolean })

@@ -186,4 +186,35 @@ describe("@tsuba/compiler rust writer", () => {
     const rust = writeRustProgram(program);
     expect(rust).to.contain("f(&(x), &mut (y));");
   });
+
+  it("writes turbofish path calls deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "fn",
+          vis: "private",
+          receiver: { kind: "none" },
+          name: "main",
+          params: [],
+          ret: unitType(),
+          attrs: [],
+          body: [
+            {
+              kind: "expr",
+              expr: {
+                kind: "path_call",
+                path: { segments: ["foo", "bar"] },
+                typeArgs: [pathType(["u32"]), pathType(["f32"])],
+                args: [identExpr("x")],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("foo::bar::<u32, f32>(x);");
+  });
 });

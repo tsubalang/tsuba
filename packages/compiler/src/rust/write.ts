@@ -47,6 +47,12 @@ function emitExpr(expr: RustExpr): string {
       return expr.name;
     case "path":
       return emitPath(expr.path.segments);
+    case "path_call": {
+      const base = emitPath(expr.path.segments);
+      const turbofish =
+        expr.typeArgs.length > 0 ? `::<${expr.typeArgs.map(emitType).join(", ")}>` : "";
+      return `${base}${turbofish}(${expr.args.map(emitExpr).join(", ")})`;
+    }
     case "number":
       return expr.text;
     case "string":
