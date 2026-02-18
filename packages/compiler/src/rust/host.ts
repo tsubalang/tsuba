@@ -650,7 +650,7 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   const body: RustStmt[] = [];
   for (const st of fnDecl.body.statements) body.push(...lowerStmt(ctx, st));
 
-  return { kind: "fn", vis, name: fnDecl.name.text, params, ret, body };
+  return { kind: "fn", vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, body };
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
@@ -714,6 +714,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       vis: "private",
       name: "__tsuba_kernel_placeholder",
       attrs: ["#[allow(dead_code)]"],
+      fields: [],
     });
   }
 
@@ -916,6 +917,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const mainItem: RustItem = {
     kind: "fn",
     vis: "private",
+    receiver: { kind: "none" },
     name: "main",
     params: [],
     ret: returnKind === "unit" ? unitType() : (rustReturnType ?? unitType()),

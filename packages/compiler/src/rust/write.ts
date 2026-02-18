@@ -67,6 +67,13 @@ function emitExpr(expr: RustExpr): string {
         expr.typeArgs.length > 0 ? `::<${expr.typeArgs.map(emitType).join(", ")}>` : "";
       return `${base}${turbofish}::${expr.member}(${expr.args.map(emitExpr).join(", ")})`;
     }
+    case "struct_lit": {
+      const base = emitPath(expr.typePath.segments);
+      const fields = expr.fields
+        .map((f) => `${f.name}: ${emitExpr(f.expr)}`)
+        .join(", ");
+      return `${base} { ${fields} }`;
+    }
     case "try":
       return `(${emitExpr(expr.expr)})?`;
     case "unsafe":
@@ -179,14 +186,43 @@ function emitItem(item: RustItem, indent: string): string[] {
       const out: string[] = [];
       for (const a of item.attrs) out.push(`${indent}${a}`);
       const vis = item.vis === "pub" ? "pub " : "";
-      out.push(`${indent}${vis}struct ${item.name};`);
+      if (item.fields.length === 0) {
+        out.push(`${indent}${vis}struct ${item.name};`);
+        return out;
+      }
+      out.push(`${indent}${vis}struct ${item.name} {`);
+      for (const f of item.fields) {
+        const fvis = f.vis === "pub" ? "pub " : "";
+        out.push(`${indent}  ${fvis}${f.name}: ${emitType(f.type)},`);
+      }
+      out.push(`${indent}}`);
+      return out;
+    }
+    case "impl": {
+      const out: string[] = [];
+      out.push(`${indent}impl ${emitPath(item.typePath.segments)} {`);
+      const innerIndent = `${indent}  `;
+      let first = true;
+      for (const inner of item.items) {
+        if (!first) out.push("");
+        out.push(...emitItem(inner, innerIndent));
+        first = false;
+      }
+      out.push(`${indent}}`);
       return out;
     }
     case "fn": {
       const out: string[] = [];
       const retClause = item.ret.kind === "unit" ? "" : ` -> ${emitType(item.ret)}`;
       const vis = item.vis === "pub" ? "pub " : "";
-      out.push(`${indent}${vis}fn ${item.name}(${item.params.map(emitParam).join(", ")})${retClause} {`);
+      const receiver = (() => {
+        if (item.receiver.kind === "none") return undefined;
+        const lt = item.receiver.lifetime ? `'${item.receiver.lifetime} ` : "";
+        const mut = item.receiver.mut ? "mut " : "";
+        return `&${lt}${mut}self`;
+      })();
+      const params = receiver ? [receiver, ...item.params.map(emitParam)] : item.params.map(emitParam);
+      out.push(`${indent}${vis}fn ${item.name}(${params.join(", ")})${retClause} {`);
       const bodyIndent = `${indent}  `;
       for (const st of item.body) out.push(...emitStmtLines(st, bodyIndent));
       out.push(`${indent}}`);

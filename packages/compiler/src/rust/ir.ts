@@ -14,6 +14,10 @@ export type RustPath = {
 
 export type RustVisibility = "private" | "pub";
 
+export type RustReceiver =
+  | { readonly kind: "none" }
+  | { readonly kind: "ref_self"; readonly mut: boolean; readonly lifetime?: string };
+
 export type RustType =
   | (NodeBase & { readonly kind: "unit" })
   | (NodeBase & {
@@ -43,6 +47,11 @@ export type RustExpr =
   | (NodeBase & { readonly kind: "call"; readonly callee: RustExpr; readonly args: readonly RustExpr[] })
   | (NodeBase & { readonly kind: "macro_call"; readonly name: string; readonly args: readonly RustExpr[] })
   | (NodeBase & { readonly kind: "assoc_call"; readonly typePath: RustPath; readonly typeArgs: readonly RustType[]; readonly member: string; readonly args: readonly RustExpr[] })
+  | (NodeBase & {
+      readonly kind: "struct_lit";
+      readonly typePath: RustPath;
+      readonly fields: readonly { readonly name: string; readonly expr: RustExpr }[];
+    })
   | (NodeBase & { readonly kind: "try"; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "unsafe"; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "block"; readonly stmts: readonly RustStmt[]; readonly tail: RustExpr });
@@ -71,6 +80,12 @@ export type RustStmt =
 
 export type RustParam = NodeBase & { readonly name: string; readonly type: RustType };
 
+export type RustStructField = NodeBase & {
+  readonly vis: RustVisibility;
+  readonly name: string;
+  readonly type: RustType;
+};
+
 export type RustItem =
   | (NodeBase & {
       readonly kind: "use";
@@ -87,10 +102,17 @@ export type RustItem =
       readonly vis: RustVisibility;
       readonly name: string;
       readonly attrs: readonly string[];
+      readonly fields: readonly RustStructField[];
+    })
+  | (NodeBase & {
+      readonly kind: "impl";
+      readonly typePath: RustPath;
+      readonly items: readonly RustItem[];
     })
   | (NodeBase & {
       readonly kind: "fn";
       readonly vis: RustVisibility;
+      readonly receiver: RustReceiver;
       readonly name: string;
       readonly params: readonly RustParam[];
       readonly ret: RustType;

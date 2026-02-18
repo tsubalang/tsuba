@@ -12,6 +12,7 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          receiver: { kind: "none" },
           name: "main",
           params: [],
           ret: unitType(),
@@ -68,6 +69,7 @@ describe("@tsuba/compiler rust writer", () => {
             {
               kind: "fn",
               vis: "pub",
+              receiver: { kind: "none" },
               name: "add",
               params: [{ name: "a", type: pathType(["i32"]) }],
               ret: pathType(["i32"]),
@@ -93,6 +95,7 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          receiver: { kind: "none" },
           name: "f",
           params: [
             { name: "x", type: { kind: "ref", mut: false, inner: pathType(["i32"]) } },
@@ -116,6 +119,7 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          receiver: { kind: "none" },
           name: "main",
           params: [],
           ret: unitType(),
