@@ -153,4 +153,37 @@ describe("@tsuba/compiler rust writer", () => {
     const rust = writeRustProgram(program);
     expect(rust).to.contain("let x = { let _ = f(); () };");
   });
+
+  it("writes borrow expressions (&x / &mut y) deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "fn",
+          vis: "private",
+          receiver: { kind: "none" },
+          name: "main",
+          params: [],
+          ret: unitType(),
+          attrs: [],
+          body: [
+            {
+              kind: "expr",
+              expr: {
+                kind: "call",
+                callee: identExpr("f"),
+                args: [
+                  { kind: "borrow", mut: false, expr: identExpr("x") },
+                  { kind: "borrow", mut: true, expr: identExpr("y") },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("f(&(x), &mut (y));");
+  });
 });

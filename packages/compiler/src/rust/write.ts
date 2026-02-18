@@ -55,6 +55,10 @@ function emitExpr(expr: RustExpr): string {
       return expr.value ? "true" : "false";
     case "paren":
       return `(${emitExpr(expr.expr)})`;
+    case "borrow": {
+      const mut = expr.mut ? "mut " : "";
+      return `&${mut}(${emitExpr(expr.expr)})`;
+    }
     case "cast":
       return `(${emitExpr(expr.expr)}) as ${emitType(expr.type)}`;
     case "field":

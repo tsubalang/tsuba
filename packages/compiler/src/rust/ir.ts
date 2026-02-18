@@ -40,6 +40,7 @@ export type RustExpr =
   | (NodeBase & { readonly kind: "string"; readonly value: string })
   | (NodeBase & { readonly kind: "bool"; readonly value: boolean })
   | (NodeBase & { readonly kind: "paren"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "borrow"; readonly mut: boolean; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "cast"; readonly expr: RustExpr; readonly type: RustType })
   | (NodeBase & { readonly kind: "field"; readonly expr: RustExpr; readonly name: string })
   | (NodeBase & { readonly kind: "index"; readonly expr: RustExpr; readonly index: RustExpr })

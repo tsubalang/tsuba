@@ -313,6 +313,33 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("fn f(x: &i32, y: &mut i32, z: &'a i32)");
   });
 
+  it("borrows arguments when calling functions that expect ref/mutref", () => {
+    const dir = makeRepoTempDir("compiler-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref, mut, mutref } from "@tsuba/core/types.js";',
+        "",
+        "function f(x: ref<i32>, y: mutref<i32>): void {",
+        "  void x;",
+        "  void y;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const a: i32 = 1 as i32;",
+        "  let b: mut<i32> = 2 as i32;",
+        "  f(a, b);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("f(&(a), &mut (b));");
+  });
+
   it("lowers a minimal class to a Rust struct + impl with constructor and methods", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
     const entry = join(dir, "main.ts");

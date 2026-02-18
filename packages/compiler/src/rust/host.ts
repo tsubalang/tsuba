@@ -1194,7 +1194,45 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       return { kind: "macro_call", name: expr.expression.text, args };
     }
 
-    return { kind: "call", callee: lowerExpr(ctx, expr.expression), args };
+    const callee = lowerExpr(ctx, expr.expression);
+    let callArgs = args;
+    const sig = ctx.checker.getResolvedSignature(expr);
+    const decl = sig?.declaration;
+    if (decl && ts.isFunctionLike(decl)) {
+      const params = decl.parameters;
+      const effectiveParams =
+        params.length > 0 &&
+        ts.isIdentifier(params[0]!.name) &&
+        params[0]!.name.text === "this"
+          ? params.slice(1)
+          : params;
+
+      const next: RustExpr[] = [];
+      for (let i = 0; i < callArgs.length; i++) {
+        const arg = callArgs[i]!;
+        const param = effectiveParams[i];
+        if (!param || !param.type) {
+          next.push(arg);
+          continue;
+        }
+        const rustTy = typeNodeToRust(param.type);
+        if (rustTy.kind !== "ref") {
+          next.push(arg);
+          continue;
+        }
+        if (rustTy.mut) {
+          const okPlace =
+            arg.kind === "ident" || arg.kind === "field" || arg.kind === "index";
+          if (!okPlace) {
+            failAt(expr.arguments[i]!, "TSB1310", "&mut arguments must be place expressions in v0.");
+          }
+        }
+        next.push({ kind: "borrow", mut: rustTy.mut, expr: arg });
+      }
+      callArgs = next;
+    }
+
+    return { kind: "call", callee, args: callArgs };
   }
 
   failAt(expr, "TSB1100", `Unsupported expression: ${expr.getText()}`);
