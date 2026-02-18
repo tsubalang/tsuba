@@ -10,6 +10,7 @@ export type BindgenParsed = {
   readonly manifestPath: string;
   readonly outDir: string;
   readonly packageName?: string;
+  readonly bundleCrate: boolean;
 };
 
 export type BindgenSpawn = (
@@ -22,6 +23,7 @@ export function parseBindgenArgs(args: BindgenArgs): BindgenParsed {
   let manifestPath: string | undefined;
   let outDir: string | undefined;
   let packageName: string | undefined;
+  let bundleCrate = false;
 
   const it = args.argv[Symbol.iterator]();
   while (true) {
@@ -47,10 +49,13 @@ export function parseBindgenArgs(args: BindgenArgs): BindgenParsed {
         packageName = v.value;
         break;
       }
+      case "--bundle-crate":
+        bundleCrate = true;
+        break;
       case "--help":
       case "-h":
         throw new Error(
-          "Usage: tsuba bindgen --manifest-path <Cargo.toml> --out <dir> [--package <@scope/name>]"
+          "Usage: tsuba bindgen --manifest-path <Cargo.toml> --out <dir> [--package <@scope/name>] [--bundle-crate]"
         );
       default:
         throw new Error(`bindgen: unknown arg: ${a}`);
@@ -64,7 +69,7 @@ export function parseBindgenArgs(args: BindgenArgs): BindgenParsed {
     throw new Error("bindgen: missing required --out <dir>");
   }
 
-  return { manifestPath, outDir, packageName };
+  return { manifestPath, outDir, packageName, bundleCrate };
 }
 
 export async function runBindgen(
@@ -80,6 +85,7 @@ export async function runBindgen(
     "--out",
     parsed.outDir,
     ...(parsed.packageName ? ["--package", parsed.packageName] : []),
+    ...(parsed.bundleCrate ? ["--bundle-crate"] : []),
   ];
 
   const res = spawn("tsubabindgen", cmdArgs, { stdio: "inherit", encoding: "utf-8" });

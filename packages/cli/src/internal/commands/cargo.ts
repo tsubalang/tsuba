@@ -1,5 +1,6 @@
 export type CargoDependency = {
   readonly name: string;
+  readonly package?: string;
   readonly features?: readonly string[];
 } & ({ readonly version: string } | { readonly path: string });
 
@@ -9,17 +10,33 @@ export function mergeCargoDependencies(
 ): readonly CargoDependency[] {
   const merged = new Map<
     string,
-    { readonly kind: "version"; readonly version: string; readonly features: Set<string> } | { readonly kind: "path"; readonly path: string; readonly features: Set<string> }
+    | {
+        readonly kind: "version";
+        readonly version: string;
+        readonly package?: string;
+        readonly features: Set<string>;
+      }
+    | { readonly kind: "path"; readonly path: string; readonly package?: string; readonly features: Set<string> }
   >();
   for (const dep of [...a, ...b]) {
     const cur = merged.get(dep.name);
     if (!cur) {
       if ("version" in dep) {
-        merged.set(dep.name, { kind: "version", version: dep.version, features: new Set(dep.features ?? []) });
+        merged.set(dep.name, {
+          kind: "version",
+          version: dep.version,
+          package: dep.package,
+          features: new Set(dep.features ?? []),
+        });
       } else {
-        merged.set(dep.name, { kind: "path", path: dep.path, features: new Set(dep.features ?? []) });
+        merged.set(dep.name, { kind: "path", path: dep.path, package: dep.package, features: new Set(dep.features ?? []) });
       }
       continue;
+    }
+    const curPkg = cur.package ?? dep.name;
+    const depPkg = dep.package ?? dep.name;
+    if (curPkg !== depPkg) {
+      throw new Error(`Conflicting cargo package names for '${dep.name}': '${curPkg}' vs '${depPkg}'.`);
     }
     if ("version" in dep) {
       if (cur.kind !== "version") {
@@ -48,9 +65,13 @@ export function mergeCargoDependencies(
     .map(([name, v]) => {
       const features = [...v.features].sort((x, y) => x.localeCompare(y));
       if (v.kind === "version") {
-        return features.length === 0 ? { name, version: v.version } : { name, version: v.version, features };
+        const base = v.package ? { name, package: v.package } : { name };
+        return features.length === 0
+          ? { ...base, version: v.version }
+          : { ...base, version: v.version, features };
       }
-      return features.length === 0 ? { name, path: v.path } : { name, path: v.path, features };
+      const base = v.package ? { name, package: v.package } : { name };
+      return features.length === 0 ? { ...base, path: v.path } : { ...base, path: v.path, features };
     });
 }
 
@@ -61,14 +82,17 @@ export function renderCargoToml(opts: {
 }): string {
   const depLines = opts.deps.map((d) => {
     const features = d.features && d.features.length > 0 ? `[${d.features.map((f) => JSON.stringify(f)).join(", ")}]` : undefined;
+    const packageField = d.package && d.package !== d.name ? `package = ${JSON.stringify(d.package)}` : undefined;
     if ("version" in d) {
       const version = JSON.stringify(d.version);
-      if (!features) return `${d.name} = ${version}`;
-      return `${d.name} = { version = ${version}, features = ${features} }`;
+      if (!features && !packageField) return `${d.name} = ${version}`;
+      const parts = [`version = ${version}`, packageField, features ? `features = ${features}` : undefined].filter((p): p is string => typeof p === "string");
+      return `${d.name} = { ${parts.join(", ")} }`;
     }
     const path = JSON.stringify(d.path);
-    if (!features) return `${d.name} = { path = ${path} }`;
-    return `${d.name} = { path = ${path}, features = ${features} }`;
+    if (!features && !packageField) return `${d.name} = { path = ${path} }`;
+    const parts = [`path = ${path}`, packageField, features ? `features = ${features}` : undefined].filter((p): p is string => typeof p === "string");
+    return `${d.name} = { ${parts.join(", ")} }`;
   });
 
   return [

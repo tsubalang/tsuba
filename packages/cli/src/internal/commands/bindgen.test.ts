@@ -6,7 +6,18 @@ describe("@tsuba/cli bindgen", () => {
   it("parses args and invokes tsubabindgen", async () => {
     const calls: { cmd: string; args: readonly string[] }[] = [];
     await runBindgen(
-      { dir: "/repo", argv: ["--manifest-path", "crate/Cargo.toml", "--out", "out", "--package", "@tsuba/x"] },
+      {
+        dir: "/repo",
+        argv: [
+          "--manifest-path",
+          "crate/Cargo.toml",
+          "--out",
+          "out",
+          "--package",
+          "@tsuba/x",
+          "--bundle-crate",
+        ],
+      },
       {
         spawn: (cmd, args, _opts) => {
           calls.push({ cmd, args });
@@ -24,6 +35,7 @@ describe("@tsuba/cli bindgen", () => {
       "/repo/out",
       "--package",
       "@tsuba/x",
+      "--bundle-crate",
     ]);
   });
 

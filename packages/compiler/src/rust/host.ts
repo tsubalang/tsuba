@@ -39,6 +39,7 @@ export type CompileHostOptions = {
 
 export type CrateDep = {
   readonly name: string;
+  readonly package?: string;
   readonly features?: readonly string[];
 } & ({ readonly version: string } | { readonly path: string });
 
@@ -84,6 +85,7 @@ type BindingsManifest = {
   readonly kind: "crate";
   readonly crate: {
     readonly name: string;
+    readonly package?: string;
     readonly version?: string;
     readonly path?: string;
     readonly features?: readonly string[];
@@ -206,6 +208,9 @@ function readBindingsManifest(path: string, specNode: ts.Node): BindingsManifest
   const crate = m.crate;
   if (!crate || typeof crate.name !== "string") {
     failAt(specNode, "TSB3224", `${path}: missing crate.name.`);
+  }
+  if (crate.package !== undefined && typeof crate.package !== "string") {
+    failAt(specNode, "TSB3224", `${path}: crate.package must be a string when present.`);
   }
   const hasVersion = typeof crate.version === "string";
   const hasPath = typeof crate.path === "string";
@@ -1616,16 +1621,24 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     const normalize = (d: CrateDep): CrateDep => {
       const features = (d.features ?? []).filter((x): x is string => typeof x === "string");
       const unique = [...new Set(features)].sort((a, b) => a.localeCompare(b));
+      const base = d.package ? { name: d.name, package: d.package } : { name: d.name };
       if ("version" in d) {
-        return unique.length === 0 ? { name: d.name, version: d.version } : { name: d.name, version: d.version, features: unique };
+        return unique.length === 0
+          ? { ...base, version: d.version }
+          : { ...base, version: d.version, features: unique };
       }
-      return unique.length === 0 ? { name: d.name, path: d.path } : { name: d.name, path: d.path, features: unique };
+      return unique.length === 0 ? { ...base, path: d.path } : { ...base, path: d.path, features: unique };
     };
 
     const prev = usedCratesByName.get(dep.name);
     if (!prev) {
       usedCratesByName.set(dep.name, normalize(dep));
       return;
+    }
+    const prevPkg = prev.package ?? prev.name;
+    const depPkg = dep.package ?? dep.name;
+    if (prevPkg !== depPkg) {
+      failAt(node, "TSB3226", `Conflicting cargo package names for '${dep.name}': '${prevPkg}' vs '${depPkg}'.`);
     }
     if ("version" in prev && "version" in dep && prev.version !== dep.version) {
       failAt(
@@ -1644,15 +1657,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     }
     const mergedFeatures = new Set<string>([...(prev.features ?? []), ...(dep.features ?? [])]);
     const features = [...mergedFeatures].sort((a, b) => a.localeCompare(b));
+    const base = dep.package ? { name: dep.name, package: dep.package } : { name: dep.name };
     if ("version" in dep) {
       usedCratesByName.set(
         dep.name,
-        features.length === 0 ? { name: dep.name, version: dep.version } : { name: dep.name, version: dep.version, features }
+        features.length === 0 ? { ...base, version: dep.version } : { ...base, version: dep.version, features }
       );
     } else {
       usedCratesByName.set(
         dep.name,
-        features.length === 0 ? { name: dep.name, path: dep.path } : { name: dep.name, path: dep.path, features }
+        features.length === 0 ? { ...base, path: dep.path } : { ...base, path: dep.path, features }
       );
     }
   }
@@ -1875,7 +1889,11 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
               `No module mapping for ${JSON.stringify(spec)} in ${manifestPath}.`
             );
           }
-          const depBase = { name: manifest.crate.name, features: manifest.crate.features };
+          const depBase = {
+            name: manifest.crate.name,
+            package: manifest.crate.package,
+            features: manifest.crate.features,
+          };
           if (manifest.crate.path) {
             addUsedCrate(specNode, { ...depBase, path: manifest.crate.path });
           } else {

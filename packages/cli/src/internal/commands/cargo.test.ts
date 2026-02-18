@@ -64,4 +64,13 @@ describe("@tsuba/cli cargo helpers", () => {
     expect(toml).to.contain('simple = { path = "/tmp/simple" }');
     expect(toml).to.contain('serde = { version = "1.0", features = ["derive"] }');
   });
+
+  it("renders Cargo.toml with package renames (crate name != cargo package name)", () => {
+    const toml = renderCargoToml({
+      crateName: "my_api",
+      rustEdition: "2021",
+      deps: [{ name: "simple_crate", package: "simple-crate", path: "/tmp/simple-crate" }],
+    });
+    expect(toml).to.contain('simple_crate = { path = "/tmp/simple-crate", package = "simple-crate" }');
+  });
 });
