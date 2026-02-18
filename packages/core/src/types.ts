@@ -27,6 +27,9 @@ export type bool = boolean;
 // Explicit string marker (maps to Rust `std::string::String`)
 export type String = string;
 
+// Borrowed string marker (maps to Rust `str`; only valid behind `ref`/`mutref`)
+export type Str = string;
+
 // Borrow markers
 export type ref<T> = T;
 export type mutref<T> = T;

@@ -1313,6 +1313,7 @@ const rustPrimitiveTypes = new Map<string, RustType>([
   ["f32", pathType(["f32"])],
   ["f64", pathType(["f64"])],
   ["bool", pathType(["bool"])],
+  ["Str", pathType(["str"])],
   ["String", pathType(["std", "string", "String"])],
 ]);
 
@@ -1348,74 +1349,88 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
   if (!typeNode) return unitType();
   if (typeNode.kind === ts.SyntaxKind.VoidKeyword) return unitType();
   if (ts.isTypeReferenceNode(typeNode)) {
-    const tn = typeNode.typeName;
-    if (ts.isIdentifier(tn)) {
-      const mapped = rustPrimitiveTypes.get(tn.text);
+    const typeNameSegments = (() => {
+      const name = typeNode.typeName;
+      if (ts.isIdentifier(name)) return [name.text];
+      const segs: string[] = [];
+      let cur: ts.EntityName = name;
+      while (true) {
+        if (ts.isIdentifier(cur)) {
+          segs.unshift(cur.text);
+          break;
+        }
+        segs.unshift(cur.right.text);
+        cur = cur.left;
+      }
+      return segs;
+    })();
+
+    if (typeNameSegments.length > 0) {
+      const baseName = typeNameSegments[typeNameSegments.length - 1]!;
+      const mapped = typeNameSegments.length === 1 ? rustPrimitiveTypes.get(baseName) : undefined;
       if (mapped) return mapped;
 
-      if (tn.text === "ref" || tn.text === "mutref") {
+      if (typeNameSegments.length === 1 && (baseName === "ref" || baseName === "mutref")) {
         const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1016", `${tn.text}<T> must have exactly one type argument.`);
-        return { kind: "ref", mut: tn.text === "mutref", inner: typeNodeToRust(inner) };
+        if (!inner) failAt(typeNode, "TSB1016", `${baseName}<T> must have exactly one type argument.`);
+        return { kind: "ref", mut: baseName === "mutref", inner: typeNodeToRust(inner) };
       }
 
-      if (tn.text === "refLt" || tn.text === "mutrefLt") {
+      if (typeNameSegments.length === 1 && (baseName === "refLt" || baseName === "mutrefLt")) {
         const [lt, inner] = typeNode.typeArguments ?? [];
-        if (!lt || !inner) failAt(typeNode, "TSB1017", `${tn.text}<L,T> must have exactly two type arguments.`);
+        if (!lt || !inner) failAt(typeNode, "TSB1017", `${baseName}<L,T> must have exactly two type arguments.`);
         if (!ts.isLiteralTypeNode(lt) || !ts.isStringLiteral(lt.literal)) {
-          failAt(lt, "TSB1018", `${tn.text} lifetime must be a string literal (e.g., refLt<\"a\", T>).`);
+          failAt(lt, "TSB1018", `${baseName} lifetime must be a string literal (e.g., refLt<\"a\", T>).`);
         }
         return {
           kind: "ref",
-          mut: tn.text === "mutrefLt",
+          mut: baseName === "mutrefLt",
           lifetime: lt.literal.text,
           inner: typeNodeToRust(inner),
         };
       }
 
       // mut<T> marker -> let mut + T
-      if (tn.text === "mut") {
+      if (typeNameSegments.length === 1 && baseName === "mut") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) failAt(typeNode, "TSB1011", "mut<T> must have exactly one type argument.");
         return typeNodeToRust(inner);
       }
 
-      if (tn.text === "Option") {
+      if (typeNameSegments.length === 1 && baseName === "Option") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) failAt(typeNode, "TSB1012", "Option<T> must have exactly one type argument.");
         return pathType(["Option"], [typeNodeToRust(inner)]);
       }
 
-      if (tn.text === "Result") {
+      if (typeNameSegments.length === 1 && baseName === "Result") {
         const [okTy, errTy] = typeNode.typeArguments ?? [];
         if (!okTy || !errTy) failAt(typeNode, "TSB1013", "Result<T,E> must have exactly two type arguments.");
         return pathType(["Result"], [typeNodeToRust(okTy), typeNodeToRust(errTy)]);
       }
 
-      if (tn.text === "Vec") {
+      if (typeNameSegments.length === 1 && baseName === "Vec") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) failAt(typeNode, "TSB1014", "Vec<T> must have exactly one type argument.");
         return pathType(["Vec"], [typeNodeToRust(inner)]);
       }
 
-      if (tn.text === "HashMap") {
+      if (typeNameSegments.length === 1 && baseName === "HashMap") {
         const [k, v] = typeNode.typeArguments ?? [];
         if (!k || !v) failAt(typeNode, "TSB1015", "HashMap<K,V> must have exactly two type arguments.");
         return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
       }
 
-      if (tn.text === "global_ptr") {
+      if (typeNameSegments.length === 1 && baseName === "global_ptr") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) failAt(typeNode, "TSB1020", "global_ptr<T> must have exactly one type argument.");
         return pathType(["__tsuba_cuda", "DevicePtr"], [typeNodeToRust(inner)]);
       }
 
-      // Nominal/user-defined types (including Rust types) are allowed as bare identifiers.
-      // v0 does not support generic type application for nominal types yet.
-      if ((typeNode.typeArguments?.length ?? 0) > 0) {
-        failAt(typeNode, "TSB1019", `Generic nominal types are not supported in v0: ${typeNode.getText()}`);
-      }
-      return pathType([tn.text]);
+      // Nominal/user-defined types (including crate types) are allowed as identifiers (and qualified names).
+      // v0 supports generic type application for nominal types.
+      const typeArgs = (typeNode.typeArguments ?? []).map((t) => typeNodeToRust(t));
+      return pathType(typeNameSegments, typeArgs);
     }
   }
   failAt(typeNode, "TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
