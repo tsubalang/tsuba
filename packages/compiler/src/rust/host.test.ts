@@ -582,4 +582,66 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("pub struct User {");
     expect(out.mainRs).to.contain("fn main()");
   });
+
+  it("lowers kernel declarations to CUDA C source (compile-only v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        "",
+        'const k = kernel({ name: "k" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
+        "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+        "  if (i < n) {",
+        "    out[i] = a[i] + b[i];",
+        "  }",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels).to.have.length(1);
+    expect(out.kernels[0]!.cuSource).to.contain('extern "C" __global__ void k(');
+    expect(out.kernels[0]!.cuSource).to.contain("out[i] = (a[i] + b[i]);");
+  });
+
+  it("errors (airplane-grade) on kernel numeric literals without explicit cast", () => {
+    const dir = makeRepoTempDir("compiler-kernel-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { kernel } from "@tsuba/gpu/lang.js";',
+        'import type { u32 } from "@tsuba/core/types.js";',
+        "",
+        'const k = kernel({ name: "k" } as const, (n: u32): void => {',
+        "  const x = 1;",
+        "  void x;",
+        "});",
+        "",
+        "export function main(): void {",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceof(CompileError);
+    const ce = err as CompileError;
+    expect(ce.code).to.equal("TSB1421");
+  });
 });
