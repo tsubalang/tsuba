@@ -485,6 +485,11 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
         }
         return identExpr(bound);
       }
+
+      // Associated items on nominal types (e.g., enum variants / associated consts) use `::` in Rust.
+      if (isClassValue(ctx, base)) {
+        return pathExpr([base.text, expr.name.text]);
+      }
     }
     return { kind: "field", expr: lowerExpr(ctx, base), name: expr.name.text };
   }

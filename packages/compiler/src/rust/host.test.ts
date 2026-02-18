@@ -364,7 +364,11 @@ describe("@tsuba/compiler host emitter", () => {
     mkdirSync(pkgRoot, { recursive: true });
     writeFileSync(join(pkgRoot, "package.json"), JSON.stringify({ name: "@tsuba/fake", version: "0.0.1" }) + "\n", "utf-8");
     writeFileSync(join(pkgRoot, "index.js"), "export {};\n", "utf-8");
-    writeFileSync(join(pkgRoot, "index.d.ts"), "export declare class Foo {}\n", "utf-8");
+    writeFileSync(
+      join(pkgRoot, "index.d.ts"),
+      ["export declare class Foo {}", "export declare class Color {", "  private constructor();", "  static readonly Red: Color;", "}", ""].join("\n"),
+      "utf-8"
+    );
     writeFileSync(
       join(pkgRoot, "tsuba.bindings.json"),
       JSON.stringify(
@@ -382,7 +386,7 @@ describe("@tsuba/compiler host emitter", () => {
 
     writeFileSync(
       entry,
-      ['import { Foo } from "@tsuba/fake/index.js";', "", "export function main(): void {", "  void Foo;", "}", ""].join(
+      ['import { Foo, Color } from "@tsuba/fake/index.js";', "", "export function main(): void {", "  void Foo;", "  const c = Color.Red;", "  void c;", "}", ""].join(
         "\n"
       ),
       "utf-8"
@@ -390,6 +394,8 @@ describe("@tsuba/compiler host emitter", () => {
 
     const out = compileHostToRust({ entryFile: entry });
     expect(out.mainRs).to.contain("use fake_crate::Foo;");
+    expect(out.mainRs).to.contain("use fake_crate::Color;");
+    expect(out.mainRs).to.contain("Color::Red");
     expect(out.crates).to.deep.equal([{ name: "fake_crate", version: "0.1.0" }]);
   });
 
