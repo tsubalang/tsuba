@@ -1,0 +1,35 @@
+{
+  "name": "@tsuba/core",
+  "version": "0.0.1",
+  "description": "Core marker types and intrinsics for the Tsuba compiler",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./types.js": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    },
+    "./lang.js": {
+      "types": "./dist/lang.d.ts",
+      "default": "./dist/lang.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "pretest": "npm run build",
+    "test": "mocha --parallel 'dist/**/*.test.js'"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
+

@@ -1,0 +1,33 @@
+{
+  "name": "@tsuba/monorepo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b",
+    "build": "npm run typecheck",
+    "test": "npm test --workspaces",
+    "test:cli": "cd packages/cli && npm test --",
+    "test:compiler": "cd packages/compiler && npm test --"
+  },
+  "devDependencies": {
+    "@types/chai": "5.2.2",
+    "@types/mocha": "10.0.10",
+    "@types/node": "24.5.2",
+    "chai": "5.3.3",
+    "mocha": "11.7.2",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tsubalang/tsuba.git"
+  },
+  "license": "MIT"
+}
+

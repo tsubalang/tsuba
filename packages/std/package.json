@@ -1,0 +1,38 @@
+{
+  "name": "@tsuba/std",
+  "version": "0.0.1",
+  "description": "TypeScript facades for Rust std (for Tsuba)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./prelude.js": {
+      "types": "./dist/prelude.d.ts",
+      "default": "./dist/prelude.js"
+    },
+    "./macros.js": {
+      "types": "./dist/macros.d.ts",
+      "default": "./dist/macros.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "pretest": "npm run build",
+    "test": "mocha --parallel 'dist/**/*.test.js'"
+  },
+  "dependencies": {
+    "@tsuba/core": "0.0.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
+

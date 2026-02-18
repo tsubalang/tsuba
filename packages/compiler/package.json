@@ -1,0 +1,31 @@
+{
+  "name": "@tsuba/compiler",
+  "version": "0.0.1",
+  "description": "Tsuba compiler frontend + emitters",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "pretest": "npm run build",
+    "test": "mocha --parallel 'dist/**/*.test.js'"
+  },
+  "dependencies": {
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT"
+}
+
