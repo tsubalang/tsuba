@@ -119,4 +119,28 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("fn add(a: i32, b: i32) -> i32");
     expect(out.mainRs).to.contain("let x = add((3) as i32, (4) as i32);");
   });
+
+  it("supports the TS void operator as a discard expression", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "function f(): i32 {",
+        "  return 1 as i32;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void f();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("{ let _ = f(); () }");
+  });
 });

@@ -185,6 +185,11 @@ function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
   if (expr.kind === ts.SyntaxKind.TrueKeyword) return "true";
   if (expr.kind === ts.SyntaxKind.FalseKeyword) return "false";
 
+  if (ts.isVoidExpression(expr)) {
+    const inner = emitExpr(ctx, expr.expression);
+    return `{ let _ = ${inner}; () }`;
+  }
+
   if (ts.isAsExpression(expr)) {
     const inner = emitExpr(ctx, expr.expression);
     const ty = typeNodeToRust(expr.type);
