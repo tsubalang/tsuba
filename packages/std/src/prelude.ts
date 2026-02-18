@@ -20,8 +20,10 @@ export function Some<T>(value: T): Option<T> {
 
 export const None: Option<never> = { some: false };
 
-export function Ok<T, E = never>(value: T): Result<T, E> {
-  return { ok: true, value };
+export function Ok<E = never>(): Result<void, E>;
+export function Ok<T, E = never>(value: T): Result<T, E>;
+export function Ok<T, E = never>(value?: T): Result<T, E> {
+  return { ok: true, value: value as T };
 }
 
 export function Err<E, T = never>(error: E): Result<T, E> {

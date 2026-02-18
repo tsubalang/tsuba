@@ -27,6 +27,52 @@ type EmitCtx = {
   readonly checker: ts.TypeChecker;
 };
 
+function normalizePath(p: string): string {
+  return p.replaceAll("\\", "/");
+}
+
+function isFromTsubaCoreLang(ctx: EmitCtx, ident: ts.Identifier): boolean {
+  const sym0 = ctx.checker.getSymbolAtLocation(ident);
+  const sym =
+    sym0 && (sym0.flags & ts.SymbolFlags.Alias) !== 0 ? ctx.checker.getAliasedSymbol(sym0) : sym0;
+  if (!sym) return false;
+  for (const decl of sym.declarations ?? []) {
+    const file = normalizePath(decl.getSourceFile().fileName);
+    if (file.includes("/@tsuba/core/") && file.includes("/lang.")) return true;
+    if (file.includes("/packages/core/") && file.includes("/dist/lang.d.ts")) return true;
+  }
+  return false;
+}
+
+function isFromTsubaStdPrelude(ctx: EmitCtx, ident: ts.Identifier): boolean {
+  const sym0 = ctx.checker.getSymbolAtLocation(ident);
+  const sym =
+    sym0 && (sym0.flags & ts.SymbolFlags.Alias) !== 0 ? ctx.checker.getAliasedSymbol(sym0) : sym0;
+  if (!sym) return false;
+  for (const decl of sym.declarations ?? []) {
+    const file = normalizePath(decl.getSourceFile().fileName);
+    if (file.includes("/@tsuba/std/") && file.includes("/prelude.")) return true;
+    if (file.includes("/packages/std/") && file.includes("/dist/prelude.d.ts")) return true;
+  }
+  return false;
+}
+
+function isClassValue(ctx: EmitCtx, ident: ts.Identifier): boolean {
+  const sym0 = ctx.checker.getSymbolAtLocation(ident);
+  const sym =
+    sym0 && (sym0.flags & ts.SymbolFlags.Alias) !== 0 ? ctx.checker.getAliasedSymbol(sym0) : sym0;
+  if (!sym) return false;
+  return (sym.declarations ?? []).some(
+    (d) =>
+      ts.isClassDeclaration(d) ||
+      ts.isClassExpression(d) ||
+      ts.isClassLike(d) ||
+      (ts.isVariableDeclaration(d) &&
+        d.initializer !== undefined &&
+        ts.isClassExpression(d.initializer))
+  );
+}
+
 const rustPrimitiveTypes = new Map<string, string>([
   ["i8", "i8"],
   ["i16", "i16"],
@@ -75,6 +121,30 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): string {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) fail("TSB1011", "mut<T> must have exactly one type argument.");
         return typeNodeToRust(inner);
+      }
+
+      if (tn.text === "Option") {
+        const [inner] = typeNode.typeArguments ?? [];
+        if (!inner) fail("TSB1012", "Option<T> must have exactly one type argument.");
+        return `Option<${typeNodeToRust(inner)}>`;
+      }
+
+      if (tn.text === "Result") {
+        const [okTy, errTy] = typeNode.typeArguments ?? [];
+        if (!okTy || !errTy) fail("TSB1013", "Result<T,E> must have exactly two type arguments.");
+        return `Result<${typeNodeToRust(okTy)}, ${typeNodeToRust(errTy)}>`;
+      }
+
+      if (tn.text === "Vec") {
+        const [inner] = typeNode.typeArguments ?? [];
+        if (!inner) fail("TSB1014", "Vec<T> must have exactly one type argument.");
+        return `Vec<${typeNodeToRust(inner)}>`;
+      }
+
+      if (tn.text === "HashMap") {
+        const [k, v] = typeNode.typeArguments ?? [];
+        if (!k || !v) fail("TSB1015", "HashMap<K,V> must have exactly two type arguments.");
+        return `std::collections::HashMap<${typeNodeToRust(k)}, ${typeNodeToRust(v)}>`;
       }
     }
   }
@@ -147,6 +217,65 @@ function emitExpr(ctx: EmitCtx, expr: ts.Expression): string {
   }
 
   if (ts.isCallExpression(expr)) {
+    // std prelude helpers
+    if (ts.isIdentifier(expr.expression) && isFromTsubaStdPrelude(ctx, expr.expression)) {
+      if (expr.expression.text === "Ok") {
+        if (expr.arguments.length === 0) return "Ok(())";
+        if (
+          expr.arguments.length === 1 &&
+          ts.isIdentifier(expr.arguments[0]!) &&
+          expr.arguments[0]!.text === "undefined"
+        ) {
+          return "Ok(())";
+        }
+      }
+    }
+
+    // Core markers (compile-time only)
+    if (ts.isIdentifier(expr.expression) && isFromTsubaCoreLang(ctx, expr.expression)) {
+      if (expr.expression.text === "q") {
+        if (expr.arguments.length !== 1) fail("TSB1300", "q(...) must have exactly one argument.");
+        const inner = emitExpr(ctx, expr.arguments[0]!);
+        return `(${inner})?`;
+      }
+      if (expr.expression.text === "unsafe") {
+        if (expr.arguments.length !== 1) {
+          fail("TSB1302", "unsafe(...) must have exactly one argument.");
+        }
+        const [arg] = expr.arguments;
+        if (!arg || !ts.isArrowFunction(arg)) {
+          fail("TSB1303", "unsafe(...) requires an arrow function argument in v0.");
+        }
+        if (ts.isBlock(arg.body)) {
+          fail("TSB1304", "unsafe(() => { ... }) blocks are not supported in v0 (use expression body).");
+        }
+        const inner = emitExpr(ctx, arg.body);
+        return `unsafe { ${inner} }`;
+      }
+    }
+
+    // Associated functions: `Type.method<Ts...>(args...)` -> `Type::<Ts...>::method(args...)`
+    if (ts.isPropertyAccessExpression(expr.expression)) {
+      const obj = expr.expression.expression;
+      if (ts.isIdentifier(obj) && isClassValue(ctx, obj)) {
+        const member = expr.expression.name.text;
+
+        const baseRust =
+          isFromTsubaStdPrelude(ctx, obj) && obj.text === "HashMap"
+            ? "std::collections::HashMap"
+            : obj.text;
+
+        const typeArgs = expr.typeArguments ?? [];
+        const genericPart =
+          typeArgs.length > 0
+            ? `::<${typeArgs.map((t) => typeNodeToRust(t)).join(", ")}>`
+            : "";
+
+        const args = expr.arguments.map((a) => emitExpr(ctx, a)).join(", ");
+        return `${baseRust}${genericPart}::${member}(${args})`;
+      }
+    }
+
     const args = expr.arguments.map((a) => emitExpr(ctx, a)).join(", ");
 
     if (isMacroType(ctx.checker, expr.expression)) {
@@ -259,10 +388,26 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   if (!sf) fail("TSB0001", `Could not read entry file: ${opts.entryFile}`);
 
   const mainFn = getExportedMain(sf);
-  const returnTy = typeNodeToRust(mainFn.type);
-  if (returnTy !== "()") {
-    fail("TSB1003", "main() must return void in v0.");
-  }
+  const returnTypeNode = mainFn.type;
+  const returnKind: "unit" | "result" = (() => {
+    if (!returnTypeNode) return "unit";
+    if (returnTypeNode.kind === ts.SyntaxKind.VoidKeyword) return "unit";
+    if (
+      ts.isTypeReferenceNode(returnTypeNode) &&
+      ts.isIdentifier(returnTypeNode.typeName) &&
+      returnTypeNode.typeName.text === "Result"
+    ) {
+      const [okTy] = returnTypeNode.typeArguments ?? [];
+      if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
+        fail("TSB1003", "main() may only return Result<void, E> in v0.");
+      }
+      return "result";
+    }
+    fail("TSB1003", "main() must return void or Result<void, E> in v0.");
+  })();
+
+  const rustReturnType =
+    returnKind === "result" ? typeNodeToRust(returnTypeNode) : undefined;
 
   const ctx: EmitCtx = { checker };
   const bodyLines: string[] = [];
@@ -271,7 +416,9 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   const mainRs = [
     "// Generated by @tsuba/compiler (v0)",
     "",
-    "fn main() {",
+    returnKind === "unit"
+      ? "fn main() {"
+      : `fn main() -> ${rustReturnType} {`,
     ...bodyLines,
     "}",
     "",
