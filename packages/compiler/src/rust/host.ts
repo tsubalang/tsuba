@@ -307,7 +307,375 @@ function isClassValue(ctx: EmitCtx, ident: ts.Identifier): boolean {
 export type KernelDecl = {
   readonly name: string;
   readonly specText: string;
+  readonly cuSource: string;
 };
+
+type CudaScalar = "i32" | "u32" | "f32" | "f64" | "bool";
+
+type CudaType =
+  | { readonly kind: "scalar"; readonly scalar: CudaScalar }
+  | { readonly kind: "ptr"; readonly addrSpace: "global"; readonly inner: CudaScalar };
+
+function cudaTypeFromTypeNode(node: ts.TypeNode, at: ts.Node): CudaType {
+  if (node.kind === ts.SyntaxKind.VoidKeyword) {
+    failAt(at, "TSB1410", "Kernel types must not be void (except return type).");
+  }
+  if (!ts.isTypeReferenceNode(node)) {
+    failAt(node, "TSB1410", `Unsupported kernel type annotation in v0: ${node.getText()}`);
+  }
+  const tn = node.typeName;
+  if (!ts.isIdentifier(tn)) {
+    failAt(tn, "TSB1410", `Unsupported kernel type annotation in v0: ${node.getText()}`);
+  }
+
+  const scalar = (() => {
+    switch (tn.text) {
+      case "i32":
+      case "u32":
+      case "f32":
+      case "f64":
+      case "bool":
+        return tn.text as CudaScalar;
+      default:
+        return undefined;
+    }
+  })();
+  if (scalar) {
+    if ((node.typeArguments?.length ?? 0) > 0) {
+      failAt(node, "TSB1411", `Scalar kernel type must not have type arguments: ${node.getText()}`);
+    }
+    return { kind: "scalar", scalar };
+  }
+
+  if (tn.text === "global_ptr") {
+    const args = node.typeArguments ?? [];
+    if (args.length !== 1) {
+      failAt(node, "TSB1412", `global_ptr<T> must have exactly one type argument in v0 (got ${node.getText()}).`);
+    }
+    const inner = cudaTypeFromTypeNode(args[0]!, args[0]!);
+    if (inner.kind !== "scalar") {
+      failAt(args[0]!, "TSB1413", `global_ptr<T> inner type must be a scalar in v0 (got ${args[0]!.getText()}).`);
+    }
+    return { kind: "ptr", addrSpace: "global", inner: inner.scalar };
+  }
+
+  failAt(node, "TSB1410", `Unsupported kernel type annotation in v0: ${node.getText()}`);
+}
+
+function cudaScalarToCType(s: CudaScalar): string {
+  switch (s) {
+    case "i32":
+      return "int32_t";
+    case "u32":
+      return "uint32_t";
+    case "f32":
+      return "float";
+    case "f64":
+      return "double";
+    case "bool":
+      return "bool";
+  }
+}
+
+function cudaTypeToCType(t: CudaType): string {
+  switch (t.kind) {
+    case "scalar":
+      return cudaScalarToCType(t.scalar);
+    case "ptr":
+      return `${cudaScalarToCType(t.inner)}*`;
+  }
+}
+
+type CudaEnv = {
+  readonly vars: Map<string, CudaType>;
+};
+
+function lowerKernelExprToCuda(env: CudaEnv, expr: ts.Expression): { readonly text: string; readonly type: CudaType } {
+  if (ts.isParenthesizedExpression(expr)) {
+    const inner = lowerKernelExprToCuda(env, expr.expression);
+    return { text: `(${inner.text})`, type: inner.type };
+  }
+
+  if (ts.isIdentifier(expr)) {
+    const t = env.vars.get(expr.text);
+    if (!t) failAt(expr, "TSB1420", `Unknown kernel identifier '${expr.text}'.`);
+    return { text: expr.text, type: t };
+  }
+
+  if (ts.isNumericLiteral(expr)) {
+    failAt(
+      expr,
+      "TSB1421",
+      "Numeric literals in kernels must be explicitly cast in v0 (e.g., 1 as u32, 0.0 as f32)."
+    );
+  }
+  if (ts.isStringLiteral(expr)) {
+    failAt(expr, "TSB1422", "String literals are not supported in kernel code in v0.");
+  }
+  if (expr.kind === ts.SyntaxKind.TrueKeyword) {
+    return { text: "true", type: { kind: "scalar", scalar: "bool" } };
+  }
+  if (expr.kind === ts.SyntaxKind.FalseKeyword) {
+    return { text: "false", type: { kind: "scalar", scalar: "bool" } };
+  }
+
+  if (ts.isAsExpression(expr)) {
+    const inner = lowerKernelExprToCuda(env, expr.expression);
+    const castTy = cudaTypeFromTypeNode(expr.type, expr.type);
+    if (castTy.kind !== "scalar") {
+      failAt(expr.type, "TSB1423", `Only scalar casts are supported in kernel code in v0 (got ${expr.type.getText()}).`);
+    }
+    if (inner.type.kind !== "scalar") {
+      failAt(expr.expression, "TSB1424", "Pointer casts are not supported in kernel code in v0.");
+    }
+    const cTy = cudaScalarToCType(castTy.scalar);
+    return { text: `((${cTy})(${inner.text}))`, type: castTy };
+  }
+
+  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
+    const name = expr.expression.text;
+    if (expr.arguments.length !== 0) {
+      failAt(expr, "TSB1425", `${name}() in kernel code must have 0 args in v0.`);
+    }
+    // Intrinsics (CUDA-like)
+    switch (name) {
+      case "threadIdxX":
+        return { text: "((uint32_t)threadIdx.x)", type: { kind: "scalar", scalar: "u32" } };
+      case "threadIdxY":
+        return { text: "((uint32_t)threadIdx.y)", type: { kind: "scalar", scalar: "u32" } };
+      case "threadIdxZ":
+        return { text: "((uint32_t)threadIdx.z)", type: { kind: "scalar", scalar: "u32" } };
+      case "blockIdxX":
+        return { text: "((uint32_t)blockIdx.x)", type: { kind: "scalar", scalar: "u32" } };
+      case "blockIdxY":
+        return { text: "((uint32_t)blockIdx.y)", type: { kind: "scalar", scalar: "u32" } };
+      case "blockIdxZ":
+        return { text: "((uint32_t)blockIdx.z)", type: { kind: "scalar", scalar: "u32" } };
+      case "blockDimX":
+        return { text: "((uint32_t)blockDim.x)", type: { kind: "scalar", scalar: "u32" } };
+      case "blockDimY":
+        return { text: "((uint32_t)blockDim.y)", type: { kind: "scalar", scalar: "u32" } };
+      case "blockDimZ":
+        return { text: "((uint32_t)blockDim.z)", type: { kind: "scalar", scalar: "u32" } };
+      case "gridDimX":
+        return { text: "((uint32_t)gridDim.x)", type: { kind: "scalar", scalar: "u32" } };
+      case "gridDimY":
+        return { text: "((uint32_t)gridDim.y)", type: { kind: "scalar", scalar: "u32" } };
+      case "gridDimZ":
+        return { text: "((uint32_t)gridDim.z)", type: { kind: "scalar", scalar: "u32" } };
+      default:
+        failAt(expr.expression, "TSB1426", `Unsupported call in kernel code in v0: ${name}().`);
+    }
+  }
+
+  if (ts.isElementAccessExpression(expr)) {
+    if (!expr.argumentExpression) {
+      failAt(expr, "TSB1427", "Element access in kernel code must have an index expression in v0.");
+    }
+    const base = lowerKernelExprToCuda(env, expr.expression);
+    if (base.type.kind !== "ptr") {
+      failAt(expr.expression, "TSB1428", "Element access in kernel code is only supported on pointer types in v0.");
+    }
+    const idx = lowerKernelExprToCuda(env, expr.argumentExpression);
+    if (idx.type.kind !== "scalar" || (idx.type.scalar !== "u32" && idx.type.scalar !== "i32")) {
+      failAt(expr.argumentExpression, "TSB1429", "Pointer index must be i32 or u32 in v0.");
+    }
+    return { text: `${base.text}[${idx.text}]`, type: { kind: "scalar", scalar: base.type.inner } };
+  }
+
+  if (ts.isBinaryExpression(expr)) {
+    const left = lowerKernelExprToCuda(env, expr.left);
+    const right = lowerKernelExprToCuda(env, expr.right);
+    const op = expr.operatorToken.kind;
+
+    if (left.type.kind !== "scalar" || right.type.kind !== "scalar") {
+      failAt(expr, "TSB1430", "Only scalar operations are supported in kernel code in v0.");
+    }
+
+    const binText = (opText: string): string => `(${left.text} ${opText} ${right.text})`;
+
+    switch (op) {
+      case ts.SyntaxKind.PlusToken:
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken: {
+        if (left.type.scalar !== right.type.scalar) {
+          failAt(expr, "TSB1431", "Kernel arithmetic requires both sides to have the same scalar type in v0.");
+        }
+        const opText = op === ts.SyntaxKind.PlusToken ? "+" : op === ts.SyntaxKind.MinusToken ? "-" : op === ts.SyntaxKind.AsteriskToken ? "*" : "/";
+        return { text: binText(opText), type: left.type };
+      }
+      case ts.SyntaxKind.LessThanToken:
+      case ts.SyntaxKind.LessThanEqualsToken:
+      case ts.SyntaxKind.GreaterThanToken:
+      case ts.SyntaxKind.GreaterThanEqualsToken:
+      case ts.SyntaxKind.EqualsEqualsEqualsToken:
+      case ts.SyntaxKind.ExclamationEqualsEqualsToken: {
+        if (left.type.scalar !== right.type.scalar) {
+          failAt(expr, "TSB1432", "Kernel comparisons require both sides to have the same scalar type in v0.");
+        }
+        const opText =
+          op === ts.SyntaxKind.LessThanToken
+            ? "<"
+            : op === ts.SyntaxKind.LessThanEqualsToken
+              ? "<="
+              : op === ts.SyntaxKind.GreaterThanToken
+                ? ">"
+                : op === ts.SyntaxKind.GreaterThanEqualsToken
+                  ? ">="
+                  : op === ts.SyntaxKind.EqualsEqualsEqualsToken
+                    ? "=="
+                    : "!=";
+        return { text: binText(opText), type: { kind: "scalar", scalar: "bool" } };
+      }
+      case ts.SyntaxKind.AmpersandAmpersandToken:
+      case ts.SyntaxKind.BarBarToken: {
+        if (left.type.scalar !== "bool" || right.type.scalar !== "bool") {
+          failAt(expr, "TSB1433", "Kernel boolean operators require bool operands in v0.");
+        }
+        const opText = op === ts.SyntaxKind.AmpersandAmpersandToken ? "&&" : "||";
+        return { text: binText(opText), type: { kind: "scalar", scalar: "bool" } };
+      }
+      default:
+        failAt(expr.operatorToken, "TSB1434", `Unsupported binary operator in kernel code in v0: ${expr.operatorToken.getText()}`);
+    }
+  }
+
+  if (ts.isPropertyAccessExpression(expr)) {
+    failAt(expr, "TSB1435", "Property access is not supported in kernel code in v0.");
+  }
+
+  failAt(expr, "TSB1420", `Unsupported kernel expression in v0: ${expr.getText()}`);
+}
+
+function lowerKernelStmtToCuda(env: CudaEnv, st: ts.Statement, indent: string): string[] {
+  if (ts.isVariableStatement(st)) {
+    const declList = st.declarationList;
+    const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
+    const isLet = (declList.flags & ts.NodeFlags.Let) !== 0;
+    if (!isConst && !isLet) {
+      failAt(st, "TSB1440", "Kernel variable declarations must use const/let in v0.");
+    }
+    const out: string[] = [];
+    for (const decl of declList.declarations) {
+      if (!ts.isIdentifier(decl.name)) {
+        failAt(decl.name, "TSB1441", "Kernel destructuring declarations are not supported in v0.");
+      }
+      if (!decl.initializer) {
+        failAt(decl, "TSB1442", `Kernel variable '${decl.name.text}' must have an initializer in v0.`);
+      }
+      const init = lowerKernelExprToCuda(env, decl.initializer);
+      const ty = decl.type ? cudaTypeFromTypeNode(decl.type, decl.type) : init.type;
+      if (ty.kind !== init.type.kind || (ty.kind === "scalar" && init.type.kind === "scalar" && ty.scalar !== init.type.scalar)) {
+        // v0: require initializer to match declared type exactly.
+        failAt(decl, "TSB1443", `Kernel initializer type does not match declared type for '${decl.name.text}' in v0.`);
+      }
+      env.vars.set(decl.name.text, ty);
+      const mut = isLet ? "" : "const ";
+      out.push(`${indent}${mut}${cudaTypeToCType(ty)} ${decl.name.text} = ${init.text};`);
+    }
+    return out;
+  }
+
+  if (ts.isExpressionStatement(st)) {
+    const e = st.expression;
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const left = e.left;
+      const right = e.right;
+      if (!ts.isElementAccessExpression(left) || !left.argumentExpression) {
+        failAt(left, "TSB1444", "Kernel assignments must be to pointer element access (p[i] = ...) in v0.");
+      }
+      const target = lowerKernelExprToCuda(env, left);
+      const value = lowerKernelExprToCuda(env, right);
+      if (target.type.kind !== "scalar") {
+        failAt(left, "TSB1445", "Kernel assignment target must be a scalar element type in v0.");
+      }
+      if (value.type.kind !== "scalar" || value.type.scalar !== target.type.scalar) {
+        failAt(right, "TSB1446", "Kernel assignment value type must match target element type in v0.");
+      }
+      return [`${indent}${target.text} = ${value.text};`];
+    }
+    const ex = lowerKernelExprToCuda(env, e);
+    return [`${indent}${ex.text};`];
+  }
+
+  if (ts.isIfStatement(st)) {
+    const cond = lowerKernelExprToCuda(env, st.expression);
+    if (cond.type.kind !== "scalar" || cond.type.scalar !== "bool") {
+      failAt(st.expression, "TSB1450", "Kernel if condition must be bool in v0.");
+    }
+    const out: string[] = [];
+    out.push(`${indent}if (${cond.text}) {`);
+    const thenStmts = ts.isBlock(st.thenStatement) ? st.thenStatement.statements : [st.thenStatement];
+    for (const s of thenStmts) out.push(...lowerKernelStmtToCuda(env, s, `${indent}  `));
+    if (st.elseStatement) {
+      out.push(`${indent}} else {`);
+      const elseStmts = ts.isBlock(st.elseStatement) ? st.elseStatement.statements : [st.elseStatement];
+      for (const s of elseStmts) out.push(...lowerKernelStmtToCuda(env, s, `${indent}  `));
+    }
+    out.push(`${indent}}`);
+    return out;
+  }
+
+  if (ts.isReturnStatement(st)) {
+    if (st.expression) {
+      failAt(st.expression, "TSB1451", "Kernel return expressions are not supported in v0 (void only).");
+    }
+    return [`${indent}return;`];
+  }
+
+  if (ts.isBlock(st)) {
+    const out: string[] = [];
+    out.push(`${indent}{`);
+    for (const s of st.statements) out.push(...lowerKernelStmtToCuda(env, s, `${indent}  `));
+    out.push(`${indent}}`);
+    return out;
+  }
+
+  failAt(st, "TSB1460", `Unsupported kernel statement in v0: ${st.getText()}`);
+}
+
+function lowerKernelToCudaSource(name: string, fn: ts.ArrowFunction, specText: string): string {
+  if (fn.type && fn.type.kind !== ts.SyntaxKind.VoidKeyword) {
+    failAt(fn.type, "TSB1414", "Kernel function must return void in v0.");
+  }
+
+  const env: CudaEnv = { vars: new Map<string, CudaType>() };
+  const params: { readonly name: string; readonly ty: CudaType }[] = [];
+  for (const p of fn.parameters) {
+    if (!ts.isIdentifier(p.name)) {
+      failAt(p.name, "TSB1415", "Kernel parameters must be identifiers in v0.");
+    }
+    if (!p.type) {
+      failAt(p, "TSB1416", `Kernel parameter '${p.name.text}' must have a type annotation in v0.`);
+    }
+    const ty = cudaTypeFromTypeNode(p.type, p.type);
+    env.vars.set(p.name.text, ty);
+    params.push({ name: p.name.text, ty });
+  }
+
+  const bodyStmts: readonly ts.Statement[] = (() => {
+    if (ts.isBlock(fn.body)) return fn.body.statements;
+    // Expression-bodied: treat as a single expression statement.
+    return [ts.factory.createExpressionStatement(fn.body)];
+  })();
+
+  const lines: string[] = [];
+  lines.push("// Generated by @tsuba/compiler (v0) — CUDA backend");
+  lines.push(`// TS kernel decl: ${name}`);
+  lines.push(`// Spec: ${specText}`);
+  lines.push("");
+  lines.push("#include <stdint.h>");
+  lines.push("#include <stdbool.h>");
+  lines.push("");
+
+  const sigParams = params.map((p) => `${cudaTypeToCType(p.ty)} ${p.name}`).join(", ");
+  lines.push(`extern "C" __global__ void ${name}(${sigParams}) {`);
+  for (const st of bodyStmts) lines.push(...lowerKernelStmtToCuda(env, st, "  "));
+  lines.push("}");
+  lines.push("");
+  return lines.join("\n");
+}
 
 function isAsConstObjectLiteral(expr: ts.Expression): expr is ts.AsExpression {
   if (!ts.isAsExpression(expr)) return false;
@@ -352,7 +720,9 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDec
           failAt(node, "TSB1405", "kernel fn must be an arrow function in v0.");
         }
 
-        out.push({ name, specText: specArg.expression.getText(sf) });
+        const specText = specArg.expression.getText(sf);
+        const cuSource = lowerKernelToCudaSource(name, fnArg, specText);
+        out.push({ name, specText, cuSource });
       }
     }
     ts.forEachChild(node, visit);

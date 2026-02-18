@@ -308,9 +308,16 @@ describe("@tsuba/cli build", () => {
     writeFileSync(
       join(projectRoot, "src", "main.ts"),
       [
-        'import { kernel } from "@tsuba/gpu/lang.js";',
+        'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { f32, u32 } from "@tsuba/core/types.js";',
         "",
-        'const k = kernel({ name: "k" } as const, () => {});',
+        'const k = kernel({ name: "k" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
+        "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+        "  if (i < n) {",
+        "    out[i] = a[i] + b[i];",
+        "  }",
+        "});",
         "",
         "export function main(): void {",
         "}",
@@ -323,5 +330,9 @@ describe("@tsuba/cli build", () => {
 
     const ptx = join(projectRoot, "generated", "kernels", "k.ptx");
     expect(existsSync(ptx)).to.equal(true);
+
+    const cu = readFileSync(join(projectRoot, "generated", "kernels", "k.cu"), "utf-8");
+    expect(cu).to.contain('extern "C" __global__ void k(');
+    expect(cu).to.contain("out[i] = (a[i] + b[i]);");
   });
 });
