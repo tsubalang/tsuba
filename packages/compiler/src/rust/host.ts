@@ -1904,13 +1904,15 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
     const args = expr.arguments.map((a) => lowerExpr(ctx, a));
 
     if (isMacroType(ctx.checker, expr.expression)) {
+      if ((expr.typeArguments?.length ?? 0) > 0) {
+        failAt(expr, "TSB1305", "Macro calls must not have type arguments in v0.");
+      }
       if (!ts.isIdentifier(expr.expression)) {
         failAt(expr.expression, "TSB1301", "Macro calls must use an identifier callee in v0.");
       }
       return { kind: "macro_call", name: expr.expression.text, args };
     }
 
-    const callee = gpuCalleeOverride ?? lowerExpr(ctx, expr.expression);
     let callArgs = args;
     const sig = ctx.checker.getResolvedSignature(expr);
     const decl = sig?.declaration;
@@ -1948,6 +1950,22 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       callArgs = next;
     }
 
+    if ((expr.typeArguments?.length ?? 0) > 0) {
+      if (!ts.isIdentifier(expr.expression)) {
+        failAt(expr.expression, "TSB1311", "Generic call expressions are only supported on identifier callees in v0.");
+      }
+      if (!decl || !ts.isFunctionDeclaration(decl)) {
+        failAt(
+          expr.expression,
+          "TSB1312",
+          "Generic call expressions require the callee to resolve to a declared function (not a value/closure) in v0."
+        );
+      }
+      const typeArgs = (expr.typeArguments ?? []).map((t) => typeNodeToRust(t));
+      return { kind: "path_call", path: { segments: [expr.expression.text] }, typeArgs, args: callArgs };
+    }
+
+    const callee = gpuCalleeOverride ?? lowerExpr(ctx, expr.expression);
     return { kind: "call", callee, args: callArgs };
   }
 
@@ -2206,6 +2224,9 @@ function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
 function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: readonly string[]): RustItem {
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
+  if (fnDecl.typeParameters && fnDecl.typeParameters.length > 0) {
+    failAt(fnDecl, "TSB3005", `Function '${fnDecl.name.text}': generic functions are not supported in v0.`);
+  }
 
   const span = spanFromNode(fnDecl);
   const hasExport = fnDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;

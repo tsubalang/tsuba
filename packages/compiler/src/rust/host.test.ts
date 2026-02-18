@@ -340,6 +340,63 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("f(&(a), &mut (b));");
   });
 
+  it("errors on generic function declarations (airplane-grade)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-generic-fn-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "export function main(): void {",
+        "  void 0;",
+        "}",
+        "",
+        "function id<T>(x: T): T {",
+        "  return x;",
+        "}",
+        "",
+        "export function add(a: i32, b: i32): i32 {",
+        "  return (a + b) as i32;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB3005");
+  });
+
+  it("emits turbofish calls for explicit type arguments on declared functions (v0)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-turbofish-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "declare function id<T>(x: T): T;",
+        "",
+        "export function main(): void {",
+        "  const x = id<i32>(1 as i32);",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("id::<i32>((1) as i32)");
+  });
+
   it("lowers a minimal class to a Rust struct + impl with constructor and methods", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
     const entry = join(dir, "main.ts");
