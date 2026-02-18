@@ -1,6 +1,6 @@
 import ts from "typescript";
 
-import type { RustExpr, RustItem, RustParam, RustProgram, RustStmt, RustType } from "./ir.js";
+import type { RustExpr, RustItem, RustParam, RustProgram, RustStmt, RustType, Span } from "./ir.js";
 import { identExpr, pathType, unitExpr, unitType } from "./ir.js";
 import { writeRustProgram } from "./write.js";
 
@@ -11,10 +11,12 @@ export type CompileIssue = {
 
 export class CompileError extends Error {
   readonly code: string;
+  readonly span?: Span;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, span?: Span) {
     super(message);
     this.code = code;
+    this.span = span;
     this.name = "CompileError";
   }
 }
@@ -38,6 +40,19 @@ function normalizePath(p: string): string {
 
 function splitRustPath(path: string): readonly string[] {
   return path.split("::").filter((s) => s.length > 0);
+}
+
+function spanFromNode(node: ts.Node): Span {
+  const sf = node.getSourceFile();
+  return {
+    fileName: normalizePath(sf.fileName),
+    start: node.getStart(sf, false),
+    end: node.getEnd(),
+  };
+}
+
+function failAt(node: ts.Node, code: string, message: string): never {
+  throw new CompileError(code, message, spanFromNode(node));
 }
 
 function isFromTsubaCoreLang(ctx: EmitCtx, ident: ts.Identifier): boolean {
@@ -122,25 +137,25 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile): readonly KernelDec
           !ts.isIdentifier(node.parent.name) ||
           !ts.isVariableDeclarationList(node.parent.parent)
         ) {
-          fail("TSB1400", "kernel(...) must appear as a const initializer: const k = kernel(...).");
+          failAt(node, "TSB1400", "kernel(...) must appear as a const initializer: const k = kernel(...).");
         }
         const declList = node.parent.parent;
         const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
-        if (!isConst) fail("TSB1401", "kernel(...) must be assigned to a const in v0.");
+        if (!isConst) failAt(declList, "TSB1401", "kernel(...) must be assigned to a const in v0.");
 
         const name = node.parent.name.text;
-        if (seen.has(name)) fail("TSB1402", `Duplicate kernel name '${name}'.`);
+        if (seen.has(name)) failAt(node.parent.name, "TSB1402", `Duplicate kernel name '${name}'.`);
         seen.add(name);
 
         if (node.arguments.length !== 2) {
-          fail("TSB1403", "kernel(spec, fn) must have exactly 2 arguments in v0.");
+          failAt(node, "TSB1403", "kernel(spec, fn) must have exactly 2 arguments in v0.");
         }
         const [specArg, fnArg] = node.arguments;
         if (!specArg || !isAsConstObjectLiteral(specArg)) {
-          fail("TSB1404", "kernel spec must be an object literal with 'as const' in v0.");
+          failAt(node, "TSB1404", "kernel spec must be an object literal with 'as const' in v0.");
         }
         if (!fnArg || !ts.isArrowFunction(fnArg)) {
-          fail("TSB1405", "kernel fn must be an arrow function in v0.");
+          failAt(node, "TSB1405", "kernel fn must be an arrow function in v0.");
         }
 
         out.push({ name, specText: specArg.expression.getText(sf) });
@@ -180,8 +195,8 @@ function getExportedMain(sf: ts.SourceFile): ts.FunctionDeclaration {
     if (st.name?.text !== "main") continue;
     const hasExport = st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
     if (!hasExport) continue;
-    if (!st.body) fail("TSB1001", "export function main must have a body.");
-    if (st.parameters.length !== 0) fail("TSB1002", "main() parameters are not supported in v0.");
+    if (!st.body) failAt(st, "TSB1001", "export function main must have a body.");
+    if (st.parameters.length !== 0) failAt(st, "TSB1002", "main() parameters are not supported in v0.");
     return st;
   }
   fail("TSB1000", "Entry file must export function main().");
@@ -210,36 +225,36 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
       // mut<T> marker -> let mut + T
       if (tn.text === "mut") {
         const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) fail("TSB1011", "mut<T> must have exactly one type argument.");
+        if (!inner) failAt(typeNode, "TSB1011", "mut<T> must have exactly one type argument.");
         return typeNodeToRust(inner);
       }
 
       if (tn.text === "Option") {
         const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) fail("TSB1012", "Option<T> must have exactly one type argument.");
+        if (!inner) failAt(typeNode, "TSB1012", "Option<T> must have exactly one type argument.");
         return pathType(["Option"], [typeNodeToRust(inner)]);
       }
 
       if (tn.text === "Result") {
         const [okTy, errTy] = typeNode.typeArguments ?? [];
-        if (!okTy || !errTy) fail("TSB1013", "Result<T,E> must have exactly two type arguments.");
+        if (!okTy || !errTy) failAt(typeNode, "TSB1013", "Result<T,E> must have exactly two type arguments.");
         return pathType(["Result"], [typeNodeToRust(okTy), typeNodeToRust(errTy)]);
       }
 
       if (tn.text === "Vec") {
         const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) fail("TSB1014", "Vec<T> must have exactly one type argument.");
+        if (!inner) failAt(typeNode, "TSB1014", "Vec<T> must have exactly one type argument.");
         return pathType(["Vec"], [typeNodeToRust(inner)]);
       }
 
       if (tn.text === "HashMap") {
         const [k, v] = typeNode.typeArguments ?? [];
-        if (!k || !v) fail("TSB1015", "HashMap<K,V> must have exactly two type arguments.");
+        if (!k || !v) failAt(typeNode, "TSB1015", "HashMap<K,V> must have exactly two type arguments.");
         return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
       }
     }
   }
-  fail("TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
+  failAt(typeNode, "TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
 }
 
 function isMutMarkerType(typeNode: ts.TypeNode | undefined): boolean {
@@ -260,7 +275,7 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
 
   if (ts.isIdentifier(expr)) {
     if (expr.text === "undefined") {
-      fail("TSB1101", "The value 'undefined' is not supported in v0; use Option/None or () explicitly.");
+      failAt(expr, "TSB1101", "The value 'undefined' is not supported in v0; use Option/None or () explicitly.");
     }
     return identExpr(expr.text);
   }
@@ -318,7 +333,7 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
         case ts.SyntaxKind.BarBarToken:
           return "||";
         default:
-          fail("TSB1200", `Unsupported binary operator: ${expr.operatorToken.getText()}`);
+          failAt(expr.operatorToken, "TSB1200", `Unsupported binary operator: ${expr.operatorToken.getText()}`);
       }
     })();
     return { kind: "binary", op, left, right };
@@ -351,20 +366,24 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
     // Core markers (compile-time only)
     if (ts.isIdentifier(expr.expression) && isFromTsubaCoreLang(ctx, expr.expression)) {
       if (expr.expression.text === "q") {
-        if (expr.arguments.length !== 1) fail("TSB1300", "q(...) must have exactly one argument.");
+        if (expr.arguments.length !== 1) failAt(expr, "TSB1300", "q(...) must have exactly one argument.");
         const inner = lowerExpr(ctx, expr.arguments[0]!);
         return { kind: "try", expr: inner };
       }
       if (expr.expression.text === "unsafe") {
         if (expr.arguments.length !== 1) {
-          fail("TSB1302", "unsafe(...) must have exactly one argument.");
+          failAt(expr, "TSB1302", "unsafe(...) must have exactly one argument.");
         }
         const [arg] = expr.arguments;
         if (!arg || !ts.isArrowFunction(arg)) {
-          fail("TSB1303", "unsafe(...) requires an arrow function argument in v0.");
+          failAt(expr, "TSB1303", "unsafe(...) requires an arrow function argument in v0.");
         }
         if (ts.isBlock(arg.body)) {
-          fail("TSB1304", "unsafe(() => { ... }) blocks are not supported in v0 (use expression body).");
+          failAt(
+            arg.body,
+            "TSB1304",
+            "unsafe(() => { ... }) blocks are not supported in v0 (use expression body)."
+          );
         }
         const inner = lowerExpr(ctx, arg.body);
         return { kind: "unsafe", expr: inner };
@@ -398,7 +417,7 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
 
     if (isMacroType(ctx.checker, expr.expression)) {
       if (!ts.isIdentifier(expr.expression)) {
-        fail("TSB1301", "Macro calls must use an identifier callee in v0.");
+        failAt(expr.expression, "TSB1301", "Macro calls must use an identifier callee in v0.");
       }
       return { kind: "macro_call", name: expr.expression.text, args };
     }
@@ -406,20 +425,24 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
     return { kind: "call", callee: lowerExpr(ctx, expr.expression), args };
   }
 
-  fail("TSB1100", `Unsupported expression: ${expr.getText()}`);
+  failAt(expr, "TSB1100", `Unsupported expression: ${expr.getText()}`);
 }
 
 function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
   if (ts.isVariableStatement(st)) {
     const out: RustStmt[] = [];
     for (const decl of st.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name)) fail("TSB2001", "Destructuring declarations are not supported in v0.");
-      if (!decl.initializer) fail("TSB2002", `Variable '${decl.name.text}' must have an initializer in v0.`);
+      if (!ts.isIdentifier(decl.name)) {
+        failAt(decl.name, "TSB2001", "Destructuring declarations are not supported in v0.");
+      }
+      if (!decl.initializer) {
+        failAt(decl, "TSB2002", `Variable '${decl.name.text}' must have an initializer in v0.`);
+      }
 
       const isMut = isMutMarkerType(decl.type);
       if (isMut && decl.type && ts.isTypeReferenceNode(decl.type)) {
         const inner = decl.type.typeArguments?.[0];
-        if (!inner) fail("TSB2010", "mut<T> must have exactly one type argument.");
+        if (!inner) failAt(decl.type, "TSB2010", "mut<T> must have exactly one type argument.");
         out.push({
           kind: "let",
           pattern: { kind: "ident", name: decl.name.text },
@@ -456,7 +479,7 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
     return [{ kind: "if", cond, then, else: elseStmts }];
   }
 
-  fail("TSB2100", `Unsupported statement: ${st.getText()}`);
+  failAt(st, "TSB2100", `Unsupported statement: ${st.getText()}`);
 }
 
 function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
@@ -470,21 +493,22 @@ function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
 
 function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration): RustItem {
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
-  if (!fnDecl.body) fail("TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
+  if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
 
   const params: RustParam[] = [];
   for (const p of fnDecl.parameters) {
     if (!ts.isIdentifier(p.name)) {
-      fail("TSB3002", `Function '${fnDecl.name.text}': destructuring params are not supported in v0.`);
+      failAt(p.name, "TSB3002", `Function '${fnDecl.name.text}': destructuring params are not supported in v0.`);
     }
     if (!p.type) {
-      fail(
+      failAt(
+        p,
         "TSB3003",
         `Function '${fnDecl.name.text}': parameter '${p.name.text}' needs a type annotation in v0.`
       );
     }
     if (p.questionToken || p.initializer) {
-      fail("TSB3004", `Function '${fnDecl.name.text}': optional/default params are not supported in v0.`);
+      failAt(p, "TSB3004", `Function '${fnDecl.name.text}': optional/default params are not supported in v0.`);
     }
     params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
   }
