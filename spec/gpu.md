@@ -140,10 +140,62 @@ Kernel code must be statically checkable with strict restrictions:
 - No strings (unless proven compile-time and erased).
 - No `await` inside kernel bodies.
 - No exceptions/panics as control flow (panic may exist as a debug trap).
-- No recursion; bounded loops only (or compiler-proven termination).
+- No recursion.
 - Pointer arithmetic only in `unsafe(...)` blocks.
 
 When in doubt, Tsuba errors.
+
+### 5.1 Allowed kernel surface (explicit v0 checklist)
+
+The v0 kernel dialect is intentionally small and **explicitly whitelisted**. If a construct is not listed here, it is not allowed (hard error).
+
+Allowed *type annotations*:
+
+- Scalars: `i32`, `u32`, `f32`, `f64`, `bool`
+- Pointer types: `global_ptr<T>` and `shared_ptr<T>` where `T` is a scalar
+  - **Parameters** may only use `global_ptr<T>` in v0 (no shared/local/const params).
+
+Allowed *statements* (in kernel bodies):
+
+- `let` variable declarations with an initializer (type inference allowed if unambiguous)
+- assignments:
+  - scalar locals: `x = ...`
+  - pointer element stores: `p[i] = ...`
+- expression statements (function calls / assignments / etc)
+- `if (...) { ... } else { ... }` (condition must be `bool`)
+- `return;` (void only; `return expr;` is forbidden)
+- blocks `{ ... }`
+- `for (let i = ...; ...; ...) { ... }` with strict shape:
+  - initializer: single `let` binding with initializer
+  - condition expression required (must be `bool`)
+  - incrementor required, limited to `i++`, `++i`, `i--`, `--i`, or `i = <expr>` (same scalar type)
+
+Allowed *expressions*:
+
+- identifiers, parens
+- scalar casts: `(<expr>) as <scalar>` (casts must be explicit and scalar-only in v0)
+- numeric literals **only when explicitly cast** (e.g. `0 as u32`, `1.0 as f32`)
+- pointer indexing: `p[i]` where `p` is a pointer type and `i` is `i32` or `u32`
+- arithmetic on scalars where both sides are the same scalar type
+- comparisons where both sides are the same scalar type (result `bool`)
+- boolean operators on `bool`
+
+Allowed kernel intrinsics (v0):
+
+- thread/block indices: `threadIdxX/Y/Z`, `blockIdxX/Y/Z`, `blockDimX/Y/Z`, `gridDimX/Y/Z`
+- shared memory: `sharedArray<T, N>()` where `T` is scalar and `N` is a positive integer literal type
+- synchronization: `syncthreads()`
+- address-of element: `addr(ptr, index)`
+- atomics: `atomicAdd(ptr, value)` (v0: limited to `global_ptr<u32>`)
+- math: `expf(x)` (v0: `f32 → f32`)
+
+Forbidden in kernel code (non-exhaustive; hard error):
+
+- `while`, `do`, `switch`, `try/catch/finally`, `throw`
+- function declarations, nested functions, closures capturing non-constants
+- object/array literals, spreads, destructuring, `new`, class expressions
+- string literals and template strings (v0)
+- implicit numeric conversions (all numeric literals must be explicitly typed)
 
 ---
 
