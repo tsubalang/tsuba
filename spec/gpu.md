@@ -61,6 +61,8 @@ export const add = kernel(
 Airplane-grade rules:
 
 - `spec` must be a **compile-time constant object** (`as const` + literal values).
+- `spec.name` is the authoritative emitted CUDA kernel identifier (not the TS variable name).
+- `spec.name` must be unique across the project/workspace build.
 - `fn` must be an inline function expression (arrow or function), not an arbitrary variable.
 - Kernel functions must not capture non-constant values from outer scope.
 - If a kernel cannot be lowered, Tsuba errors.

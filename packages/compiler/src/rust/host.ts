@@ -901,12 +901,35 @@ function lowerKernelToCudaSource(
   return { cuSource: lines.join("\n"), params: paramSigs };
 }
 
-function isAsConstObjectLiteral(expr: ts.Expression): expr is ts.AsExpression {
+function isAsConstObjectLiteral(
+  expr: ts.Expression
+): expr is ts.AsExpression & { readonly expression: ts.ObjectLiteralExpression } {
   if (!ts.isAsExpression(expr)) return false;
   if (!ts.isTypeReferenceNode(expr.type)) return false;
   if (!ts.isIdentifier(expr.type.typeName)) return false;
   if (expr.type.typeName.text !== "const") return false;
   return ts.isObjectLiteralExpression(expr.expression);
+}
+
+function kernelNameFromSpec(spec: ts.ObjectLiteralExpression): { readonly name: string; readonly at: ts.Node } {
+  for (const p of spec.properties) {
+    if (!ts.isPropertyAssignment(p)) continue;
+    const key = (() => {
+      if (ts.isIdentifier(p.name)) return p.name.text;
+      if (ts.isStringLiteral(p.name)) return p.name.text;
+      return undefined;
+    })();
+    if (key !== "name") continue;
+    if (!ts.isStringLiteral(p.initializer)) {
+      failAt(p.initializer, "TSB1408", "kernel spec 'name' must be a string literal in v0.");
+    }
+    const name = p.initializer.text;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      failAt(p.initializer, "TSB1409", `kernel spec 'name' must be a valid identifier in v0 (got ${JSON.stringify(name)}).`);
+    }
+    return { name, at: p.initializer };
+  }
+  failAt(spec, "TSB1407", "kernel spec must include a string literal 'name' field in v0.");
 }
 
 function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile, seen: Set<string>): readonly KernelDecl[] {
@@ -932,10 +955,6 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile, seen: Set<string>):
         const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
         if (!isConst) failAt(declList, "TSB1401", "kernel(...) must be assigned to a const in v0.");
 
-        const name = node.parent.name.text;
-        if (seen.has(name)) failAt(node.parent.name, "TSB1402", `Duplicate kernel name '${name}'.`);
-        seen.add(name);
-
         if (node.arguments.length !== 2) {
           failAt(node, "TSB1403", "kernel(spec, fn) must have exactly 2 arguments in v0.");
         }
@@ -947,16 +966,20 @@ function collectKernelDecls(ctx: EmitCtx, sf: ts.SourceFile, seen: Set<string>):
           failAt(node, "TSB1405", "kernel fn must be an arrow function in v0.");
         }
 
+        const kernelName = kernelNameFromSpec(specArg.expression).name;
+        if (seen.has(kernelName)) failAt(node.parent.name, "TSB1402", `Duplicate kernel name '${kernelName}'.`);
+        seen.add(kernelName);
+
         const specText = specArg.expression.getText(sf);
-        const lowered = lowerKernelToCudaSource(name, fnArg, specText);
-        const decl: KernelDecl = { name, specText, cuSource: lowered.cuSource, params: lowered.params };
+        const lowered = lowerKernelToCudaSource(kernelName, fnArg, specText);
+        const decl: KernelDecl = { name: kernelName, specText, cuSource: lowered.cuSource, params: lowered.params };
         out.push(decl);
 
         const sym0 = ctx.checker.getSymbolAtLocation(node.parent.name);
         const sym =
           sym0 && (sym0.flags & ts.SymbolFlags.Alias) !== 0 ? ctx.checker.getAliasedSymbol(sym0) : sym0;
         if (!sym) {
-          failAt(node.parent.name, "TSB1402", `Could not resolve kernel symbol for '${name}'.`);
+          failAt(node.parent.name, "TSB1402", `Could not resolve kernel symbol for '${kernelName}'.`);
         }
         ctx.kernelDeclBySymbol.set(sym, decl);
       }

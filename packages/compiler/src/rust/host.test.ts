@@ -964,6 +964,48 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.not.contain("use crate::add::add");
   });
 
+  it("uses kernel spec.name (not the TS variable name) as the emitted CUDA kernel identity (v0)", () => {
+    const dir = makeRepoTempDir("compiler-kernel-name-");
+    const kernelFile = join(dir, "k.ts");
+    const entry = join(dir, "main.ts");
+
+    writeFileSync(
+      kernelFile,
+      [
+        'import { kernel, threadIdxX } from "@tsuba/gpu/lang.js";',
+        'import type { global_ptr } from "@tsuba/gpu/types.js";',
+        'import type { u32 } from "@tsuba/core/types.js";',
+        "",
+        'export const foo = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
+        "  out[threadIdxX()] = 1 as u32;",
+        "});",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      [
+        'import type { u32 } from "@tsuba/core/types.js";',
+        'import { deviceMalloc } from "@tsuba/gpu/lang.js";',
+        'import { foo } from "./k.js";',
+        "",
+        "export function main(): void {",
+        "  const out = deviceMalloc<u32>(4 as u32);",
+        "  foo.launch({ grid: [1, 1, 1], block: [256, 1, 1] } as const, out);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.kernels.map((k) => k.name)).to.deep.equal(["k"]);
+    expect(out.mainRs).to.contain("__tsuba_cuda::launch_k(1, 1, 1, 256, 1, 1");
+    expect(out.mainRs).to.not.contain("__tsuba_cuda::launch_foo");
+  });
+
   it("errors when kernel values are used as normal host values (v0)", () => {
     const dir = makeRepoTempDir("compiler-kernel-value-");
     const kernelFile = join(dir, "k.ts");
