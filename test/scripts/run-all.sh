@@ -8,6 +8,9 @@ cd "$ROOT_DIR"
 QUICK_MODE=false
 SKIP_UNIT=false
 FILTER_PATTERNS=()
+START_GIT_STATUS=""
+END_GIT_STATUS=""
+TREE_STATUS="skipped"
 
 print_help() {
   cat <<'EOF_HELP'
@@ -56,6 +59,10 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  START_GIT_STATUS="$(git status --porcelain --untracked-files=all || true)"
+fi
 
 UNIT_STATUS="skipped"
 TSC_STATUS="skipped"
@@ -119,6 +126,32 @@ echo "Unit + golden tests: $UNIT_STATUS"
 echo "Typecheck fixtures: $TSC_STATUS"
 echo "E2E fixtures: $E2E_STATUS"
 
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  END_GIT_STATUS="$(git status --porcelain --untracked-files=all || true)"
+  if [ "$START_GIT_STATUS" = "$END_GIT_STATUS" ]; then
+    TREE_STATUS="passed"
+  else
+    TREE_STATUS="failed"
+  fi
+  echo "Repo dirtiness gate: $TREE_STATUS"
+  if [ "$TREE_STATUS" = "failed" ]; then
+    echo
+    echo "FAIL: tests changed repository state."
+    echo "--- git status before ---"
+    if [ -n "$START_GIT_STATUS" ]; then
+      printf '%s\n' "$START_GIT_STATUS"
+    else
+      echo "(clean)"
+    fi
+    echo "--- git status after ---"
+    if [ -n "$END_GIT_STATUS" ]; then
+      printf '%s\n' "$END_GIT_STATUS"
+    else
+      echo "(clean)"
+    fi
+  fi
+fi
+
 if [ "$UNIT_STATUS" != "passed" ] && [ "$UNIT_STATUS" != "skipped" ]; then
   exit 1
 fi
@@ -126,5 +159,8 @@ if [ "$TSC_STATUS" != "passed" ] && [ "$TSC_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$E2E_STATUS" != "passed" ] && [ "$E2E_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$TREE_STATUS" = "failed" ]; then
   exit 1
 fi

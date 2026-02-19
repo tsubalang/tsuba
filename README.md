@@ -16,6 +16,22 @@ npm install
 npm run run-all
 ```
 
+## Release preflight (npm)
+
+Use the publish script for invariant checks + publish flow:
+
+```bash
+npm run publish:npm -- --dry-run
+```
+
+It enforces:
+
+- branch is `main`
+- clean working tree
+- local `main` matches `origin/main`
+- full `npm run run-all` gate (unless `--no-tests` is explicitly passed)
+- package versions are not already published on npm
+
 ## Using the CLI (from this repo checkout)
 
 Build the CLI:
