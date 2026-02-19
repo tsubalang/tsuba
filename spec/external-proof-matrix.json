@@ -9,6 +9,48 @@
   "minimumPassingSubstantial": 3,
   "checks": [
     {
+      "id": "internal-host-service",
+      "repo": ".",
+      "cwd": ".",
+      "command": [
+        "node",
+        "scripts/proof/verify-host-service.mjs"
+      ],
+      "categories": [
+        "host-service"
+      ],
+      "substantial": true,
+      "required": true
+    },
+    {
+      "id": "internal-gpu-heavy",
+      "repo": ".",
+      "cwd": ".",
+      "command": [
+        "node",
+        "scripts/proof/verify-gpu-heavy.mjs"
+      ],
+      "categories": [
+        "gpu-heavy"
+      ],
+      "substantial": true,
+      "required": true
+    },
+    {
+      "id": "internal-bindgen-heavy",
+      "repo": ".",
+      "cwd": ".",
+      "command": [
+        "node",
+        "scripts/proof/verify-bindgen-heavy.mjs"
+      ],
+      "categories": [
+        "bindgen-heavy"
+      ],
+      "substantial": true,
+      "required": true
+    },
+    {
       "id": "proof-pudding-host-service",
       "repo": "../proof-is-in-the-pudding",
       "cwd": ".",
@@ -20,7 +62,7 @@
         "host-service"
       ],
       "substantial": true,
-      "required": true
+      "required": false
     },
     {
       "id": "proof-pudding-gpu-heavy",
@@ -34,7 +76,7 @@
         "gpu-heavy"
       ],
       "substantial": true,
-      "required": true
+      "required": false
     },
     {
       "id": "proof-pudding-bindgen-heavy",
@@ -48,7 +90,7 @@
         "bindgen-heavy"
       ],
       "substantial": true,
-      "required": true
+      "required": false
     }
   ]
 }

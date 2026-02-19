@@ -69,6 +69,18 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(body).to.contain("getPreEmitDiagnostics(program)");
   });
 
+  it("keeps CUDA runtime text emission isolated from host lowering", () => {
+    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
+    const hostSource = readFileSync(hostPath, "utf-8");
+    expect(hostSource).to.contain('import { renderCudaRuntimeModule } from "./cuda-runtime.js";');
+    expect(hostSource).to.not.contain("function renderCudaRuntimeModule(");
+
+    const runtimePath = join(repoRoot(), "packages", "compiler", "src", "rust", "cuda-runtime.ts");
+    const runtimeSource = readFileSync(runtimePath, "utf-8");
+    expect(runtimeSource).to.contain("export function renderCudaRuntimeModule(");
+    expect(runtimeSource).to.contain("mod __tsuba_cuda {");
+  });
+
   it("uses readonly map wrappers inside module-index pass outputs", () => {
     const moduleIndexPath = join(repoRoot(), "packages", "compiler", "src", "rust", "passes", "module-index.ts");
     const body = getFunctionBodyText(moduleIndexPath, "createUserModuleIndexPass");

@@ -1,0 +1,8 @@
+[package]
+name = "proof-analytics"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "proof_analytics"
+path = "src/lib.rs"

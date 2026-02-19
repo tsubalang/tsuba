@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "bindgen-heavy",
+  "kind": "bin",
+  "entry": "src/main.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "bindgen_heavy"
+  }
+}

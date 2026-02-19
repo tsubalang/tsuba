@@ -213,13 +213,13 @@ else
 fi
 
 # ------------------------------------------------------------
-# 9) External proof matrix (best-effort in run-all)
+# 9) External proof matrix (required in full run)
 # ------------------------------------------------------------
 if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "Skipping external proof matrix verification (requires full, unfiltered run)."
 else
-  echo "==> External proof matrix verification (best-effort)"
-  if node "$ROOT_DIR/scripts/verify-external-proof.mjs"; then
+  echo "==> External proof matrix verification (required)"
+  if node "$ROOT_DIR/scripts/verify-external-proof.mjs" --require; then
     EXTERNAL_PROOF_STATUS="passed"
   else
     EXTERNAL_PROOF_STATUS="failed"

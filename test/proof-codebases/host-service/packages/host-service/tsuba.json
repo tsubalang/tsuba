@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "host-service",
+  "kind": "bin",
+  "entry": "src/main.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "host_service"
+  }
+}
