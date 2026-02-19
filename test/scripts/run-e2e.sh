@@ -15,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FIXTURES_DIR="$ROOT_DIR/test/fixtures"
+METRICS_FILE="$FIXTURES_DIR/.tsuba-e2e-metrics.json"
 
 FILTER_PATTERNS=()
 
@@ -181,6 +182,10 @@ normalize_main_rs_for_golden() {
   sed -E 's#(// tsuba-span: ).*:([0-9]+):([0-9]+)$#\1<SOURCE>:\2:\3#' "$input_file" >"$output_file"
 }
 
+now_ms() {
+  date +%s%3N
+}
+
 if [ ! -d "$FIXTURES_DIR" ]; then
   echo "No fixture directory found at $FIXTURES_DIR. Nothing to run."
   exit 0
@@ -196,6 +201,11 @@ passed=0
 skipped=0
 failed=0
 run_any=false
+
+mkdir -p "$ROOT_DIR/.tsuba"
+metrics_tsv="$(mktemp "$ROOT_DIR/.tsuba/e2e-metrics-XXXXXX.tsv")"
+trap 'rm -f "$metrics_tsv"' EXIT
+printf 'fixture\tproject\tbuildMs\trunMs\ttestMs\tgoldenMs\ttotalMs\n' >"$metrics_tsv"
 
 echo "=== E2E fixtures ==="
 if [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
@@ -250,26 +260,46 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
   fixture_failed=false
   for project_dir in "${project_dirs[@]}"; do
     project_name="$(basename "$project_dir")"
+    build_ms=0
+    run_ms=0
+    test_ms=0
+    golden_ms=0
     echo "  $fixture_name/$project_name: BUILD"
+    build_start="$(now_ms)"
     if (cd "$project_dir" && node "$cli_bin" build) >"$project_dir/.tsuba-e2e-build.log" 2>&1; then
+      build_end="$(now_ms)"
+      build_ms=$((build_end - build_start))
       :
     else
+      build_end="$(now_ms)"
+      build_ms=$((build_end - build_start))
       fixture_failed=true
       failed=$((failed + 1))
       echo "  $fixture_name/$project_name: FAIL"
       sed -n '1,200p' "$project_dir/.tsuba-e2e-build.log"
+      total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+      printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+        "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
       break
     fi
 
     if [ "$fixture_run" = "true" ]; then
       echo "  $fixture_name/$project_name: RUN"
+      run_start="$(now_ms)"
       if (cd "$project_dir" && node "$cli_bin" run) >"$project_dir/.tsuba-e2e-run.log" 2>&1; then
+        run_end="$(now_ms)"
+        run_ms=$((run_end - run_start))
         :
       else
+        run_end="$(now_ms)"
+        run_ms=$((run_end - run_start))
         fixture_failed=true
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (run)"
         sed -n '1,200p' "$project_dir/.tsuba-e2e-run.log"
+        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
         break
       fi
 
@@ -281,6 +311,9 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
             echo "  $fixture_name/$project_name: FAIL (run output)"
             echo "    missing expected substring: $expected"
             sed -n '1,200p' "$project_dir/.tsuba-e2e-run.log"
+            total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+            printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+              "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
             break 2
           fi
         done
@@ -289,13 +322,21 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
 
     if [ "$fixture_test" = "true" ]; then
       echo "  $fixture_name/$project_name: TEST"
+      test_start="$(now_ms)"
       if (cd "$project_dir" && node "$cli_bin" test) >"$project_dir/.tsuba-e2e-test.log" 2>&1; then
+        test_end="$(now_ms)"
+        test_ms=$((test_end - test_start))
         :
       else
+        test_end="$(now_ms)"
+        test_ms=$((test_end - test_start))
         fixture_failed=true
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (test)"
         sed -n '1,200p' "$project_dir/.tsuba-e2e-test.log"
+        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
         break
       fi
     fi
@@ -309,21 +350,34 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
       expected_main_rs="$fixture_dir/$golden_main_rs_path"
       generated_main_rs="$project_dir/$generated_dir_name/src/main.rs"
       echo "  $fixture_name/$project_name: GOLDEN"
+      golden_start="$(now_ms)"
       if [ ! -f "$expected_main_rs" ]; then
+        golden_end="$(now_ms)"
+        golden_ms=$((golden_end - golden_start))
         fixture_failed=true
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (missing golden)"
         echo "    expected golden path: $expected_main_rs"
+        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
         break
       fi
       if [ ! -f "$generated_main_rs" ]; then
+        golden_end="$(now_ms)"
+        golden_ms=$((golden_end - golden_start))
         fixture_failed=true
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (missing generated main.rs)"
         echo "    generated path: $generated_main_rs"
+        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
         break
       fi
       if diff -u "$expected_main_rs" "$generated_main_rs" >"$project_dir/.tsuba-e2e-golden.diff"; then
+        golden_end="$(now_ms)"
+        golden_ms=$((golden_end - golden_start))
         :
       else
         normalized_expected="$project_dir/.tsuba-e2e-golden.expected.norm"
@@ -331,16 +385,27 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
         normalize_main_rs_for_golden "$expected_main_rs" "$normalized_expected"
         normalize_main_rs_for_golden "$generated_main_rs" "$normalized_generated"
         if diff -u "$normalized_expected" "$normalized_generated" >"$project_dir/.tsuba-e2e-golden.diff"; then
+          golden_end="$(now_ms)"
+          golden_ms=$((golden_end - golden_start))
           :
         else
+          golden_end="$(now_ms)"
+          golden_ms=$((golden_end - golden_start))
           fixture_failed=true
           failed=$((failed + 1))
           echo "  $fixture_name/$project_name: FAIL (golden mismatch)"
           sed -n '1,200p' "$project_dir/.tsuba-e2e-golden.diff"
+          total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+          printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+            "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
           break
         fi
       fi
     fi
+
+    total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+    printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
+      "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
   done
 
   if [ "$fixture_failed" = true ]; then
@@ -355,6 +420,61 @@ if [ "$run_any" = false ]; then
   echo "E2E summary: 0 passed, 0 skipped, 0 failed"
   exit 0
 fi
+
+node -e '
+const fs = require("node:fs");
+const [tsvPath, outPath] = process.argv.slice(1);
+const text = fs.readFileSync(tsvPath, "utf8").trim();
+const lines = text.length === 0 ? [] : text.split(/\r?\n/g);
+const rows = lines.slice(1).map((line) => {
+  const [fixture, project, buildMs, runMs, testMs, goldenMs, totalMs] = line.split("\t");
+  return {
+    fixture,
+    project,
+    buildMs: Number.parseInt(buildMs, 10) || 0,
+    runMs: Number.parseInt(runMs, 10) || 0,
+    testMs: Number.parseInt(testMs, 10) || 0,
+    goldenMs: Number.parseInt(goldenMs, 10) || 0,
+    totalMs: Number.parseInt(totalMs, 10) || 0,
+  };
+});
+const byFixture = new Map();
+for (const row of rows) {
+  const prev = byFixture.get(row.fixture) ?? { projects: 0, totalMs: 0, buildMs: 0, runMs: 0, testMs: 0, goldenMs: 0 };
+  prev.projects += 1;
+  prev.totalMs += row.totalMs;
+  prev.buildMs += row.buildMs;
+  prev.runMs += row.runMs;
+  prev.testMs += row.testMs;
+  prev.goldenMs += row.goldenMs;
+  byFixture.set(row.fixture, prev);
+}
+const fixtures = [...byFixture.entries()]
+  .sort((a, b) => a[0].localeCompare(b[0]))
+  .map(([fixture, summary]) => ({ fixture, ...summary }));
+const summary = rows.reduce(
+  (acc, row) => {
+    acc.projects += 1;
+    acc.totalMs += row.totalMs;
+    acc.buildMs += row.buildMs;
+    acc.runMs += row.runMs;
+    acc.testMs += row.testMs;
+    acc.goldenMs += row.goldenMs;
+    return acc;
+  },
+  { projects: 0, totalMs: 0, buildMs: 0, runMs: 0, testMs: 0, goldenMs: 0 }
+);
+const report = {
+  schema: 1,
+  kind: "e2e-metrics",
+  generatedAt: new Date().toISOString(),
+  projects: rows,
+  fixtures,
+  summary,
+};
+fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+' "$metrics_tsv" "$METRICS_FILE"
+echo "E2E metrics: $METRICS_FILE"
 
 echo ""
 echo "E2E summary: $passed passed, $skipped skipped, $failed failed"

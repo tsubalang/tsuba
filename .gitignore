@@ -140,3 +140,4 @@ vite.config.ts.timestamp-*
 
 # Tsuba build/test artifacts
 .tsuba/
+test/fixtures/.tsuba-e2e-metrics.json

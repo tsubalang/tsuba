@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "kind": "perf-budgets",
+  "fixtureBudgets": {
+    "default": {
+      "maxBuildMs": 30000,
+      "maxRunMs": 10000,
+      "maxTestMs": 10000,
+      "maxGoldenMs": 10000,
+      "maxTotalMs": 45000
+    }
+  },
+  "suiteBudgets": {
+    "maxE2eTotalMs": 300000
+  }
+}

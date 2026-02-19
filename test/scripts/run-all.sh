@@ -70,6 +70,7 @@ E2E_STATUS="skipped"
 SMOKE_STATUS="skipped"
 GPU_REF_STATUS="skipped"
 TRACE_STATUS="skipped"
+PERF_STATUS="skipped"
 
 if [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "NOTE: FILTERED mode (${FILTER_PATTERNS[*]}). Not for final verification."
@@ -127,6 +128,24 @@ fi
 # 4) Clean temp-dir CLI smoke workflow
 # ------------------------------------------------------------
 if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
+  echo "Skipping E2E performance budget check (requires full, unfiltered run)."
+else
+  if [ "$E2E_STATUS" = "passed" ]; then
+    echo "==> E2E performance budget check"
+    if node "$ROOT_DIR/scripts/check-perf-budgets.mjs"; then
+      PERF_STATUS="passed"
+    else
+      PERF_STATUS="failed"
+    fi
+  else
+    echo "Skipping E2E performance budget check (E2E did not pass)."
+  fi
+fi
+
+# ------------------------------------------------------------
+# 5) Clean temp-dir CLI smoke workflow
+# ------------------------------------------------------------
+if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "Skipping CLI smoke workflow (requires full, unfiltered run)."
 else
   echo "==> CLI smoke workflow (init/build/run/test/add/bindgen)"
@@ -138,7 +157,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 5) Optional GPU correctness check (only when runtime is available)
+# 6) Optional GPU correctness check (only when runtime is available)
 # ------------------------------------------------------------
 if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "Skipping GPU CPU-reference workflow (requires full, unfiltered run)."
@@ -152,7 +171,7 @@ else
 fi
 
 # ------------------------------------------------------------
-# 6) Release traceability report validation
+# 7) Release traceability report validation
 # ------------------------------------------------------------
 if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "Skipping release traceability check (requires full, unfiltered run)."
@@ -179,6 +198,7 @@ echo "=== Summary ==="
 echo "Unit + golden tests: $UNIT_STATUS"
 echo "Typecheck fixtures: $TSC_STATUS"
 echo "E2E fixtures: $E2E_STATUS"
+echo "E2E perf budgets: $PERF_STATUS"
 echo "CLI smoke workflow: $SMOKE_STATUS"
 echo "GPU CPU-reference workflow: $GPU_REF_STATUS"
 echo "Release traceability: $TRACE_STATUS"
@@ -216,6 +236,9 @@ if [ "$TSC_STATUS" != "passed" ] && [ "$TSC_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$E2E_STATUS" != "passed" ] && [ "$E2E_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$PERF_STATUS" != "passed" ] && [ "$PERF_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$SMOKE_STATUS" != "passed" ] && [ "$SMOKE_STATUS" != "skipped" ]; then
