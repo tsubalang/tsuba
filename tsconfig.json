@@ -5,7 +5,7 @@
     { "path": "./packages/std" },
     { "path": "./packages/gpu" },
     { "path": "./packages/compiler" },
-    { "path": "./packages/cli" }
+    { "path": "./packages/cli" },
+    { "path": "./packages/tsubabindgen" }
   ]
 }
-
