@@ -22,6 +22,7 @@ A generated Tsuba package contains:
 
 - `.d.ts` (facade modules)
 - `tsuba.bindings.json` (module → Rust path mapping)
+- `tsubabindgen.report.json` (deterministic skip report)
 - (optional) a bundled crate directory for offline/path-backed consumption
 
 Example:
@@ -45,6 +46,17 @@ node_modules/@tsuba/axum/
   - Skips must be **explicit and deterministic** (no silent omission): bindgen emits `tsubabindgen.report.json` listing every skipped item + reason.
 - Bindgen must never “guess” a type mapping that could miscompile; when in doubt, skip with a report entry.
 
+Current report shape:
+
+```json
+{
+  "schema": 1,
+  "skipped": [
+    { "file": "/abs/path/src/lib.rs", "kind": "type", "snippet": "...", "reason": "..." }
+  ]
+}
+```
+
 ---
 
 ## 3. Supported Rust surface (v0)
@@ -57,6 +69,7 @@ v0 bindgen supports crates whose public API uses a restricted set of types that 
 - `pub enum`
 - `pub fn`
 - `pub const`
+- `pub trait` (method signatures and associated types represented as trait generic parameters)
 
 Traits may be supported if they use supported types.
 

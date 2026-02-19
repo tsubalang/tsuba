@@ -13,9 +13,13 @@ describe("@tsuba/tsubabindgen", () => {
     return resolve(dirname(here), "../../../");
   }
 
-  function runTempFixture(options: { readonly packageName?: string; readonly bundleCrate?: boolean }): string {
+  function runTempFixture(options: {
+    readonly fixture: "simple" | "traits";
+    readonly packageName?: string;
+    readonly bundleCrate?: boolean;
+  }): string {
     const root = repoRoot();
-    const fixtureCrateDir = join(root, "test", "fixtures", "bindgen", "@tsuba", "simple", "crate");
+    const fixtureCrateDir = join(root, "test", "fixtures", "bindgen", "@tsuba", options.fixture, "crate");
     const fixtureManifest = join(fixtureCrateDir, "Cargo.toml");
     const tmpRoot = mkdtempSync(join(tmpdir(), "tsubabindgen-fixture-"));
     const copiedCrateDir = join(tmpRoot, "crate-src");
@@ -46,7 +50,7 @@ describe("@tsuba/tsubabindgen", () => {
   });
 
   it("generates expected bindings for fixture crate", () => {
-    const out = runTempFixture({ packageName: "@tsuba/simple", bundleCrate: false });
+    const out = runTempFixture({ fixture: "simple", packageName: "@tsuba/simple", bundleCrate: false });
     const manifestText = read(join(out, "tsuba.bindings.json"));
     const manifest = JSON.parse(manifestText) as {
       schema: number;
@@ -89,17 +93,36 @@ describe("@tsuba/tsubabindgen", () => {
     expect(read(join(out, "math.js"))).to.include("type-only");
 
     const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as { skipped: unknown[] };
+    expect((report as { schema?: number }).schema).to.equal(1);
     expect(report.skipped).to.deep.equal([]);
     expect(existsSync(join(out, "crate"))).to.equal(false);
   });
 
   it("copies crate when --bundle-crate is used", () => {
-    const out = runTempFixture({ packageName: "@tsuba/simple", bundleCrate: true });
+    const out = runTempFixture({ fixture: "simple", packageName: "@tsuba/simple", bundleCrate: true });
     const manifest = JSON.parse(read(join(out, "tsuba.bindings.json"))) as {
       crate: { path?: string };
     };
     expect(manifest.crate.path).to.equal("./crate");
     expect(existsSync(join(out, "crate", "Cargo.toml"))).to.equal(true);
     expect(existsSync(join(out, "crate", "src", "lib.rs"))).to.equal(true);
+  });
+
+  it("generates trait facades (including associated types as generics) and reports skipped unsupported types", () => {
+    const out = runTempFixture({ fixture: "traits", packageName: "@tsuba/traits", bundleCrate: false });
+    const rootDts = read(join(out, "index.d.ts"));
+    expect(rootDts).to.include("export interface Reader {");
+    expect(rootDts).to.include("read(this: ref<this>): i32;");
+    expect(rootDts).to.include("export interface IteratorLike<Item> {");
+    expect(rootDts).to.include("next(this: mutref<this>): Option<Item>;");
+    expect(rootDts).to.include("export interface Mapper<T> extends IteratorLike {");
+    expect(rootDts).to.include("map_one(this: ref<this>, value: T): Option<T>;");
+
+    const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
+      schema: number;
+      skipped: Array<{ kind: string; reason: string }>;
+    };
+    expect(report.schema).to.equal(1);
+    expect(report.skipped.some((entry) => entry.kind === "type")).to.equal(true);
   });
 });

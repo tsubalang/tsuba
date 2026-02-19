@@ -32,6 +32,12 @@ It enforces:
 - full `npm run run-all` gate (unless `--no-tests` is explicitly passed)
 - package versions are not already published on npm
 
+Optional external proof verification (if the sibling repo exists):
+
+```bash
+npm run verify:proof
+```
+
 ## Using the CLI (from this repo checkout)
 
 Build the CLI:

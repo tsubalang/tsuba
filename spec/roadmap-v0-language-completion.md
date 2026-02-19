@@ -85,7 +85,7 @@ Still incomplete for parity-grade v0:
 - Compiler architecture is still too concentrated in `packages/compiler/src/rust/host.ts` (needs cleaner pass boundaries).
 - `tsubabindgen` is still MVP-grade and source/regex-heavy (needs robust extraction path and broader coverage).
 - Release/publish preflight scripts are missing.
-- External proof-repo verification is not yet wired into the release gate.
+- External proof verification has a script entrypoint (`scripts/verify-proof.sh`) but is not yet required in publish gates.
 
 For the explicit parity matrix vs Tsonic, see:
 
@@ -165,6 +165,12 @@ Goal: make it safe to extend the compiler without accidental miscompiles.
 Rule:
 
 - every unsupported syntactic construct that is *reachable* in accepted TS must error with stable `TSBxxxx`.
+
+Current state:
+
+- Compiler diagnostic codes are now centralized and validated through `packages/compiler/src/rust/diagnostics.ts`.
+- `CompileError`/`fail`/`failAt` enforce code registration.
+- A synchronization test ensures every `TSBxxxx` used in `host.ts` is registered.
 
 Implementation approach:
 
@@ -488,6 +494,12 @@ Merge gate:
 ## 9. Workstream G: Bindgen hardening (`tsubabindgen`)
 
 Status (current): **Partial** (determinism basics are in place; extractor depth is not yet airplane-grade).
+
+Current state:
+
+- Trait facades are now emitted (`pub trait` → TS `interface`).
+- Associated types are represented as extra trait generic parameters.
+- Skip reporting is deterministic (`tsubabindgen.report.json` with stable ordering + explicit reasons).
 
 The MVP exists; it must become deterministic and scalable.
 
