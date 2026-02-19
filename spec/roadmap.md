@@ -5,6 +5,7 @@ This roadmap is organized around **merge gates**: each phase is “done” only 
 For the implementation-grade, super-detailed plan used for the next large PR, see:
 
 - `spec/roadmap-v0-language-completion.md`
+- `spec/roadmap-parity-with-tsonic.md`
 
 Tsuba’s primary selling point is **GPU kernels**. GPU is not optional or “later”; it is on the critical path.
 
@@ -20,26 +21,26 @@ See also:
 
 ## Current status (implemented today)
 
-The repo already has a working v0 scaffold:
+The repo now has a working v0 baseline:
 
 - `tsuba init/build/run` exist and are covered by unit + E2E tests.
-- `@tsuba/compiler` emits a small, explicitly-whitelisted TS subset to a single Rust `main.rs` and runs `cargo build/run`.
+- `@tsuba/compiler` supports generic functions/classes/interfaces, trait lowering with `implements` checks, and async/await with runtime policy (`none` / `tokio`).
+- Host compilation emits Rust `main.rs` and runs `cargo build/run`.
 - `@tsuba/core/@tsuba/std/@tsuba/gpu` exist as marker/facade packages.
 - GPU kernels are compiled to deterministic CUDA C + PTX (via `nvcc`), and host code can launch kernels via a CUDA driver runtime module (`__tsuba_cuda`).
+- CLI invokes `@tsuba/tsubabindgen` as a library (no external bindgen binary dependency).
 
 This roadmap is the plan to take that v0 scaffold to a “real language” implementation.
 
 ### Tsonic transfer merge status
 
-- ✅ Checkpoint artifacts are in place:
-  - `carryover-from-tsonic.md`
-  - `checkpoint-tsonic-2026-02-19.md`
-  - `test/scripts/{run-all.sh,run-e2e.sh,typecheck-fixtures.sh}`
-- ✅ Merge-gate style test script is adopted with optional fast modes (`--quick`, `--filter`, `--no-unit`) and full-pass gate still required.
-- 🔶 Remaining transfer work is concentrated in:
-  - `Phase 1.5` (typed IR + deterministic diagnostics + non-silent unsupported-feature reporting),
-  - `Phase 3` (bindgen determinism + skip/error reporting),
-  - `Phase 8` (publish preflight discipline).
+- ✅ Checkpoint artifacts and test harness transfer are in place.
+- ✅ Command architecture and workspace model parity are in place.
+- 🔶 Remaining high-priority parity work is tracked in `spec/roadmap-parity-with-tsonic.md` and centers on:
+  - compiler phase separation/typed IR discipline,
+  - bindgen extractor hardening,
+  - publish preflight automation,
+  - external proof-repo verification integration.
 
 ---
 
@@ -111,7 +112,7 @@ Phase 1 additions from checkpoint:
 
 ---
 
-## Phase 1.5 — Airplane-grade compiler foundations (NEXT)
+## Phase 1.5 — Airplane-grade compiler foundations (IN PROGRESS)
 
 Goal: make the compiler architecture provably safe to extend.
 
@@ -194,7 +195,7 @@ Merge gate:
 
 ---
 
-## Phase 3 — tsubabindgen MVP (crate → `.d.ts` + manifest) (TODO)
+## Phase 3 — tsubabindgen MVP (crate → `.d.ts` + manifest) (IN PROGRESS)
 
 Deliverables:
 
