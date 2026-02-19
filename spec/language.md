@@ -183,6 +183,16 @@ to Rust `match` and enforces exhaustiveness.
 
 If exhaustiveness cannot be proven, Tsuba errors.
 
+### 7.3 Non-union switch
+
+Tsuba also supports scalar-value `switch` statements (non-union discriminants) by lowering them into deterministic `if/else` chains.
+
+v0 restrictions:
+
+- case labels must be literal (`string`, `number`, `boolean`)
+- no fallthrough
+- each case must end with `break` or `return`
+
 ---
 
 ## 8. Object literals
@@ -194,6 +204,14 @@ Object literals are allowed under strict rules.
 - Otherwise, Tsuba may synthesize an anon struct type if it does not escape.
 
 If it escapes in a way that cannot be named deterministically, Tsuba errors.
+
+### 8.1 Template literals
+
+Interpolated template literals are supported and lower to Rust `format!` calls.
+
+- literal segments are escaped for Rust format-string braces
+- interpolations lower as normal expressions
+- tagged templates remain unsupported in v0 unless they are explicit macro-marker forms from `@tsuba/core/lang.js`
 
 ---
 
@@ -257,7 +275,7 @@ The authoritative omission list is:
 Core omitted groups include:
 
 - module forms: namespace/default/side-effect imports, barrel re-exports
-- expression forms: array/object spread, template literals, optional chaining/nullish
+- expression forms: array/object spread, optional chaining/nullish
 - parameter/flow forms: optional/default params, destructuring params, `for..of`
 - declaration/type forms: class inheritance, TS enums, optional interface members
 - advanced async/generator forms: `function*`, `async function*`, `for await`

@@ -102,6 +102,13 @@ Example:
     "@tsuba/axum/index.js": "axum",
     "@tsuba/axum/routing.js": "axum::routing",
     "@tsuba/axum/extract.js": "axum::extract"
+  },
+  "symbols": {
+    "axum::struct:Router<S>": { "kind": "struct", "stableId": "4ab73fd7b7b7d988" },
+    "axum::fn:fn:serve(listener:TokioTcpListener,make_service:MakeService):Result<(), Error>": {
+      "kind": "fn",
+      "stableId": "8f31ac2b9f5f6114"
+    }
   }
 }
 ```
@@ -111,6 +118,14 @@ Rules:
 - Keys are TS import specifiers used by user code.
 - Values are Rust paths used by codegen.
 - The manifest must be deterministic and complete for the published surface.
+
+Stable symbol index:
+
+- `symbols` is a deterministic map keyed by canonical Rust symbol identity.
+- Each symbol entry includes:
+  - `kind`: declaration category (`fn`, `struct`, `trait`, `enum`, etc.)
+  - `stableId`: deterministic hash for diff tooling/regression checks
+- Compiler resolution only requires `modules`; `symbols` is for tooling, auditing, and bindgen traceability.
 
 Crate identity:
 

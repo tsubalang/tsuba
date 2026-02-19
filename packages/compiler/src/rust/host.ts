@@ -112,6 +112,7 @@ type EmitCtx = {
   readonly shapeStructsByFile: Map<string, StructDef[]>;
   readonly kernelDeclBySymbol: Map<ts.Symbol, KernelDecl>;
   readonly gpuRuntime: { used: boolean };
+  readonly generatedNameCounters: { switchTemp: number };
   readonly fieldBindings?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 };
 
@@ -1487,6 +1488,7 @@ function createEmitCtx(checker: ts.TypeChecker): EmitCtx {
     shapeStructsByFile: new Map<string, StructDef[]>(),
     kernelDeclBySymbol: new Map<ts.Symbol, KernelDecl>(),
     gpuRuntime: { used: false },
+    generatedNameCounters: { switchTemp: 0 },
   };
 }
 
@@ -2021,8 +2023,42 @@ function lowerArrowToClosure(
   };
 }
 
+function escapeRustFormatSegment(text: string): string {
+  return text.replaceAll("{", "{{").replaceAll("}", "}}");
+}
+
+type SwitchCaseLiteral = {
+  readonly key: string;
+  readonly display: string;
+  readonly expr: RustExpr;
+};
+
+function parseSwitchCaseLiteral(caseExpr: ts.Expression): SwitchCaseLiteral {
+  if (ts.isStringLiteral(caseExpr)) {
+    return { key: `s:${caseExpr.text}`, display: JSON.stringify(caseExpr.text), expr: { kind: "string", value: caseExpr.text } };
+  }
+  if (ts.isNumericLiteral(caseExpr)) {
+    return { key: `n:${caseExpr.text}`, display: caseExpr.text, expr: { kind: "number", text: caseExpr.text } };
+  }
+  if (ts.isPrefixUnaryExpression(caseExpr) && caseExpr.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(caseExpr.operand)) {
+    const value = `-${caseExpr.operand.text}`;
+    return { key: `n:${value}`, display: value, expr: { kind: "number", text: value } };
+  }
+  if (caseExpr.kind === ts.SyntaxKind.TrueKeyword) {
+    return { key: "b:true", display: "true", expr: { kind: "bool", value: true } };
+  }
+  if (caseExpr.kind === ts.SyntaxKind.FalseKeyword) {
+    return { key: "b:false", display: "false", expr: { kind: "bool", value: false } };
+  }
+  failAt(caseExpr, "TSB2211", "Non-union switch cases must be literal labels (string, number, boolean) in v0.");
+}
+
 function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isParenthesizedExpression(expr)) return { kind: "paren", expr: lowerExpr(ctx, expr.expression) };
+
+  if (ts.isPropertyAccessChain(expr) || ts.isElementAccessChain(expr) || ts.isCallChain(expr)) {
+    failAt(expr, "TSB1114", "Optional chaining (`?.`) is not supported in v0.");
+  }
 
   if (ts.isAwaitExpression(expr)) {
     if (!ctx.inAsync) {
@@ -2051,6 +2087,21 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       failAt(expr, "TSB1406", `Kernel values are compile-time only in v0; use ${expr.text}.launch(...).`);
     }
     return identExpr(expr.text);
+  }
+  if (ts.isNoSubstitutionTemplateLiteral(expr)) return { kind: "string", value: expr.text };
+  if (ts.isTemplateExpression(expr)) {
+    const formatParts: string[] = [escapeRustFormatSegment(expr.head.text)];
+    const args: RustExpr[] = [];
+    for (const span of expr.templateSpans) {
+      formatParts.push("{}");
+      formatParts.push(escapeRustFormatSegment(span.literal.text));
+      args.push(lowerExpr(ctx, span.expression));
+    }
+    return {
+      kind: "macro_call",
+      name: "format",
+      args: [{ kind: "string", value: formatParts.join("") }, ...args],
+    };
   }
   if (ts.isNumericLiteral(expr)) return { kind: "number", text: expr.text };
   if (ts.isStringLiteral(expr)) return { kind: "string", value: expr.text };
@@ -2289,6 +2340,9 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   }
 
   if (ts.isBinaryExpression(expr)) {
+    if (expr.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+      failAt(expr.operatorToken, "TSB1201", "Nullish coalescing (`??`) is not supported in v0.");
+    }
     const left = lowerExpr(ctx, expr.left);
     const right = lowerExpr(ctx, expr.right);
     const op = (() => {
@@ -2729,56 +2783,14 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
 
   if (ts.isSwitchStatement(st)) {
     const e = st.expression;
-    if (!ts.isPropertyAccessExpression(e) || !ts.isIdentifier(e.expression)) {
-      failAt(st.expression, "TSB2200", "switch(...) is only supported as switch(x.<disc>) in v0.");
-    }
-    const targetIdent = e.expression;
-    const discName = e.name.text;
 
-    const targetType = ctx.checker.getTypeAtLocation(targetIdent);
-    const key = unionKeyFromType(targetType);
-    const def = key ? ctx.unions.get(key) : undefined;
-    if (!def) {
-      failAt(targetIdent, "TSB2201", "switch(...) is only supported for discriminated unions in v0.");
-    }
-    if (discName !== def.discriminant) {
-      failAt(
-        e.name,
-        "TSB2202",
-        `switch(...) discriminant '${discName}' does not match union '${def.name}' discriminant '${def.discriminant}'.`
-      );
-    }
-
-    const arms: RustMatchArm[] = [];
-    const coveredTags = new Set<string>();
-
-    for (const clause of st.caseBlock.clauses) {
-      if (ts.isDefaultClause(clause)) {
-        failAt(clause, "TSB2203", "default clauses are not supported for discriminated unions in v0 (must be exhaustive).");
-      }
-      const caseExpr = clause.expression;
-      if (!ts.isStringLiteral(caseExpr)) {
-        failAt(caseExpr, "TSB2204", "Union switch cases must use string literal tags in v0.");
-      }
-      const tag = caseExpr.text;
-      if (coveredTags.has(tag)) {
-        failAt(caseExpr, "TSB2205", `Duplicate union case '${tag}' in switch.`);
-      }
-      coveredTags.add(tag);
-
-      const variant = def.variants.find((v) => v.tag === tag);
-      if (!variant) {
-        failAt(caseExpr, "TSB2206", `Unknown union tag '${tag}' for ${def.name}.`);
-      }
-
+    const lowerClauseBody = (innerCtx: EmitCtx, clause: ts.CaseOrDefaultClause): RustStmt[] => {
       if (clause.statements.length === 0) {
         failAt(clause, "TSB2207", "Empty switch cases are not supported in v0 (no fallthrough).");
       }
-
       const last = clause.statements.at(-1);
       if (!last) failAt(clause, "TSB2207", "Empty switch cases are not supported in v0 (no fallthrough).");
-      const bodyStmtsNodes =
-        ts.isBreakStatement(last) ? clause.statements.slice(0, -1) : clause.statements;
+      const bodyNodes = ts.isBreakStatement(last) ? clause.statements.slice(0, -1) : clause.statements;
       if (!ts.isBreakStatement(last) && !ts.isReturnStatement(last)) {
         failAt(
           last,
@@ -2786,51 +2798,149 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
           "Switch cases must end with `break;` or `return ...;` in v0 (no fallthrough)."
         );
       }
-      for (const s0 of bodyStmtsNodes) {
+      for (const s0 of bodyNodes) {
         if (ts.isBreakStatement(s0)) {
           failAt(s0, "TSB2209", "break; is only allowed as the final statement in a switch case in v0.");
         }
       }
+      const lowered: RustStmt[] = [];
+      for (const s0 of bodyNodes) lowered.push(...lowerStmt(innerCtx, s0));
+      return lowered;
+    };
 
-      const fieldMap = new Map<string, string>();
-      for (const f of variant.fields) fieldMap.set(f.name, f.name);
-      const inherited = ctx.fieldBindings ? new Map(ctx.fieldBindings) : new Map<string, ReadonlyMap<string, string>>();
-      inherited.set(targetIdent.text, fieldMap);
-      const armCtx: EmitCtx = {
-        checker: ctx.checker,
-        unions: ctx.unions,
-        structs: ctx.structs,
-        traitsByKey: ctx.traitsByKey,
-        traitsByName: ctx.traitsByName,
-        shapeStructsByKey: ctx.shapeStructsByKey,
-        shapeStructsByFile: ctx.shapeStructsByFile,
-        kernelDeclBySymbol: ctx.kernelDeclBySymbol,
-        gpuRuntime: ctx.gpuRuntime,
-        thisName: ctx.thisName,
-        fieldBindings: inherited,
+    if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression)) {
+      const targetIdent = e.expression;
+      const discName = e.name.text;
+      const targetType = ctx.checker.getTypeAtLocation(targetIdent);
+      const key = unionKeyFromType(targetType);
+      const def = key ? ctx.unions.get(key) : undefined;
+
+      if (def) {
+        if (discName !== def.discriminant) {
+          failAt(
+            e.name,
+            "TSB2202",
+            `switch(...) discriminant '${discName}' does not match union '${def.name}' discriminant '${def.discriminant}'.`
+          );
+        }
+
+        const arms: RustMatchArm[] = [];
+        const coveredTags = new Set<string>();
+
+        for (const clause of st.caseBlock.clauses) {
+          if (ts.isDefaultClause(clause)) {
+            failAt(clause, "TSB2203", "default clauses are not supported for discriminated unions in v0 (must be exhaustive).");
+          }
+          const caseExpr = clause.expression;
+          if (!ts.isStringLiteral(caseExpr)) {
+            failAt(caseExpr, "TSB2204", "Union switch cases must use string literal tags in v0.");
+          }
+          const tag = caseExpr.text;
+          if (coveredTags.has(tag)) {
+            failAt(caseExpr, "TSB2205", `Duplicate union case '${tag}' in switch.`);
+          }
+          coveredTags.add(tag);
+
+          const variant = def.variants.find((v) => v.tag === tag);
+          if (!variant) {
+            failAt(caseExpr, "TSB2206", `Unknown union tag '${tag}' for ${def.name}.`);
+          }
+
+          const fieldMap = new Map<string, string>();
+          for (const f of variant.fields) fieldMap.set(f.name, f.name);
+          const inherited = ctx.fieldBindings ? new Map(ctx.fieldBindings) : new Map<string, ReadonlyMap<string, string>>();
+          inherited.set(targetIdent.text, fieldMap);
+          const armCtx: EmitCtx = {
+            checker: ctx.checker,
+            unions: ctx.unions,
+            structs: ctx.structs,
+            traitsByKey: ctx.traitsByKey,
+            traitsByName: ctx.traitsByName,
+            shapeStructsByKey: ctx.shapeStructsByKey,
+            shapeStructsByFile: ctx.shapeStructsByFile,
+            kernelDeclBySymbol: ctx.kernelDeclBySymbol,
+            gpuRuntime: ctx.gpuRuntime,
+            generatedNameCounters: ctx.generatedNameCounters,
+            thisName: ctx.thisName,
+            fieldBindings: inherited,
+          };
+
+          const body = lowerClauseBody(armCtx, clause);
+
+          arms.push({
+            pattern: {
+              kind: "enum_struct",
+              path: { segments: [def.name, variant.name] },
+              fields: variant.fields.map((f) => ({ name: f.name, bind: { kind: "ident", name: f.name } })),
+            },
+            body,
+          });
+        }
+
+        if (coveredTags.size !== def.variants.length) {
+          const missing = def.variants
+            .map((v) => v.tag)
+            .filter((t) => !coveredTags.has(t));
+          failAt(st, "TSB2210", `Non-exhaustive switch for union '${def.name}'. Missing cases: ${missing.join(", ")}`);
+        }
+
+        return [{ kind: "match", span: spanFromNode(st), expr: identExpr(targetIdent.text), arms }];
+      }
+    }
+
+    const tempName = `__tsuba_switch_${ctx.generatedNameCounters.switchTemp++}`;
+    const tempInit = lowerExpr(ctx, st.expression);
+    const defaultClause = st.caseBlock.clauses.find((clause) => ts.isDefaultClause(clause));
+    const branchBodies: {
+      readonly lit: SwitchCaseLiteral;
+      readonly body: readonly RustStmt[];
+    }[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const clause of st.caseBlock.clauses) {
+      if (ts.isDefaultClause(clause)) continue;
+      const lit = parseSwitchCaseLiteral(clause.expression);
+      if (seenKeys.has(lit.key)) {
+        failAt(clause.expression, "TSB2212", `Duplicate non-union switch case ${lit.display}.`);
+      }
+      seenKeys.add(lit.key);
+      branchBodies.push({ lit, body: lowerClauseBody(ctx, clause) });
+    }
+
+    const defaultBody = defaultClause ? lowerClauseBody(ctx, defaultClause) : undefined;
+
+    let tailElse = defaultBody;
+    for (let i = branchBodies.length - 1; i >= 0; i--) {
+      const branch = branchBodies[i]!;
+      const cond: RustExpr = {
+        kind: "binary",
+        op: "==",
+        left: identExpr(tempName),
+        right: branch.lit.expr,
       };
-
-      const body: RustStmt[] = [];
-      for (const s0 of bodyStmtsNodes) body.push(...lowerStmt(armCtx, s0));
-
-      arms.push({
-        pattern: {
-          kind: "enum_struct",
-          path: { segments: [def.name, variant.name] },
-          fields: variant.fields.map((f) => ({ name: f.name, bind: { kind: "ident", name: f.name } })),
-        },
-        body,
-      });
+      const nextIf: RustStmt = {
+        kind: "if",
+        span: spanFromNode(st),
+        cond,
+        then: [...branch.body],
+        else: tailElse,
+      };
+      tailElse = [nextIf];
     }
 
-    if (coveredTags.size !== def.variants.length) {
-      const missing = def.variants
-        .map((v) => v.tag)
-        .filter((t) => !coveredTags.has(t));
-      failAt(st, "TSB2210", `Non-exhaustive switch for union '${def.name}'. Missing cases: ${missing.join(", ")}`);
+    const blockBody: RustStmt[] = [
+      {
+        kind: "let",
+        span: spanFromNode(st.expression),
+        pattern: { kind: "ident", name: tempName },
+        mut: false,
+        init: tempInit,
+      },
+    ];
+    if (tailElse) {
+      blockBody.push(...tailElse);
     }
-
-    return [{ kind: "match", span: spanFromNode(st), expr: identExpr(targetIdent.text), arms }];
+    return [{ kind: "block", span: spanFromNode(st), body: blockBody }];
   }
 
   if (ts.isBreakStatement(st)) {
@@ -3184,6 +3294,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       shapeStructsByFile: ctx.shapeStructsByFile,
       kernelDeclBySymbol: ctx.kernelDeclBySymbol,
       gpuRuntime: ctx.gpuRuntime,
+      generatedNameCounters: ctx.generatedNameCounters,
       thisName: "self",
       inAsync: isAsync,
     };

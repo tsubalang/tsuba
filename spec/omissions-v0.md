@@ -31,9 +31,8 @@ Policy:
 | Object spread/rest (`{ ...x }`, object rest patterns) | Omitted | `TSB1118` / `TSB1131` |
 | Object-literal methods/getters/setters in structural literals | Omitted | `TSB1119` |
 | Untyped escaping object literals | Omitted unless deterministic contextual lowering is possible | `TSB1131` |
-| Template literals (general TS string templates) | Omitted in v0 | `TSB1100` (unsupported expression) |
-| Optional chaining (`?.`) | Omitted in v0 | pre-emit TS diagnostics (`TSB0002`) |
-| Nullish coalescing (`??`) | Omitted in v0 | pre-emit TS diagnostics (`TSB0002`) |
+| Optional chaining (`?.`) | Omitted in v0 | `TSB1114` |
+| Nullish coalescing (`??`) | Omitted in v0 | `TSB1201` |
 
 ---
 
@@ -44,11 +43,14 @@ Policy:
 | Optional/default parameters | Omitted (use explicit `Option<T>`) | `TSB3004` / `TSB4107` / `TSB5109` |
 | Untyped function parameters | Omitted (explicit parameter types required) | `TSB3003` |
 | Destructuring parameters | Omitted | `TSB3002` / `TSB5107` |
+| Generic/block-bodied arrow closures | Omitted in v0 closure subset | `TSB1100` |
 | `for..of` loops | Omitted | `TSB2100` |
 | `var` in `for` initializer | Omitted | `TSB2120` |
 | Discriminated-union `switch` `default` branch | Omitted (must be exhaustive over variants) | `TSB2203` |
 | Discriminated-union non-literal case tag expressions | Omitted | `TSB2204` |
 | Discriminated-union empty fallthrough cases | Omitted | `TSB2207` |
+| Non-union `switch` with non-literal case labels | Omitted | `TSB2211` |
+| Non-union `switch` with duplicate case labels | Omitted | `TSB2212` |
 | Promise chaining (`.then/.catch/.finally`) | Omitted (`await` only) | `TSB1306` |
 | `await` outside async functions | Omitted | `TSB1308` |
 

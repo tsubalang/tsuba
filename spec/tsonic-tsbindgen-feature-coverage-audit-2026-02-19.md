@@ -33,15 +33,15 @@ Status legend:
 | Interface properties/optional members | broader TS interface surface | **Missing (documented)** | **Yes** | Rejected; documented as unsupported interface member forms |
 | TS enums declarations | `enum` declarations | **Missing (documented)** | **Yes** | Explicitly omitted in `spec/omissions-v0.md` |
 | Discriminated unions | union + exhaustive switch | **Covered** | n/a | Core path is implemented and heavily tested |
-| General switch forms | broad JS/TS switch | **Partial** | **Yes** | Only discriminated-union switch is first-class |
+| General switch forms | broad JS/TS switch | **Partial** | **Yes** | Discriminated-union switches + scalar literal switches are supported; full JS switch surface remains restricted |
 | Error handling | `try/catch/throw` | **Missing (documented)** | **Yes** | Explicitly rejected in `spec/language.md` |
 | Arrays/tuples | core array/tuple operations | **Partial** | **Partly** | Basic tuples/arrays supported; spread is rejected |
 | Array spread | `[...x]` | **Missing (documented)** | **Yes** | Rejected (`TSB1111`) and listed in omission matrix |
 | Object literals | object literals + anonymous shapes | **Partial** | **Yes** | Strict contextual/synthesized-shape rules only |
 | Object spread/rest | `{...x}` / object rest patterns | **Missing (documented)** | **Yes** | Omitted and listed in omission matrix |
-| Template literals | string template expressions | **Missing (documented)** | **Yes** | Omitted and listed in omission matrix |
+| Template literals | string template expressions | **Covered** | n/a | Interpolated templates lower deterministically to Rust `format!` |
 | Destructuring | binding/parameter destructuring | **Missing (documented)** | **Yes** | Omitted and listed in omission matrix |
-| Optional chaining / nullish | `?.` and `??` | **Missing (documented)** | **Yes** | Omitted and listed in omission matrix |
+| Optional chaining / nullish | `?.` and `??` | **Missing (documented)** | **Yes** | Explicitly rejected with stable diagnostics (`TSB1114`, `TSB1201`) |
 | Module system | named imports/exports, local modules | **Covered** | n/a | Core relative imports are supported |
 | Namespace imports | `import * as x` | **Missing (documented)** | **Yes** | Rejected (`TSB3209`) and listed in omission matrix |
 | Side-effect imports | `import "./x.js"` | **Missing (documented)** | **Yes** | Rejected and already in diagnostics/matrix |
@@ -73,8 +73,8 @@ Legend:
 | Macro surfaces | macro/attr/derive emission | **Covered** | Marker-based macro model implemented/documented |
 | Library mode | reuse existing generated baseline package | **Partial** | Different mechanism (crate-centric, dynamic bindgen model) |
 | Internal + facade split | dual-file (`internal/index.d.ts` + facade) | **Partial** | Tsuba uses facade+bindings report; no internal mirror layer |
-| Stable IDs | type/member stable IDs in bindings metadata | **Missing** | No StableId equivalent yet; may matter for future deep diff tooling |
-| Phase-gate diagnostics | dedicated pipeline gate taxonomy | **Partial** | Tsuba has `TSBxxxx` discipline but no tsbindgen-style phase-gate catalog |
+| Stable IDs | type/member stable IDs in bindings metadata | **Covered** | `tsuba.bindings.json` now includes deterministic symbol stable IDs (`symbols` map) |
+| Phase-gate diagnostics | dedicated pipeline gate taxonomy | **Covered** | `tsubabindgen.report.json` now includes stable `phase` and `code` (`TBBxxxx`) per skip issue |
 | Extension method rewrap model | sticky extension scopes and wrapper types | **N/A (CLR-specific)** | Rust trait/impl model differs; no direct equivalent needed |
 | Explicit interface views / emit scopes | `ClassSurface` vs `ViewOnly` vs `Omitted` | **N/A (CLR-specific)** | Rust public item model is different |
 | Property covariance unifier | CLR override compatibility recovery | **N/A (CLR-specific)** | Not a Rust crate-surface concept |
@@ -89,9 +89,9 @@ These are the highest-value gaps for “TS coverage except explicit omissions”
 
 1. ✅ **Published a single user-facing omission matrix** (`spec/omissions-v0.md`) and linked it from language + feature docs.
 2. ✅ **Explicitly rejected re-export forwarding** in compiler front-end flow (`TSB3214`) to remove partial/unsafe behavior.
-3. **Decide StableId policy for tsubabindgen**:
-   - either add stable IDs, or
-   - document why they are intentionally unnecessary in Rust bindgen model.
+3. ✅ **Implemented StableId policy for tsubabindgen**:
+   - `tsuba.bindings.json` contains deterministic per-symbol `stableId` entries.
+   - `tsubabindgen.report.json` contains per-skip `stableId` plus phase-gate `code`.
 4. ✅ **Consolidated TS type-level omission docs** in the omission matrix + language references.
 
 ---

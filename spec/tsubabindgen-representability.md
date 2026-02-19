@@ -63,7 +63,7 @@ Intentionally unsupported (reported):
 
 ## 3) Skip issue taxonomy
 
-`tsubabindgen.report.json` uses stable `kind` categories to explain omissions.
+`tsubabindgen.report.json` uses stable `kind` categories and stable issue metadata.
 
 | Kind | Source stage | Meaning |
 | --- | --- | --- |
@@ -79,7 +79,24 @@ Intentionally unsupported (reported):
 Notes:
 
 - `kind` is stable and intended for tooling/CI checks.
+- `phase` is stable (`extract` / `resolve` / `emit`) and indicates which bindgen stage produced the omission.
+- `code` is stable (`TBBxxxx`) and grouped by phase.
+- `stableId` is a deterministic hash for issue-level diffing across generations.
 - `reason` is human-facing and should remain actionable.
+
+Example report entry:
+
+```json
+{
+  "file": "src/lib.rs",
+  "kind": "type",
+  "snippet": "impl Iterator<Item = i32>",
+  "reason": "Unsupported impl trait type in facade return position.",
+  "phase": "emit",
+  "code": "TBB3002",
+  "stableId": "ab12cd34ef56aa78"
+}
+```
 
 ---
 
@@ -90,6 +107,7 @@ Notes:
 - Pending method attachment merges repeated impl blocks by nominal target deterministically.
 - Repeated runs on same input must produce byte-identical `.d.ts`, bindings, and report files.
 - Skip-report `file` values are crate-root-relative paths (`src/...`) when possible, so reports do not leak machine-local absolute paths.
+- `tsuba.bindings.json` `symbols` map and report `stableId` values must be byte-stable across repeated runs.
 
 ---
 
