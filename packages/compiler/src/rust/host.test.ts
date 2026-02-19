@@ -688,6 +688,43 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("fn id<T: Show>(x: T) -> T");
   });
 
+  it("rejects generic bounds that are not trait interfaces (prevents non-trait miscompile)", () => {
+    const dir = makeRepoTempDir("compiler-generic-non-trait-bound-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "type Pair = {",
+        "  left: i32;",
+        "  right: i32;",
+        "};",
+        "",
+        "function pick<T extends Pair>(x: T): T {",
+        "  return x;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const y = pick({ left: 1 as i32, right: 2 as i32 });",
+        "  void y;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB3005");
+    expect((err as CompileError).message).to.contain("trait interface");
+  });
+
   it("emits turbofish calls for explicit type arguments on declared functions (v0)", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-turbofish-"));
     const entry = join(dir, "main.ts");

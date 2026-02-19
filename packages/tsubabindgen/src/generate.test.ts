@@ -14,7 +14,7 @@ describe("@tsuba/tsubabindgen", () => {
   }
 
   function runTempFixture(options: {
-    readonly fixture: "simple" | "traits" | "advanced";
+    readonly fixture: "simple" | "traits" | "advanced" | "edge";
     readonly packageName?: string;
     readonly bundleCrate?: boolean;
   }): string {
@@ -179,5 +179,37 @@ describe("@tsuba/tsubabindgen", () => {
         (entry) => entry.kind === "enum" && entry.reason.includes("payload")
       )
     ).to.equal(true);
+  });
+
+  it("reports unsupported edge syntax deterministically while still emitting usable modules", () => {
+    const out = runTempFixture({ fixture: "edge", packageName: "@tsuba/edge", bundleCrate: false });
+    const rootDts = read(join(out, "index.d.ts"));
+    const deepDts = read(join(out, "deep.d.ts"));
+
+    expect(rootDts).to.include("export declare class Event {");
+    expect(rootDts).to.include("static readonly Ready: Event;");
+    expect(rootDts).to.include("export interface Borrowing<Item> {");
+    expect(rootDts).to.include("get(this: ref<this>): Option<refLt<\"a\", Item>>;");
+    expect(rootDts).to.include("export declare class Bytes {");
+    expect(rootDts).to.include("data: ArrayN<u8, number>;");
+    expect(rootDts).to.include("export function first(value: refLt<\"a\", Str>): refLt<\"a\", Str>;");
+    expect(rootDts).to.include("export function take_iter(value: unknown): i32;");
+    expect(deepDts).to.include("export interface DeepTrait<T> extends Clone {");
+    expect(deepDts).to.include("map(this: ref<this>, value: T): Option<T>;");
+
+    const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
+      schema: number;
+      skipped: Array<{ kind: string; reason: string; snippet: string }>;
+    };
+    expect(report.schema).to.equal(1);
+    expect(report.skipped.some((entry) => entry.kind === "generic" && entry.snippet.includes("'a"))).to.equal(true);
+    expect(report.skipped.some((entry) => entry.kind === "generic" && entry.snippet.startsWith("const "))).to.equal(true);
+    expect(report.skipped.some((entry) => entry.kind === "enum" && entry.reason.includes("payload"))).to.equal(true);
+    expect(report.skipped.some((entry) => entry.kind === "type" && entry.snippet.includes("impl Iterator"))).to.equal(
+      true
+    );
+    expect(report.skipped.some((entry) => entry.kind === "type" && entry.reason.includes("Array length"))).to.equal(
+      true
+    );
   });
 });
