@@ -47,8 +47,9 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(body).to.contain("const kernels = collectSortedKernelDecls(ctx, userSourceFiles);");
     expect(body).to.contain("createUserModuleIndexPass(userSourceFiles, entryFileName, {");
     expect(body).to.contain("const loweredByFile = collectFileLoweringsPass(");
-    expect(body).to.contain("collectTypeModelsPass(loweredByFile, {");
-    expect(body).to.contain("const attrsByFile = collectAnnotationsPass(loweredByFile, entryFileName, mainFn, {");
+    expect(body).to.contain("const hirByFile = buildHirModulesPass(loweredByFile);");
+    expect(body).to.contain("collectTypeModelsPass(hirByFile, {");
+    expect(body).to.contain("const attrsByFile = collectAnnotationsPass(hirByFile, entryFileName, mainFn, {");
     expect(body).to.contain("const declarationPhase = emitModuleAndRootDeclarationsPass(");
     expect(body).to.contain("const mainItems = emitMainAndRootShapesPass(");
 

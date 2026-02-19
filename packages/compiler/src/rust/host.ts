@@ -19,6 +19,7 @@ import { identExpr, pathExpr, pathType, unitExpr, unitType } from "./ir.js";
 import { runBootstrapPass } from "./passes/bootstrap.js";
 import { createUserModuleIndexPass, resolveRelativeImportPass } from "./passes/module-index.js";
 import { collectFileLoweringsPass } from "./passes/file-lowering.js";
+import { buildHirModulesPass } from "./passes/hir.js";
 import { collectTypeModelsPass } from "./passes/type-models.js";
 import { collectAnnotationsPass } from "./passes/annotations.js";
 import { emitModuleAndRootDeclarationsPass } from "./passes/declaration-emission.js";
@@ -2757,8 +2758,11 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
     }
   );
 
-  // Phase 5: pre-collect cross-file type models (unions/struct aliases/traits).
-  collectTypeModelsPass(loweredByFile, {
+  // Phase 5: build typed HIR modules from lowered source buckets.
+  const hirByFile = buildHirModulesPass(loweredByFile);
+
+  // Phase 6: pre-collect cross-file type models (unions/struct aliases/traits).
+  collectTypeModelsPass(hirByFile, {
     onTypeAlias: (decl) => {
       const unionDef = tryParseDiscriminatedUnionTypeAlias(decl);
       if (unionDef) ctx.unions.set(unionDef.key, unionDef);
@@ -2775,20 +2779,20 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
     },
   });
 
-  // Phase 6: collect `annotate(...)` markers and validate declaration ordering.
-  const attrsByFile = collectAnnotationsPass(loweredByFile, entryFileName, mainFn, {
+  // Phase 7: collect `annotate(...)` markers and validate declaration ordering.
+  const attrsByFile = collectAnnotationsPass(hirByFile, entryFileName, mainFn, {
     failAt,
     unionKeyFromDecl,
     hasUnionDef: (key) => ctx.unions.has(key),
     hasStructDef: (key) => ctx.structs.has(key),
   });
 
-  // Phase 7: emit module + root declarations into Rust IR in deterministic order.
+  // Phase 8: emit module + root declarations into Rust IR in deterministic order.
   const declarationPhase = emitModuleAndRootDeclarationsPass(
     ctx,
     sf,
     entryFileName,
-    loweredByFile,
+    hirByFile,
     moduleNameByFile,
     attrsByFile,
     {
@@ -2805,7 +2809,7 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
   );
   items.push(...declarationPhase.items);
 
-  // Phase 8: lower entry main body + root shape structs and finalize Rust program text.
+  // Phase 9: lower entry main body + root shape structs and finalize Rust program text.
   const mainItems = emitMainAndRootShapesPass(
     {
       ctx,

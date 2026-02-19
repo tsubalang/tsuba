@@ -4,7 +4,8 @@ import type { RustItem } from "../ir.js";
 import {
   asReadonlyMap,
   freezeReadonlyArray,
-  type FileLowered,
+  type HirDecl,
+  type HirModule,
   type ShapeStructDefLike,
 } from "./contracts.js";
 
@@ -33,50 +34,42 @@ export function emitModuleAndRootDeclarationsPass<TCtx>(
   ctx: TCtx,
   entrySourceFile: ts.SourceFile,
   entryFileName: string,
-  loweredByFile: ReadonlyMap<string, FileLowered>,
+  hirByFile: ReadonlyMap<string, HirModule>,
   moduleNameByFile: ReadonlyMap<string, string>,
   attrsByFile: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>,
   deps: DeclarationEmissionPassDeps<TCtx>
 ): DeclarationEmissionOutput {
   const items: RustItem[] = [];
 
-  const rootLowered = loweredByFile.get(entryFileName);
-  if (!rootLowered) deps.failAt(entrySourceFile, "TSB0001", "Internal error: entry file missing from lowered set.");
+  const rootModule = hirByFile.get(entryFileName);
+  if (!rootModule) deps.failAt(entrySourceFile, "TSB0001", "Internal error: entry file missing from HIR set.");
 
-  items.push(...deps.sortUseItems(rootLowered.uses));
+  items.push(...deps.sortUseItems(rootModule.uses));
+
+  const lowerDecl = (decl: HirDecl, attrsForDecl: readonly string[]): readonly RustItem[] => {
+    if (decl.kind === "typeAlias") return deps.lowerTypeAlias(ctx, decl.decl, attrsForDecl);
+    if (decl.kind === "interface") return deps.lowerInterface(ctx, decl.decl);
+    if (decl.kind === "class") return deps.lowerClass(ctx, decl.decl, attrsForDecl);
+    return [deps.lowerFunction(ctx, decl.decl, attrsForDecl)];
+  };
 
   const moduleFiles = [...moduleNameByFile.entries()].sort((a, b) => deps.compareText(a[0], b[0]));
   for (const [fileName, modName] of moduleFiles) {
-    const lowered = loweredByFile.get(fileName);
-    if (!lowered) continue;
+    const module = hirByFile.get(fileName);
+    if (!module) continue;
     const fileAttrs = attrsByFile.get(fileName) ?? asReadonlyMap(new Map<string, readonly string[]>());
-    const itemGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
 
-    for (const t0 of lowered.typeAliases) {
-      itemGroups.push({
-        pos: t0.pos,
-        items: deps.lowerTypeAlias(ctx, t0.decl, fileAttrs.get(t0.decl.name.text) ?? []),
-      });
-    }
-    for (const i0 of lowered.interfaces) {
-      itemGroups.push({ pos: i0.pos, items: deps.lowerInterface(ctx, i0.decl) });
-    }
-    for (const c0 of lowered.classes) {
-      itemGroups.push({
-        pos: c0.pos,
-        items: deps.lowerClass(ctx, c0.decl, fileAttrs.get(c0.decl.name?.text ?? "") ?? []),
-      });
-    }
-    for (const f0 of lowered.functions) {
-      itemGroups.push({
-        pos: f0.pos,
-        items: [deps.lowerFunction(ctx, f0.decl, fileAttrs.get(f0.decl.name?.text ?? "") ?? [])],
-      });
-    }
-    itemGroups.sort((a, b) => a.pos - b.pos);
-    const declItems = itemGroups.flatMap((g) => g.items);
+    const declItems = module.declarations.flatMap((decl) => {
+      const declName =
+        decl.kind === "typeAlias"
+          ? decl.decl.name.text
+          : decl.kind === "interface"
+            ? ""
+            : decl.decl.name?.text ?? "";
+      return lowerDecl(decl, fileAttrs.get(declName) ?? []);
+    });
 
-    const usesSorted = deps.sortUseItems(lowered.uses);
+    const usesSorted = deps.sortUseItems(module.uses);
     const shapeStructs = [...deps.getShapeStructsByFile(fileName)].sort(
       (a, b) => a.span.start - b.span.start || deps.compareText(a.key, b.key)
     );
@@ -90,30 +83,17 @@ export function emitModuleAndRootDeclarationsPass<TCtx>(
   }
 
   const rootAttrs = attrsByFile.get(entryFileName) ?? asReadonlyMap(new Map<string, readonly string[]>());
-  const rootGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
-  for (const t0 of rootLowered.typeAliases) {
-    rootGroups.push({
-      pos: t0.pos,
-      items: deps.lowerTypeAlias(ctx, t0.decl, rootAttrs.get(t0.decl.name.text) ?? []),
-    });
-  }
-  for (const i0 of rootLowered.interfaces) {
-    rootGroups.push({ pos: i0.pos, items: deps.lowerInterface(ctx, i0.decl) });
-  }
-  for (const c0 of rootLowered.classes) {
-    rootGroups.push({
-      pos: c0.pos,
-      items: deps.lowerClass(ctx, c0.decl, rootAttrs.get(c0.decl.name?.text ?? "") ?? []),
-    });
-  }
-  for (const f0 of rootLowered.functions) {
-    rootGroups.push({
-      pos: f0.pos,
-      items: [deps.lowerFunction(ctx, f0.decl, rootAttrs.get(f0.decl.name?.text ?? "") ?? [])],
-    });
-  }
-  rootGroups.sort((a, b) => a.pos - b.pos);
-  items.push(...rootGroups.flatMap((g) => g.items));
+  items.push(
+    ...rootModule.declarations.flatMap((decl) => {
+      const declName =
+        decl.kind === "typeAlias"
+          ? decl.decl.name.text
+          : decl.kind === "interface"
+            ? ""
+            : decl.decl.name?.text ?? "";
+      return lowerDecl(decl, rootAttrs.get(declName) ?? []);
+    })
+  );
 
   return {
     items: freezeReadonlyArray(items),

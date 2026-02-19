@@ -88,6 +88,25 @@ export type FileLowered = {
   }[];
 };
 
+export type HirDecl =
+  | { readonly kind: "class"; readonly pos: number; readonly decl: ts.ClassDeclaration }
+  | { readonly kind: "function"; readonly pos: number; readonly decl: ts.FunctionDeclaration }
+  | { readonly kind: "typeAlias"; readonly pos: number; readonly decl: ts.TypeAliasDeclaration }
+  | { readonly kind: "interface"; readonly pos: number; readonly decl: ts.InterfaceDeclaration };
+
+export type HirModule = {
+  readonly fileName: string;
+  readonly sourceFile: ts.SourceFile;
+  readonly uses: readonly RustItem[];
+  readonly declarations: readonly HirDecl[];
+  readonly annotations: readonly {
+    readonly pos: number;
+    readonly node: ts.Statement;
+    readonly target: string;
+    readonly attrs: readonly string[];
+  }[];
+};
+
 export type ShapeStructDefLike = {
   readonly key: string;
   readonly name: string;

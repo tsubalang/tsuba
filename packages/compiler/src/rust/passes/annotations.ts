@@ -3,7 +3,7 @@ import ts from "typescript";
 import {
   asReadonlyMap,
   freezeReadonlyArray,
-  type FileLowered,
+  type HirModule,
 } from "./contracts.js";
 
 type AnnotationsPassDeps = {
@@ -14,27 +14,29 @@ type AnnotationsPassDeps = {
 };
 
 export function collectAnnotationsPass(
-  loweredByFile: ReadonlyMap<string, FileLowered>,
+  hirByFile: ReadonlyMap<string, HirModule>,
   entryFileName: string,
   mainFn: ts.FunctionDeclaration,
   deps: AnnotationsPassDeps
 ): ReadonlyMap<string, ReadonlyMap<string, readonly string[]>> {
   const attrsByFile = new Map<string, ReadonlyMap<string, readonly string[]>>();
 
-  for (const [fileName, lowered] of loweredByFile.entries()) {
+  for (const [fileName, module] of hirByFile.entries()) {
     const declPosByName = new Map<string, number>();
-    for (const f0 of lowered.functions) {
-      const n = f0.decl.name?.text;
-      if (n) declPosByName.set(n, f0.pos);
-    }
-    for (const c0 of lowered.classes) {
-      const n = c0.decl.name?.text;
-      if (n) declPosByName.set(n, c0.pos);
-    }
-    for (const t0 of lowered.typeAliases) {
-      const key = deps.unionKeyFromDecl(t0.decl);
-      if (deps.hasUnionDef(key) || deps.hasStructDef(key)) {
-        declPosByName.set(t0.decl.name.text, t0.pos);
+    for (const decl of module.declarations) {
+      if (decl.kind === "function") {
+        const n = decl.decl.name?.text;
+        if (n) declPosByName.set(n, decl.pos);
+      }
+      if (decl.kind === "class") {
+        const n = decl.decl.name?.text;
+        if (n) declPosByName.set(n, decl.pos);
+      }
+      if (decl.kind === "typeAlias") {
+        const key = deps.unionKeyFromDecl(decl.decl);
+        if (deps.hasUnionDef(key) || deps.hasStructDef(key)) {
+          declPosByName.set(decl.decl.name.text, decl.pos);
+        }
       }
     }
     if (fileName === entryFileName) {
@@ -42,7 +44,7 @@ export function collectAnnotationsPass(
     }
 
     const attrsByName = new Map<string, readonly string[]>();
-    for (const a of lowered.annotations) {
+    for (const a of module.annotations) {
       const declPos = declPosByName.get(a.target);
       if (declPos === undefined) {
         deps.failAt(a.node, "TSB3310", `annotate(...) target '${a.target}' was not found in this module.`);
