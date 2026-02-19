@@ -237,15 +237,18 @@ Tsuba uses:
 
 ## 7. Control flow and pattern matching
 
-### 7.1 `switch` → `match`
+### 7.1 `switch`
 
-Tsuba lowers `switch` on:
-- string literal discriminants
-- numeric enums (if supported)
+Tsuba has two deterministic switch paths:
 
-to Rust `match` with exhaustiveness enforcement.
+1. **Discriminated-union switch** (`switch (u.kind)`) lowers to Rust `match` with exhaustiveness enforcement.
+2. **Scalar-value switch** (non-union) lowers to deterministic `if/else` chains.
 
-If Tsuba cannot prove exhaustiveness, it errors.
+For scalar switches in v0:
+
+- case labels must be literals (`string`, `number`, `boolean`)
+- no fallthrough
+- each case ends with `break` or `return`
 
 ### 7.2 Narrowing
 
@@ -349,6 +352,9 @@ For a crate `my_crate`:
   "modules": {
     "@tsuba/my-crate/index.js": "my_crate",
     "@tsuba/my-crate/foo.js": "my_crate::foo"
+  },
+  "symbols": {
+    "my_crate::struct:Thing": { "kind": "struct", "stableId": "3d8b0fd0f9a0bcab" }
   }
 }
 ```
@@ -359,6 +365,7 @@ For a crate `my_crate`:
 - Bindgen is best-effort, but **must not silently omit**:
   - if a public Rust item cannot be represented in the Tsuba TS surface, bindgen skips it and records the skip deterministically in `tsubabindgen.report.json`.
 - Bindgen must never “guess” a type mapping that could miscompile; when in doubt, skip with a report entry.
+- Bindings include deterministic symbol `stableId` metadata; skip reports include stable phase/code/issue IDs.
 
 ### 12.4 Generics and traits
 

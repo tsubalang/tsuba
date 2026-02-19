@@ -35,10 +35,12 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | `TSB1003` | async `main` has non-`Promise<void>` return payload |
 | `TSB1004` | async `main` requires `runtime.kind=tokio` |
 | `TSB1100` | block-bodied closure literal rejected in current closure subset |
+| `TSB1114` | optional chaining (`?.`) is rejected in v0 |
 | `TSB1303` | `move(...)` requires an inline arrow callback |
 | `TSB1306` | Promise `.then(...)` chains are rejected |
 | `TSB1308` | `await` used outside async function |
 | `TSB1310` | mutable borrow marker used on non-place expression |
+| `TSB1201` | nullish coalescing (`??`) is rejected in v0 |
 | `TSB1116` | union-variant field accessed without switch-based narrowing |
 
 ### control-flow
@@ -47,9 +49,10 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | --- | --- |
 | `TSB2002` | local variable declared without definite initialization |
 | `TSB2120` | `var` declarations inside `for` initializer are rejected |
-| `TSB2200` | discriminated-union `switch` requires direct tag-property discriminant |
 | `TSB2203` | `default` branch not allowed on discriminated-union switches |
 | `TSB2210` | non-exhaustive discriminated-union switch |
+| `TSB2211` | non-union switch case label is not a literal |
+| `TSB2212` | duplicate non-union switch case label |
 
 ### functions-imports-and-annotations
 

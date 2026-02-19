@@ -38,7 +38,6 @@ describe("@tsuba/compiler omissions docs sync", () => {
       "generators",
       "async generators",
       "for await",
-      "template literals",
       "optional chaining",
       "nullish coalescing",
       "destructuring",

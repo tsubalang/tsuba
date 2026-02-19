@@ -21,8 +21,8 @@ use axum::Router;
 A generated Tsuba package contains:
 
 - `.d.ts` (facade modules)
-- `tsuba.bindings.json` (module → Rust path mapping)
-- `tsubabindgen.report.json` (deterministic skip report)
+- `tsuba.bindings.json` (module → Rust path mapping + stable symbol IDs)
+- `tsubabindgen.report.json` (deterministic skip report with phase/code/stableId)
 - (optional) a bundled crate directory for offline/path-backed consumption
 
 Example:
@@ -52,7 +52,15 @@ Current report shape:
 {
   "schema": 1,
   "skipped": [
-    { "file": "src/lib.rs", "kind": "type", "snippet": "...", "reason": "..." }
+    {
+      "file": "src/lib.rs",
+      "kind": "type",
+      "snippet": "...",
+      "reason": "...",
+      "phase": "emit",
+      "code": "TBB3002",
+      "stableId": "ab12cd34ef56aa78"
+    }
   ]
 }
 ```
@@ -127,6 +135,13 @@ Recommended:
 - `index.d.ts` as a curated re-export surface.
 
 `tsuba.bindings.json` is the authoritative mapping.
+
+It also includes a deterministic `symbols` index:
+
+- key: canonical Rust symbol identity (module path + declaration signature)
+- value: `{ kind, stableId }`
+
+`stableId` is a deterministic hash that supports diff tooling and regression checks.
 
 ### 5.1 Cargo package vs crate name
 

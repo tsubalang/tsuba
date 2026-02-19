@@ -1186,6 +1186,69 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("Shape::Circle");
   });
 
+  it("lowers non-union scalar switch statements into deterministic if/else chains", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-switch-scalar-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "function classify(x: i32): i32 {",
+        "  let out: i32 = 0 as i32;",
+        "  switch (x) {",
+        "    case 0:",
+        "      out = 10 as i32;",
+        "      break;",
+        "    case 1:",
+        "      out = 20 as i32;",
+        "      break;",
+        "    default:",
+        "      out = 30 as i32;",
+        "      break;",
+        "  }",
+        "  return out;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void classify(1 as i32);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let __tsuba_switch_0 = x;");
+    expect(out.mainRs).to.contain("if (__tsuba_switch_0 == 0) {");
+    expect(out.mainRs).to.contain("} else {");
+    expect(out.mainRs).to.contain("__tsuba_switch_0 == 1");
+  });
+
+  it("lowers template literals to Rust format! calls with escaped brace segments", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-template-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "export function main(): void {",
+        "  const a = `a${1 as i32}b`;",
+        "  const b = `{${2 as i32}}`;",
+        "  void a;",
+        "  void b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain('let a = format!("a{}b", (1) as i32);');
+    expect(out.mainRs).to.contain('let b = format!("{{{}}}", (2) as i32);');
+  });
+
   it("lowers discriminated union object literals for payload and unit variants", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-union-literals-"));
     const entry = join(dir, "main.ts");

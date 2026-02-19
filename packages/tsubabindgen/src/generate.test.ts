@@ -76,6 +76,7 @@ describe("@tsuba/tsubabindgen", () => {
       kind: string;
       crate: { name: string; package: string; version?: string; path?: string };
       modules: Record<string, string>;
+      symbols: Record<string, { kind: string; stableId: string }>;
     };
     expect(manifest.schema).to.equal(1);
     expect(manifest.kind).to.equal("crate");
@@ -86,6 +87,12 @@ describe("@tsuba/tsubabindgen", () => {
       "@tsuba/simple/index.js": "simple_crate",
       "@tsuba/simple/math.js": "simple_crate::math",
     });
+    expect(manifest.symbols).to.be.an("object");
+    expect(manifest.symbols["simple_crate::const:ANSWER:i32"]).to.not.equal(undefined);
+    expect(manifest.symbols["simple_crate::struct:Point"]).to.not.equal(undefined);
+    expect(manifest.symbols["simple_crate::fn:fn:add(a:i32,b:i32)->i32"]).to.not.equal(undefined);
+    const sampleStableId = manifest.symbols["simple_crate::struct:Point"]?.stableId ?? "";
+    expect(sampleStableId).to.match(/^[0-9a-f]{16}$/u);
 
     const packageJson = JSON.parse(read(join(out, "package.json"))) as {
       name: string;
@@ -121,8 +128,10 @@ describe("@tsuba/tsubabindgen", () => {
     const out = runTempFixture({ fixture: "simple", packageName: "@tsuba/simple", bundleCrate: true });
     const manifest = JSON.parse(read(join(out, "tsuba.bindings.json"))) as {
       crate: { path?: string };
+      symbols: Record<string, { kind: string; stableId: string }>;
     };
     expect(manifest.crate.path).to.equal("./crate");
+    expect(Object.keys(manifest.symbols).length).to.be.greaterThan(0);
     expect(existsSync(join(out, "crate", "Cargo.toml"))).to.equal(true);
     expect(existsSync(join(out, "crate", "src", "lib.rs"))).to.equal(true);
   });
@@ -145,10 +154,13 @@ describe("@tsuba/tsubabindgen", () => {
 
     const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
       schema: number;
-      skipped: Array<{ kind: string; reason: string }>;
+      skipped: Array<{ kind: string; reason: string; phase: string; code: string; stableId: string }>;
     };
     expect(report.schema).to.equal(1);
     expect(report.skipped.some((entry) => entry.kind === "type")).to.equal(true);
+    expect(report.skipped.every((entry) => typeof entry.phase === "string")).to.equal(true);
+    expect(report.skipped.every((entry) => /^TBB[0-9]{4}$/u.test(entry.code))).to.equal(true);
+    expect(report.skipped.every((entry) => /^[0-9a-f]{16}$/u.test(entry.stableId))).to.equal(true);
   });
 
   it("generates advanced facades with generic methods, macro markers, and enum payload constructors", () => {
@@ -228,7 +240,7 @@ describe("@tsuba/tsubabindgen", () => {
 
     const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
       schema: number;
-      skipped: Array<{ kind: string; reason: string; file: string }>;
+      skipped: Array<{ kind: string; reason: string; file: string; code: string; phase: string; stableId: string }>;
     };
     expect(report.schema).to.equal(1);
     expect(
@@ -237,6 +249,11 @@ describe("@tsuba/tsubabindgen", () => {
           entry.kind === "reexport" &&
           entry.reason.includes("Glob re-exports") &&
           entry.file === "src/lib.rs"
+      )
+    ).to.equal(true);
+    expect(
+      report.skipped.some(
+        (entry) => entry.kind === "reexport" && entry.phase === "resolve" && entry.code === "TBB2000"
       )
     ).to.equal(true);
   });
@@ -251,7 +268,7 @@ describe("@tsuba/tsubabindgen", () => {
 
     const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
       schema: number;
-      skipped: Array<{ kind: string; reason: string; file: string }>;
+      skipped: Array<{ kind: string; reason: string; file: string; code: string; phase: string; stableId: string }>;
     };
     expect(report.schema).to.equal(1);
     expect(
@@ -262,5 +279,11 @@ describe("@tsuba/tsubabindgen", () => {
           entry.file === "src/bad.rs"
       )
     ).to.equal(true);
+    expect(
+      report.skipped.some(
+        (entry) => entry.kind === "parse" && entry.phase === "extract" && entry.code === "TBB1000"
+      )
+    ).to.equal(true);
+    expect(report.skipped.every((entry) => /^[0-9a-f]{16}$/u.test(entry.stableId))).to.equal(true);
   });
 });

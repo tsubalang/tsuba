@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -82,6 +83,7 @@ export type GenerateBindings = {
     readonly path?: string;
   };
   readonly modules: Record<string, string>;
+  readonly symbols: Record<string, { readonly kind: string; readonly stableId: string }>;
 };
 
 type RustType = string;
@@ -195,6 +197,12 @@ type SkipIssue = {
   readonly reason: string;
 };
 
+type SkipIssueReportEntry = SkipIssue & {
+  readonly phase: "extract" | "resolve" | "emit";
+  readonly code: string;
+  readonly stableId: string;
+};
+
 function fail(message: string): never {
   throw new Error(message);
 }
@@ -206,6 +214,10 @@ function normalizePath(path: string): string {
 function compareText(a: string, b: string): number {
   if (a === b) return 0;
   return a < b ? -1 : 1;
+}
+
+function stableIdFromText(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
 function ensureDir(path: string): void {
@@ -1548,7 +1560,146 @@ function moduleForRustPath(modules: readonly ParsedModule[], crateName: string, 
   return target;
 }
 
-function collectSkipIssues(modules: readonly ParsedModule[], crateRoot?: string): readonly SkipIssue[] {
+function classifySkipIssue(kind: string): { readonly phase: "extract" | "resolve" | "emit"; readonly code: string } {
+  switch (kind) {
+    case "parse":
+      return { phase: "extract", code: "TBB1000" };
+    case "reexport":
+      return { phase: "resolve", code: "TBB2000" };
+    case "generic":
+      return { phase: "emit", code: "TBB3000" };
+    case "param":
+      return { phase: "emit", code: "TBB3001" };
+    case "type":
+      return { phase: "emit", code: "TBB3002" };
+    case "trait":
+      return { phase: "emit", code: "TBB3003" };
+    case "trait-method":
+      return { phase: "emit", code: "TBB3004" };
+    case "impl":
+      return { phase: "emit", code: "TBB3005" };
+    case "enum":
+      return { phase: "emit", code: "TBB3006" };
+    case "struct":
+      return { phase: "emit", code: "TBB3007" };
+    case "macro":
+      return { phase: "emit", code: "TBB3008" };
+    default:
+      return { phase: "emit", code: "TBB3999" };
+  }
+}
+
+function genericSuffix(typeParams: readonly string[]): string {
+  if (typeParams.length === 0) return "";
+  return `<${typeParams.join(",")}>`;
+}
+
+function fnSignature(
+  name: string,
+  typeParams: readonly string[],
+  params: readonly RustField[],
+  returnType: RustType
+): string {
+  const args = params.map((p) => `${p.name}:${p.type}`).join(",");
+  return `${name}${genericSuffix(typeParams)}(${args})->${returnType}`;
+}
+
+function collectStableSymbols(
+  modules: readonly ParsedModule[],
+  crateName: string
+): Record<string, { readonly kind: string; readonly stableId: string }> {
+  const rows: Array<{ key: string; kind: string }> = [];
+  const push = (kind: string, key: string): void => {
+    rows.push({ kind, key });
+  };
+
+  for (const module of modules) {
+    const moduleRustPath = rustPath(crateName, module.moduleParts);
+    for (const c of module.consts) {
+      push("const", `${moduleRustPath}::const:${c.name}:${c.type}`);
+    }
+    for (const f of module.functions) {
+      push(f.kind, `${moduleRustPath}::fn:${f.kind}:${fnSignature(f.name, f.typeParams, f.params, f.returnType)}`);
+    }
+    for (const e of module.enums) {
+      const enumKey = `${moduleRustPath}::enum:${e.name}${genericSuffix(e.typeParams)}`;
+      push("enum", enumKey);
+      for (const v of e.variants) {
+        const variantKey = `${enumKey}::variant:${v.name}`;
+        push("variant", variantKey);
+        for (const field of v.fields) {
+          push("variant_field", `${variantKey}::field:${field.name}:${field.type}`);
+        }
+      }
+    }
+    for (const s of module.structs) {
+      const structKey = `${moduleRustPath}::struct:${s.name}${genericSuffix(s.typeParams)}`;
+      push("struct", structKey);
+      for (const field of s.fields) {
+        push("field", `${structKey}::field:${field.name}:${field.type}`);
+      }
+      if (s.constructorMethod) {
+        push(
+          "method",
+          `${structKey}::method:${s.constructorMethod.kind}:${fnSignature(
+            s.constructorMethod.name,
+            s.constructorMethod.typeParams,
+            s.constructorMethod.params,
+            s.constructorMethod.returnType
+          )}`
+        );
+      }
+      for (const method of s.methods) {
+        push(
+          "method",
+          `${structKey}::method:${method.kind}:${fnSignature(
+            method.name,
+            method.typeParams,
+            method.params,
+            method.returnType
+          )}`
+        );
+      }
+    }
+    for (const t of module.traits) {
+      const traitKey = `${moduleRustPath}::trait:${t.name}${genericSuffix(t.typeParams)}`;
+      push("trait", traitKey);
+      if (t.superTraits.length > 0) {
+        push("trait_super", `${traitKey}::super:${t.superTraits.join("+")}`);
+      }
+      for (const method of t.methods) {
+        push(
+          "trait_method",
+          `${traitKey}::method:${fnSignature(method.name, method.typeParams, method.params, method.returnType)}`
+        );
+      }
+    }
+  }
+
+  rows.sort((a, b) => {
+    const byKey = compareText(a.key, b.key);
+    if (byKey !== 0) return byKey;
+    return compareText(a.kind, b.kind);
+  });
+
+  const symbols: Record<string, { readonly kind: string; readonly stableId: string }> = {};
+  for (const row of rows) {
+    const prev = symbols[row.key];
+    if (prev) {
+      if (prev.kind !== row.kind) {
+        fail(`Stable symbol key collision for ${row.key}: ${prev.kind} vs ${row.kind}.`);
+      }
+      continue;
+    }
+    symbols[row.key] = {
+      kind: row.kind,
+      stableId: stableIdFromText(`${row.kind}\u0000${row.key}`),
+    };
+  }
+  return symbols;
+}
+
+function collectSkipIssues(modules: readonly ParsedModule[], crateRoot?: string): readonly SkipIssueReportEntry[] {
   const normalizeIssueFile = (value: string): string => {
     const normalized = normalizePath(value);
     if (!crateRoot) return normalized;
@@ -1558,14 +1709,21 @@ function collectSkipIssues(modules: readonly ParsedModule[], crateRoot?: string)
     return rel;
   };
   const seen = new Set<string>();
-  const out: SkipIssue[] = [];
+  const out: SkipIssueReportEntry[] = [];
   for (const module of modules) {
     for (const issue of module.issues) {
       const file = normalizeIssueFile(issue.file);
       const key = `${file}\u0000${issue.kind}\u0000${issue.snippet}\u0000${issue.reason}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ ...issue, file });
+      const classification = classifySkipIssue(issue.kind);
+      out.push({
+        ...issue,
+        file,
+        phase: classification.phase,
+        code: classification.code,
+        stableId: stableIdFromText(`${classification.code}\u0000${key}`),
+      });
     }
   }
   out.sort((a, b) => {
@@ -1623,6 +1781,7 @@ export function runGenerate(opts: GenerateOptions): void {
   attachMethods(modules);
   applyReexports(modules);
   const skipIssues = collectSkipIssues(modules, dirname(absManifest));
+  const stableSymbols = collectStableSymbols(modules, crateName);
 
   const moduleEntries: { spec: string; jsName: string; rustPath: string; dtsName: string }[] = [];
   for (const module of modules) {
@@ -1657,6 +1816,7 @@ export function runGenerate(opts: GenerateOptions): void {
       ...(opts.bundleCrate ? { path: "./crate" } : { version }),
     },
     modules: modulesMap,
+    symbols: stableSymbols,
   };
   writeFileSync(join(outDir, "tsuba.bindings.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
 

@@ -19,6 +19,7 @@ For the explicit TS omission catalog (user-facing), see:
 | Area | Supported (v0) | Rejected (v0) | Planned |
 | --- | --- | --- | --- |
 | Entry contract | `export function main()`; `void` and `Result<void, E>` returns; async `main` only with `runtime.kind=tokio` | missing/non-export `main`; invalid main return shapes | broader runtime strategies |
+| String expressions | string literals and template literals lower deterministically (`format!` for interpolated templates) | optional chaining / nullish in expressions | richer string helpers |
 | Closures | expression-bodied arrow closures; `move(...)` arrow closures | block-bodied arrow closures; `move(...)` non-arrow arguments | block-closure lowering |
 | Async expressions | `await` in async functions; async lowering to Rust async/await | Promise `.then(...)` chains | additional async combinators |
 | Marker calls | `q(...)`, `unsafe(...)`, macro markers, annotate markers (`attr(...)`, `AttrMacro`, `DeriveMacro`) | marker misuse (wrong arity/callee/form) | richer marker libraries |
@@ -52,7 +53,7 @@ Primary evidence:
 
 | Area | Supported (v0) | Rejected (v0) | Planned |
 | --- | --- | --- | --- |
-| Basic flow | `if`/`while`/`for` lowering (strict subset), lexical shadowing | unsupported loop/statement shapes outside subset | additional TS control-flow forms |
+| Basic flow | `if`/`while`/`for` lowering (strict subset), lexical shadowing, scalar-value `switch` lowering | unsupported loop/statement shapes outside subset; non-literal scalar switch case labels | additional TS control-flow forms |
 | Unions | discriminated-union `switch` → `match`, exhaustiveness checks | `switch` default on discriminated unions; non-exhaustive cases; duplicate cases | broader union narrowing surface |
 | Mutation discipline | explicit mutability markers + initialization checks | uninitialized locals; non-place mutable borrows | higher-level borrow ergonomics |
 
@@ -86,7 +87,7 @@ Primary evidence:
 | --- | --- | --- | --- |
 | Project imports | deterministic module lowering (`mod` + `use`) for relative project modules | side-effect-only imports | wider import forms if representable |
 | External bindings | `tsuba.bindings.json` crate mapping, version/path source tracking, crate dep emission | unsupported/malformed manifests, mapping conflicts | richer manifest metadata |
-| tsubabindgen | deterministic generation, payload-enum constructors, traits + impl methods, proc-macro markers (`Macro`, `AttrMacro`, `DeriveMacro`), explicit skip reports, explicit `pub use` re-export resolution, parser-failure skip reporting | silent drop of unsupported constructs; glob re-exports in TS facades | expanded Rust surface coverage |
+| tsubabindgen | deterministic generation, payload-enum constructors, traits + impl methods, proc-macro markers (`Macro`, `AttrMacro`, `DeriveMacro`), explicit skip reports (with phase/code/stableId), explicit `pub use` re-export resolution, parser-failure skip reporting, stable symbol IDs in `tsuba.bindings.json` | silent drop of unsupported constructs; glob re-exports in TS facades | expanded Rust surface coverage |
 
 Primary evidence:
 
