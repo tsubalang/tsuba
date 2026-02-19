@@ -39,6 +39,8 @@ npm run run-all
 - fixture E2E (build/run/test)
 - Rust golden snapshot checks (`golden/main.rs` via fixture metadata)
 - clean temp-dir CLI smoke workflow (`init/build/run/test/add/bindgen`)
+- diagnostic quality baseline check (`scripts/check-diagnostic-quality.mjs`)
+- external proof matrix verification (`scripts/verify-external-proof.mjs`, best-effort unless required)
 
 ## Release preflight (npm)
 
@@ -61,12 +63,15 @@ It enforces:
 - local `main` matches `origin/main`
 - full `npm run run-all` gate (unless `--no-tests` is explicitly passed)
 - required proof verification via `scripts/verify-proof.sh --require` (unless `--no-proof` is explicitly passed)
+- required external proof matrix verification via `scripts/verify-external-proof.mjs --require` (unless `--no-external-proof` is explicitly passed)
+- required signed-tag presence on `HEAD` via `scripts/check-signed-head-tag.mjs --require` (unless `--no-signed-tag` is explicitly passed)
 - package versions are not already published on npm
 
 Optional external proof verification (if the sibling repo exists):
 
 ```bash
 npm run verify:proof
+npm run verify:external-proof
 ```
 
 ## Using the CLI (from this repo checkout)

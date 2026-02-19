@@ -24,6 +24,7 @@ Specs:
 - `roadmap-parity-with-tsonic.md` — parity matrix and remaining transfer work from Tsonic quality gates.
 - `checkpoint-tsonic-2026-02-19.md` — transfer matrix from Tsonic (no-drift checkpoint).
 - `parity-scope-audit-2026-02-19.md` — structural scope audit vs Tsonic (files/LOC/tests/fixtures and gap priorities).
+- `architecture-cleanliness-audit-2026-02-19-wave17.md` — latest architecture cleanliness + operational hardening audit.
 - `tsonic-tsbindgen-feature-coverage-audit-2026-02-19.md` — doc-driven feature/omission audit against Tsonic + tsbindgen surfaces.
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
@@ -31,5 +32,7 @@ Specs:
 - `tsubabindgen-representability.md` — concrete bindgen surface/skip taxonomy and determinism contract.
 - `compiler-pass-contracts.md` — compiler pass graph and pass I/O contract.
 - `diagnostics-catalog.md` — high-frequency `TSBxxxx` diagnostic catalog by domain.
+- `external-proof-matrix.json` — required external proof categories/targets (host-service, GPU-heavy, bindgen-heavy).
+- `diagnostic-quality-baseline.json` — minimum diagnostic quality thresholds used by release/run-all checks.
 - `release-playbook.md` — release preflight, publish order, rollback/republish policy.
 - `incremental-build-roadmap.md` — phased deterministic incremental build strategy with fail-safe fallback.
