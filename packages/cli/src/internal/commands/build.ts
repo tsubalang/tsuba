@@ -51,6 +51,7 @@ type ProjectConfig = {
   readonly deps?: {
     readonly crates?: readonly {
       readonly id: string;
+      readonly package?: string;
       readonly version?: string;
       readonly path?: string;
       readonly features?: readonly string[];
@@ -277,9 +278,9 @@ export async function runBuild(args: BuildArgs): Promise<void> {
         );
       }
       if (d.path) {
-        return { name: d.id, path: resolve(projectRoot, d.path), features: d.features };
+        return { name: d.id, package: d.package, path: resolve(projectRoot, d.path), features: d.features };
       }
-      return { name: d.id, version: d.version!, features: d.features };
+      return { name: d.id, package: d.package, version: d.version!, features: d.features };
     }) ?? [];
   const crates = mergeCargoDependencies(declaredCrates, out.crates);
   const cargoToml = renderCargoToml({
