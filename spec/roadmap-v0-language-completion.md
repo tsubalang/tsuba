@@ -166,6 +166,12 @@ Rule:
 
 - every unsupported syntactic construct that is *reachable* in accepted TS must error with stable `TSBxxxx`.
 
+Current state:
+
+- Compiler diagnostic codes are now centralized and validated through `packages/compiler/src/rust/diagnostics.ts`.
+- `CompileError`/`fail`/`failAt` enforce code registration.
+- A synchronization test ensures every `TSBxxxx` used in `host.ts` is registered.
+
 Implementation approach:
 
 - Add a per-node lowering “default case” that throws `TSB11xx` with node kind name.
@@ -488,6 +494,12 @@ Merge gate:
 ## 9. Workstream G: Bindgen hardening (`tsubabindgen`)
 
 Status (current): **Partial** (determinism basics are in place; extractor depth is not yet airplane-grade).
+
+Current state:
+
+- Trait facades are now emitted (`pub trait` → TS `interface`).
+- Associated types are represented as extra trait generic parameters.
+- Skip reporting is deterministic (`tsubabindgen.report.json` with stable ordering + explicit reasons).
 
 The MVP exists; it must become deterministic and scalable.
 
