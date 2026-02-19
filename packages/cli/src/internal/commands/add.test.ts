@@ -20,6 +20,20 @@ describe("@tsuba/cli add", () => {
     return mkdtempSync(join(base, prefix));
   }
 
+  function emitGeneratedPackage(opts: {
+    outDir: string;
+    packageName: string;
+    manifest: unknown;
+  }): void {
+    mkdirSync(opts.outDir, { recursive: true });
+    writeFileSync(
+      join(opts.outDir, "package.json"),
+      JSON.stringify({ name: opts.packageName, version: "0.0.0" }) + "\n",
+      "utf-8"
+    );
+    writeFileSync(join(opts.outDir, "tsuba.bindings.json"), JSON.stringify(opts.manifest, null, 2) + "\n", "utf-8");
+  }
+
   it("adds a crates.io dependency to tsuba.json", async () => {
     const root = mkdtempSync(join(tmpdir(), "tsuba-add-"));
     const ws = join(root, "demo");
@@ -29,7 +43,7 @@ describe("@tsuba/cli add", () => {
     await runAdd(
       { dir: join(projectRoot, "src"), argv: ["crate", "serde@1.0.0"] },
       {
-        spawnSync: (command, args, _opts) => {
+        spawnSync: (command, _args, _opts) => {
           if (command === "cargo") {
             // Minimal cargo metadata stub for serde@1.0.0
             return {
@@ -48,34 +62,19 @@ describe("@tsuba/cli add", () => {
             } as any;
           }
 
-          if (command === "tsubabindgen") {
-            const outIdx = args.indexOf("--out");
-            const outDir = outIdx === -1 ? undefined : String(args[outIdx + 1]);
-            if (!outDir) throw new Error("test stub: expected --out");
-            mkdirSync(outDir, { recursive: true });
-            writeFileSync(
-              join(outDir, "package.json"),
-              JSON.stringify({ name: "@tsuba/serde", version: "0.0.0" }) + "\n",
-              "utf-8"
-            );
-            writeFileSync(
-              join(outDir, "tsuba.bindings.json"),
-              JSON.stringify(
-                {
-                  schema: 1,
-                  kind: "crate",
-                  crate: { name: "serde", version: "1.0.0" },
-                  modules: { "@tsuba/serde/index.js": "serde" },
-                },
-                null,
-                2
-              ) + "\n",
-              "utf-8"
-            );
-            return { status: 0 } as any;
-          }
-
           throw new Error(`test stub: unexpected command ${command}`);
+        },
+        generate: ({ outDir }) => {
+          emitGeneratedPackage({
+            outDir,
+            packageName: "@tsuba/serde",
+            manifest: {
+              schema: 1,
+              kind: "crate",
+              crate: { name: "serde", version: "1.0.0" },
+              modules: { "@tsuba/serde/index.js": "serde" },
+            },
+          });
         },
       }
     );
@@ -97,7 +96,7 @@ describe("@tsuba/cli add", () => {
     await runAdd(
       { dir: projectRoot, argv: ["path", "localcrate", "../localcrate"] },
       {
-        spawnSync: (command, args, _opts) => {
+        spawnSync: (command, _args, _opts) => {
           if (command === "cargo") {
             return {
               status: 0,
@@ -114,33 +113,19 @@ describe("@tsuba/cli add", () => {
               stderr: "",
             } as any;
           }
-          if (command === "tsubabindgen") {
-            const outIdx = args.indexOf("--out");
-            const outDir = outIdx === -1 ? undefined : String(args[outIdx + 1]);
-            if (!outDir) throw new Error("test stub: expected --out");
-            mkdirSync(outDir, { recursive: true });
-            writeFileSync(
-              join(outDir, "package.json"),
-              JSON.stringify({ name: "@tsuba/localcrate", version: "0.0.0" }) + "\n",
-              "utf-8"
-            );
-            writeFileSync(
-              join(outDir, "tsuba.bindings.json"),
-              JSON.stringify(
-                {
-                  schema: 1,
-                  kind: "crate",
-                  crate: { name: "localcrate", package: "localcrate", path: "./crate" },
-                  modules: { "@tsuba/localcrate/index.js": "localcrate" },
-                },
-                null,
-                2
-              ) + "\n",
-              "utf-8"
-            );
-            return { status: 0 } as any;
-          }
           throw new Error(`test stub: unexpected command ${command}`);
+        },
+        generate: ({ outDir }) => {
+          emitGeneratedPackage({
+            outDir,
+            packageName: "@tsuba/localcrate",
+            manifest: {
+              schema: 1,
+              kind: "crate",
+              crate: { name: "localcrate", package: "localcrate", path: "./crate" },
+              modules: { "@tsuba/localcrate/index.js": "localcrate" },
+            },
+          });
         },
       }
     );
@@ -160,7 +145,7 @@ describe("@tsuba/cli add", () => {
     await runAdd(
       { dir: projectRoot, argv: ["crate", "simple-crate@1.2.3"] },
       {
-        spawnSync: (command, args, _opts) => {
+        spawnSync: (command, _args, _opts) => {
           if (command === "cargo") {
             return {
               status: 0,
@@ -178,34 +163,19 @@ describe("@tsuba/cli add", () => {
             } as any;
           }
 
-          if (command === "tsubabindgen") {
-            const outIdx = args.indexOf("--out");
-            const outDir = outIdx === -1 ? undefined : String(args[outIdx + 1]);
-            if (!outDir) throw new Error("test stub: expected --out");
-            mkdirSync(outDir, { recursive: true });
-            writeFileSync(
-              join(outDir, "package.json"),
-              JSON.stringify({ name: "@tsuba/simple-crate", version: "0.0.0" }) + "\n",
-              "utf-8"
-            );
-            writeFileSync(
-              join(outDir, "tsuba.bindings.json"),
-              JSON.stringify(
-                {
-                  schema: 1,
-                  kind: "crate",
-                  crate: { name: "simple_crate", package: "simple-crate", version: "1.2.3" },
-                  modules: { "@tsuba/simple-crate/index.js": "simple_crate" },
-                },
-                null,
-                2
-              ) + "\n",
-              "utf-8"
-            );
-            return { status: 0 } as any;
-          }
-
           throw new Error(`test stub: unexpected command ${command}`);
+        },
+        generate: ({ outDir }) => {
+          emitGeneratedPackage({
+            outDir,
+            packageName: "@tsuba/simple-crate",
+            manifest: {
+              schema: 1,
+              kind: "crate",
+              crate: { name: "simple_crate", package: "simple-crate", version: "1.2.3" },
+              modules: { "@tsuba/simple-crate/index.js": "simple_crate" },
+            },
+          });
         },
       }
     );

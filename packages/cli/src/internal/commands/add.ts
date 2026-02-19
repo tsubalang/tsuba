@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
+import { runGenerate } from "@tsuba/tsubabindgen";
+
 export type AddArgs = {
   readonly dir: string;
   readonly argv: readonly string[];
@@ -20,6 +22,13 @@ export type AddSpawn = (
   args: readonly string[],
   opts: { readonly cwd?: string; readonly stdio?: "inherit"; readonly encoding?: "utf-8" }
 ) => { readonly status: number | null; readonly stdout?: string; readonly stderr?: string };
+
+export type AddGenerate = (opts: {
+  readonly manifestPath: string;
+  readonly outDir: string;
+  readonly packageName?: string;
+  readonly bundleCrate: boolean;
+}) => void;
 
 type ProjectConfig = {
   readonly schema: number;
@@ -308,11 +317,12 @@ function resolvePathCrateManifest(opts: {
 
 export async function runAdd(
   args: AddArgs,
-  deps?: { readonly spawnSync?: AddSpawn }
+  deps?: { readonly spawnSync?: AddSpawn; readonly generate?: AddGenerate }
 ): Promise<void> {
   const spawn: AddSpawn =
     deps?.spawnSync ??
     ((command, argv, opts) => spawnSync(command, argv, opts as any) as any);
+  const generate = deps?.generate ?? runGenerate;
   const [kind, ...rest] = args.argv;
   if (!kind) usage();
   if (kind === "--help" || kind === "-h") usage();
@@ -350,12 +360,12 @@ export async function runAdd(
     // If not already generated, run bindgen.
     if (!existsSync(join(cacheDir, "package.json"))) {
       mkdirSync(cacheDir, { recursive: true });
-      const res = spawn(
-        "tsubabindgen",
-        ["--manifest-path", info.manifestPath, "--out", cacheDir, "--package", npmPackageName],
-        { stdio: "inherit", encoding: "utf-8" }
-      );
-      if (res.status !== 0) throw new Error("tsubabindgen failed.");
+      generate({
+        manifestPath: info.manifestPath,
+        outDir: cacheDir,
+        packageName: npmPackageName,
+        bundleCrate: false,
+      });
       if (!existsSync(join(cacheDir, "package.json"))) {
         throw new Error(`tsubabindgen did not produce package.json at ${cacheDir}.`);
       }
@@ -402,12 +412,12 @@ export async function runAdd(
 
     if (!existsSync(join(cacheDir, "package.json"))) {
       mkdirSync(cacheDir, { recursive: true });
-      const res = spawn(
-        "tsubabindgen",
-        ["--manifest-path", info.manifestPath, "--out", cacheDir, "--package", npmPackageName, "--bundle-crate"],
-        { stdio: "inherit", encoding: "utf-8" }
-      );
-      if (res.status !== 0) throw new Error("tsubabindgen failed.");
+      generate({
+        manifestPath: info.manifestPath,
+        outDir: cacheDir,
+        packageName: npmPackageName,
+        bundleCrate: true,
+      });
       if (!existsSync(join(cacheDir, "package.json"))) {
         throw new Error(`tsubabindgen did not produce package.json at ${cacheDir}.`);
       }

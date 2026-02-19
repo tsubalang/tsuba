@@ -3,8 +3,13 @@ import { expect } from "chai";
 import { parseBindgenArgs, runBindgen } from "./bindgen.js";
 
 describe("@tsuba/cli bindgen", () => {
-  it("parses args and invokes tsubabindgen", async () => {
-    const calls: { cmd: string; args: readonly string[] }[] = [];
+  it("parses args and invokes bindgen generation", async () => {
+    const calls: {
+      manifestPath: string;
+      outDir: string;
+      packageName?: string;
+      bundleCrate: boolean;
+    }[] = [];
     await runBindgen(
       {
         dir: "/repo",
@@ -19,24 +24,19 @@ describe("@tsuba/cli bindgen", () => {
         ],
       },
       {
-        spawn: (cmd, args, _opts) => {
-          calls.push({ cmd, args });
-          return { status: 0 } as any;
+        generate: (opts) => {
+          calls.push(opts);
         },
       }
     );
 
     expect(calls).to.have.length(1);
-    expect(calls[0]!.cmd).to.equal("tsubabindgen");
-    expect(calls[0]!.args).to.deep.equal([
-      "--manifest-path",
-      "/repo/crate/Cargo.toml",
-      "--out",
-      "/repo/out",
-      "--package",
-      "@tsuba/x",
-      "--bundle-crate",
-    ]);
+    expect(calls[0]).to.deep.equal({
+      manifestPath: "/repo/crate/Cargo.toml",
+      outDir: "/repo/out",
+      packageName: "@tsuba/x",
+      bundleCrate: true,
+    });
   });
 
   it("rejects missing required args", () => {

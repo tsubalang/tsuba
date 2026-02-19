@@ -120,6 +120,139 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("let x = add((3) as i32, (4) as i32);");
   });
 
+  it("lowers async functions and await expressions to Rust async/await", () => {
+    const dir = makeRepoTempDir("compiler-async-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "async function addAsync(a: i32, b: i32): Promise<i32> {",
+        "  return (a + b) as i32;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void addAsync;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("async fn addAsync(a: i32, b: i32) -> i32");
+  });
+
+  it("requires explicit Promise<T> return types on async functions", () => {
+    const dir = makeRepoTempDir("compiler-async-return-shape-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "async function bad() {",
+        "  return 1 as i32;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void bad;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB3010");
+  });
+
+  it("rejects Promise `.then(...)` chains in v0", () => {
+    const dir = makeRepoTempDir("compiler-then-chain-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "declare function f(): Promise<void>;",
+        "",
+        "export function main(): void {",
+        "  f().then(() => {});",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1306");
+  });
+
+  it("supports async main when runtime.kind=tokio and records tokio dependency", () => {
+    const dir = makeRepoTempDir("compiler-async-main-tokio-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "async function work(): Promise<void> {",
+        "  return;",
+        "}",
+        "",
+        "export async function main(): Promise<void> {",
+        "  await work();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry, runtimeKind: "tokio" });
+    expect(out.mainRs).to.contain("#[tokio::main]");
+    expect(out.mainRs).to.contain("async fn main()");
+    expect(out.mainRs).to.contain("(work()).await");
+    expect(out.crates).to.deep.include({
+      name: "tokio",
+      version: "1.37",
+      features: ["macros", "rt-multi-thread"],
+    });
+  });
+
+  it("rejects async main when runtime.kind is none", () => {
+    const dir = makeRepoTempDir("compiler-async-main-none-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "export async function main(): Promise<void> {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry, runtimeKind: "none" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1004");
+  });
+
   it("supports tuple types via TS tuple annotations and lowers tuple indexing to .0/.1", () => {
     const dir = makeRepoTempDir("compiler-");
     const entry = join(dir, "main.ts");
@@ -420,19 +553,25 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("f(&(a), &mut (b));");
   });
 
-  it("errors on generic function declarations (airplane-grade)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-generic-fn-"));
+  it("lowers generic function declarations with trait bounds", () => {
+    const dir = makeRepoTempDir("compiler-generic-fn-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
         "type i32 = number;",
         "",
-        "export function main(): void {",
-        "  void 0;",
+        'import type { ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Show {",
+        "  show(this: ref<this>): i32;",
         "}",
         "",
-        "function id<T>(x: T): T {",
+        "export function main(): void {",
+        "  void id;",
+        "}",
+        "",
+        "function id<T extends Show>(x: T): T {",
         "  return x;",
         "}",
         "",
@@ -444,14 +583,9 @@ describe("@tsuba/compiler host emitter", () => {
       "utf-8"
     );
 
-    let err: unknown;
-    try {
-      compileHostToRust({ entryFile: entry });
-    } catch (e) {
-      err = e;
-    }
-    expect(err).to.be.instanceOf(CompileError);
-    expect((err as CompileError).code).to.equal("TSB3005");
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait Show {");
+    expect(out.mainRs).to.contain("fn id<T: Show>(x: T) -> T");
   });
 
   it("emits turbofish calls for explicit type arguments on declared functions (v0)", () => {
@@ -803,6 +937,191 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("impl Foo for Bar {");
     expect(out.mainRs).to.contain("pub fn new() -> Bar");
     expect(out.mainRs).to.contain("return Bar;");
+  });
+
+  it("lowers interface members to trait items and emits checked trait impl methods", () => {
+    const dir = makeRepoTempDir("compiler-trait-members-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref, mutref } from "@tsuba/core/types.js";',
+        "",
+        "interface CounterLike {",
+        "  inc(this: mutref<this>): void;",
+        "  get(this: ref<this>): i32;",
+        "}",
+        "",
+        "class Counter implements CounterLike {",
+        "  value: i32 = 0 as i32;",
+        "",
+        "  inc(this: mutref<Counter>): void {",
+        "    this.value = this.value + (1 as i32);",
+        "  }",
+        "",
+        "  get(this: ref<Counter>): i32 {",
+        "    return this.value;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const c = new Counter();",
+        "  c.inc();",
+        "  void c.get();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait CounterLike {");
+    expect(out.mainRs).to.contain("fn inc(&mut self);");
+    expect(out.mainRs).to.contain("fn get(&self) -> i32;");
+    expect(out.mainRs).to.contain("impl CounterLike for Counter {");
+    expect(out.mainRs).to.contain("fn inc(&mut self) {");
+    expect(out.mainRs).to.contain("fn get(&self) -> i32 {");
+  });
+
+  it("supports interface extends as Rust supertraits", () => {
+    const dir = makeRepoTempDir("compiler-supertrait-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Readable {",
+        "  read(this: ref<this>): i32;",
+        "}",
+        "",
+        "interface Named extends Readable {",
+        "  name(this: ref<this>): i32;",
+        "}",
+        "",
+        "class Value implements Named {",
+        "  v: i32 = 1 as i32;",
+        "  read(this: ref<Value>): i32 { return this.v; }",
+        "  name(this: ref<Value>): i32 { return this.v; }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const x = new Value();",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait Named: Readable {");
+    expect(out.mainRs).to.contain("impl Named for Value {");
+  });
+
+  it("supports generic interfaces and generic classes implementing them", () => {
+    const dir = makeRepoTempDir("compiler-generic-trait-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface BoxLike<T> {",
+        "  get(this: ref<this>): T;",
+        "}",
+        "",
+        "class Box<T> implements BoxLike<T> {",
+        "  value: T;",
+        "  constructor(value: T) {",
+        "    this.value = value;",
+        "  }",
+        "  get(this: ref<Box<T>>): T {",
+        "    return this.value;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const b = new Box<i32>(1 as i32);",
+        "  const x = b.get();",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait BoxLike<T> {");
+    expect(out.mainRs).to.contain("struct Box<T> {");
+    expect(out.mainRs).to.contain("impl<T> BoxLike<T> for Box<T> {");
+    expect(out.mainRs).to.contain("Box::<i32>::new((1) as i32)");
+  });
+
+  it("fails fast when TypeScript reports missing interface methods on `implements`", () => {
+    const dir = makeRepoTempDir("compiler-missing-trait-method-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { ref } from "@tsuba/core/types.js";',
+        "",
+        "interface NeedsRun {",
+        "  run(this: ref<this>): void;",
+        "}",
+        "",
+        "class Worker implements NeedsRun {}",
+        "",
+        "export function main(): void {",
+        "  void Worker;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB0002");
+  });
+
+  it("errors when trait method receiver mutability does not match", () => {
+    const dir = makeRepoTempDir("compiler-trait-receiver-mismatch-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { ref, mutref } from "@tsuba/core/types.js";',
+        "",
+        "interface Mutates {",
+        "  update(this: mutref<this>): void;",
+        "}",
+        "",
+        "class Item implements Mutates {",
+        "  update(this: ref<Item>): void {}",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void Item;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB4007");
   });
 
   it("applies annotate(attr(...)) markers as Rust attributes on items", () => {

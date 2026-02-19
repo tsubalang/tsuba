@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import type {
   RustExpr,
+  RustGenericParam,
   RustItem,
   RustMatchArm,
   RustParam,
@@ -35,6 +36,7 @@ export class CompileError extends Error {
 
 export type CompileHostOptions = {
   readonly entryFile: string;
+  readonly runtimeKind?: "none" | "tokio";
 };
 
 export type CrateDep = {
@@ -70,11 +72,33 @@ type StructDef = {
   readonly fields: readonly { readonly name: string; readonly type: RustType }[];
 };
 
+type TraitMethodDef = {
+  readonly name: string;
+  readonly span: Span;
+  readonly receiver: { readonly mut: boolean; readonly lifetime?: string };
+  readonly typeParams: readonly RustGenericParam[];
+  readonly params: readonly RustParam[];
+  readonly ret: RustType;
+};
+
+type TraitDef = {
+  readonly key: string;
+  readonly name: string;
+  readonly span: Span;
+  readonly vis: "pub" | "private";
+  readonly typeParams: readonly RustGenericParam[];
+  readonly superTraits: readonly RustType[];
+  readonly methods: readonly TraitMethodDef[];
+};
+
 type EmitCtx = {
   readonly checker: ts.TypeChecker;
   readonly thisName?: string;
+  readonly inAsync?: boolean;
   readonly unions: ReadonlyMap<string, UnionDef>;
   readonly structs: ReadonlyMap<string, StructDef>;
+  readonly traitsByKey: ReadonlyMap<string, TraitDef>;
+  readonly traitsByName: ReadonlyMap<string, TraitDef[]>;
   readonly shapeStructsByKey: Map<string, StructDef>;
   readonly shapeStructsByFile: Map<string, StructDef[]>;
   readonly kernelDeclBySymbol: Map<ts.Symbol, KernelDecl>;
@@ -134,11 +158,30 @@ function unionKeyFromDecl(decl: ts.TypeAliasDeclaration): string {
   return `${normalizePath(decl.getSourceFile().fileName)}::${decl.name.text}`;
 }
 
+function traitKeyFromDecl(decl: ts.InterfaceDeclaration): string {
+  return `${normalizePath(decl.getSourceFile().fileName)}::${decl.name.text}`;
+}
+
 function unionKeyFromType(type: ts.Type): string | undefined {
   const alias = (type as unknown as { readonly aliasSymbol?: ts.Symbol }).aliasSymbol;
   if (!alias) return undefined;
   for (const d of alias.declarations ?? []) {
     if (ts.isTypeAliasDeclaration(d)) return unionKeyFromDecl(d);
+  }
+  return undefined;
+}
+
+function entityNameToSegments(name: ts.EntityName): readonly string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  return [...entityNameToSegments(name.left), name.right.text];
+}
+
+function expressionToSegments(expr: ts.Expression): readonly string[] | undefined {
+  if (ts.isIdentifier(expr)) return [expr.text];
+  if (ts.isPropertyAccessExpression(expr)) {
+    const left = expressionToSegments(expr.expression);
+    if (!left) return undefined;
+    return [...left, expr.name.text];
   }
   return undefined;
 }
@@ -1351,21 +1394,7 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
   if (!typeNode) return unitType();
   if (typeNode.kind === ts.SyntaxKind.VoidKeyword) return unitType();
   if (ts.isTypeReferenceNode(typeNode)) {
-    const typeNameSegments = (() => {
-      const name = typeNode.typeName;
-      if (ts.isIdentifier(name)) return [name.text];
-      const segs: string[] = [];
-      let cur: ts.EntityName = name;
-      while (true) {
-        if (ts.isIdentifier(cur)) {
-          segs.unshift(cur.text);
-          break;
-        }
-        segs.unshift(cur.right.text);
-        cur = cur.left;
-      }
-      return segs;
-    })();
+    const typeNameSegments = entityNameToSegments(typeNode.typeName);
 
     if (typeNameSegments.length > 0) {
       const baseName = typeNameSegments[typeNameSegments.length - 1]!;
@@ -1468,6 +1497,110 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
   failAt(typeNode, "TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
 }
 
+function unwrapPromiseInnerType(
+  ownerNode: ts.Node,
+  ownerLabel: string,
+  typeNode: ts.TypeNode | undefined,
+  code: string
+): ts.TypeNode {
+  if (!typeNode) {
+    failAt(ownerNode, code, `${ownerLabel}: async functions must declare an explicit Promise<...> return type in v0.`);
+  }
+  if (!ts.isTypeReferenceNode(typeNode) || !ts.isIdentifier(typeNode.typeName) || typeNode.typeName.text !== "Promise") {
+    failAt(ownerNode, code, `${ownerLabel}: async functions must return Promise<T> in v0.`);
+  }
+  const [inner] = typeNode.typeArguments ?? [];
+  if (!inner) {
+    failAt(typeNode, code, `${ownerLabel}: Promise<T> must have exactly one type argument in v0.`);
+  }
+  return inner;
+}
+
+function lowerTypeParameter(
+  ownerNode: ts.Node,
+  ownerLabel: string,
+  p: ts.TypeParameterDeclaration,
+  code: string
+): RustGenericParam {
+  if (!ts.isIdentifier(p.name)) {
+    failAt(ownerNode, code, `${ownerLabel}: unsupported generic parameter declaration in v0.`);
+  }
+
+  const bounds: RustType[] = [];
+  const constraint = p.constraint;
+  if (constraint) {
+    const pushBound = (node: ts.TypeNode): void => {
+      const ty = typeNodeToRust(node);
+      if (ty.kind !== "path") {
+        failAt(node, code, `${ownerLabel}: generic constraint must be a nominal trait/type path in v0.`);
+      }
+      bounds.push(ty);
+    };
+
+    if (ts.isIntersectionTypeNode(constraint)) {
+      if (constraint.types.length === 0) {
+        failAt(constraint, code, `${ownerLabel}: empty intersection constraints are not supported in v0.`);
+      }
+      for (const part of constraint.types) pushBound(part);
+    } else {
+      pushBound(constraint);
+    }
+  }
+
+  return { name: p.name.text, bounds };
+}
+
+function lowerTypeParameters(
+  ownerNode: ts.Node,
+  ownerLabel: string,
+  params: readonly ts.TypeParameterDeclaration[] | undefined,
+  code: string
+): readonly RustGenericParam[] {
+  if (!params || params.length === 0) return [];
+  return params.map((p) => lowerTypeParameter(ownerNode, ownerLabel, p, code));
+}
+
+function rustTypeEq(a: RustType, b: RustType): boolean {
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "unit":
+      return true;
+    case "ref":
+      return b.kind === "ref" && a.mut === b.mut && a.lifetime === b.lifetime && rustTypeEq(a.inner, b.inner);
+    case "slice":
+      return b.kind === "slice" && rustTypeEq(a.inner, b.inner);
+    case "array":
+      return b.kind === "array" && a.len === b.len && rustTypeEq(a.inner, b.inner);
+    case "tuple":
+      return (
+        b.kind === "tuple" &&
+        a.elems.length === b.elems.length &&
+        a.elems.every((t, i) => rustTypeEq(t, b.elems[i]!))
+      );
+    case "path":
+      return (
+        b.kind === "path" &&
+        a.path.segments.length === b.path.segments.length &&
+        a.path.segments.every((s, i) => s === b.path.segments[i]) &&
+        a.args.length === b.args.length &&
+        a.args.every((t, i) => rustTypeEq(t, b.args[i]!))
+      );
+  }
+}
+
+function lowerExprWithTypeArgsToRustType(
+  ownerLabel: string,
+  exprWithTypeArgs: ts.ExpressionWithTypeArguments,
+  code: string
+): RustType {
+  const segments = expressionToSegments(exprWithTypeArgs.expression);
+  if (!segments) {
+    failAt(exprWithTypeArgs.expression, code, `${ownerLabel}: unsupported qualified name in v0.`);
+  }
+  const args = (exprWithTypeArgs.typeArguments ?? []).map((a) => typeNodeToRust(a));
+  return pathType(segments, args);
+}
+
 function isMutMarkerType(typeNode: ts.TypeNode | undefined): boolean {
   if (!typeNode) return false;
   if (!ts.isTypeReferenceNode(typeNode)) return false;
@@ -1516,6 +1649,13 @@ function isArrayNType(ty: ts.Type | undefined): boolean {
 
 function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isParenthesizedExpression(expr)) return { kind: "paren", expr: lowerExpr(ctx, expr.expression) };
+
+  if (ts.isAwaitExpression(expr)) {
+    if (!ctx.inAsync) {
+      failAt(expr, "TSB1308", "`await` is only supported inside async functions in v0.");
+    }
+    return { kind: "await", expr: lowerExpr(ctx, expr.expression) };
+  }
 
   if (expr.kind === ts.SyntaxKind.ThisKeyword) {
     if (!ctx.thisName) {
@@ -1749,14 +1889,12 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
     if (!ts.isIdentifier(expr.expression)) {
       failAt(expr.expression, "TSB1113", "new expressions must use an identifier constructor in v0.");
     }
-    if ((expr.typeArguments?.length ?? 0) > 0) {
-      failAt(expr, "TSB1114", "Generic `new` expressions are not supported in v0.");
-    }
+    const typeArgs = (expr.typeArguments ?? []).map((t) => typeNodeToRust(t));
     const args = (expr.arguments ?? []).map((a) => lowerExpr(ctx, a));
     return {
       kind: "assoc_call",
       typePath: { segments: [expr.expression.text] },
-      typeArgs: [],
+      typeArgs,
       member: "new",
       args,
     };
@@ -1799,6 +1937,10 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   }
 
   if (ts.isCallExpression(expr)) {
+    if (ts.isPropertyAccessExpression(expr.expression) && expr.expression.name.text === "then") {
+      failAt(expr.expression.name, "TSB1306", "Promise `.then(...)` chains are not supported in v0; use `await`.");
+    }
+
     // Kernel launch syntax: k.launch({ grid, block }, ...args)
     if (ts.isPropertyAccessExpression(expr.expression) && expr.expression.name.text === "launch") {
       const recv = expr.expression.expression;
@@ -2238,6 +2380,8 @@ function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
         checker: ctx.checker,
         unions: ctx.unions,
         structs: ctx.structs,
+        traitsByKey: ctx.traitsByKey,
+        traitsByName: ctx.traitsByName,
         shapeStructsByKey: ctx.shapeStructsByKey,
         shapeStructsByFile: ctx.shapeStructsByFile,
         kernelDeclBySymbol: ctx.kernelDeclBySymbol,
@@ -2319,13 +2463,12 @@ function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
 function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: readonly string[]): RustItem {
   if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
-  if (fnDecl.typeParameters && fnDecl.typeParameters.length > 0) {
-    failAt(fnDecl, "TSB3005", `Function '${fnDecl.name.text}': generic functions are not supported in v0.`);
-  }
 
   const span = spanFromNode(fnDecl);
   const hasExport = fnDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+  const isAsync = hasModifier(fnDecl, ts.SyntaxKind.AsyncKeyword);
   const vis = hasExport ? "pub" : "private";
+  const typeParams = lowerTypeParameters(fnDecl, `Function '${fnDecl.name.text}'`, fnDecl.typeParameters, "TSB3005");
 
   const params: RustParam[] = [];
   for (const p of fnDecl.parameters) {
@@ -2345,11 +2488,26 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
     params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
   }
 
-  const ret = typeNodeToRust(fnDecl.type);
+  const ret = isAsync
+    ? typeNodeToRust(unwrapPromiseInnerType(fnDecl, `Function '${fnDecl.name.text}'`, fnDecl.type, "TSB3010"))
+    : typeNodeToRust(fnDecl.type);
   const body: RustStmt[] = [];
-  for (const st of fnDecl.body.statements) body.push(...lowerStmt(ctx, st));
+  const fnCtx: EmitCtx = { ...ctx, inAsync: isAsync };
+  for (const st of fnDecl.body.statements) body.push(...lowerStmt(fnCtx, st));
 
-  return { kind: "fn", span, vis, receiver: { kind: "none" }, name: fnDecl.name.text, params, ret, attrs, body };
+  return {
+    kind: "fn",
+    span,
+    vis,
+    async: isAsync,
+    typeParams,
+    receiver: { kind: "none" },
+    name: fnDecl.name.text,
+    params,
+    ret,
+    attrs,
+    body,
+  };
 }
 
 function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { readonly mut: boolean; readonly lifetime?: string } | undefined {
@@ -2368,10 +2526,14 @@ function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { reado
 
 function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly string[]): readonly RustItem[] {
   if (!cls.name) failAt(cls, "TSB4000", "Anonymous classes are not supported in v0.");
-  if (cls.typeParameters && cls.typeParameters.length > 0) {
-    failAt(cls, "TSB4001", "Generic classes are not supported in v0.");
-  }
-  const implementsTraits: string[] = [];
+
+  const className = cls.name.text;
+  const classSpan = spanFromNode(cls);
+  const classTypeParams = lowerTypeParameters(cls, `Class '${className}'`, cls.typeParameters, "TSB4001");
+  const classTypeArgs = classTypeParams.map((tp) => pathType([tp.name]));
+  const classTypePath = pathType([className], classTypeArgs);
+
+  const implementsTraits: { readonly node: ts.ExpressionWithTypeArguments; readonly traitPath: RustType }[] = [];
   if (cls.heritageClauses && cls.heritageClauses.length > 0) {
     for (const h of cls.heritageClauses) {
       if (h.token === ts.SyntaxKind.ExtendsKeyword) {
@@ -2384,21 +2546,14 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
         if (!ts.isExpressionWithTypeArguments(t0)) {
           failAt(t0, "TSB4003", "Unsupported implements clause in v0.");
         }
-        if ((t0.typeArguments?.length ?? 0) > 0) {
-          failAt(t0, "TSB4004", "Generic implements is not supported in v0.");
-        }
-        if (!ts.isIdentifier(t0.expression)) {
-          failAt(t0.expression, "TSB4005", "implements only supports identifier traits in v0.");
-        }
-        implementsTraits.push(t0.expression.text);
+        const traitPath = lowerExprWithTypeArgsToRustType(`Class '${className}'`, t0, "TSB4005");
+        implementsTraits.push({ node: t0, traitPath });
       }
     }
   }
 
   const hasExport = cls.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
   const classVis = hasExport ? "pub" : "private";
-  const className = cls.name.text;
-  const classSpan = spanFromNode(cls);
 
   const fields: { readonly name: string; readonly vis: "pub" | "private"; readonly type: RustType; readonly init?: RustExpr }[] =
     [];
@@ -2467,6 +2622,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     span: classSpan,
     vis: classVis,
     name: className,
+    typeParams: classTypeParams,
     attrs,
     fields: structFields,
   };
@@ -2513,10 +2669,12 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     kind: "fn",
     span: classSpan,
     vis: "pub",
+    async: false,
+    typeParams: [],
     receiver: { kind: "none" },
     name: "new",
     params: ctorParams,
-    ret: pathType([className]),
+    ret: classTypePath,
     attrs: [],
     body: [
       {
@@ -2530,6 +2688,18 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
   };
 
   const implItems: RustItem[] = [newItem];
+  const classMethodsByName = new Map<
+    string,
+    {
+      readonly receiver: { readonly mut: boolean; readonly lifetime?: string };
+      readonly typeParams: readonly RustGenericParam[];
+      readonly params: readonly RustParam[];
+      readonly ret: RustType;
+      readonly body: readonly RustStmt[];
+      readonly span: Span;
+      readonly async: boolean;
+    }
+  >();
 
   for (const m of methods) {
     if (m.modifiers?.some((x) => x.kind === ts.SyntaxKind.StaticKeyword) ?? false) {
@@ -2537,9 +2707,8 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     }
     if (!ts.isIdentifier(m.name)) failAt(m.name, "TSB4101", "Only identifier-named methods are supported in v0.");
     if (!m.body) failAt(m, "TSB4102", "Method must have a body in v0.");
-    if (m.typeParameters && m.typeParameters.length > 0) {
-      failAt(m, "TSB4103", "Generic methods are not supported in v0.");
-    }
+    const isAsync = hasModifier(m, ts.SyntaxKind.AsyncKeyword);
+    const methodTypeParams = lowerTypeParameters(m, `Method '${m.name.text}'`, m.typeParameters, "TSB4103");
 
     const isPrivate =
       m.modifiers?.some((x) => x.kind === ts.SyntaxKind.PrivateKeyword || x.kind === ts.SyntaxKind.ProtectedKeyword) ??
@@ -2569,17 +2738,22 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
     }
 
-    const ret = typeNodeToRust(m.type);
+    const ret = isAsync
+      ? typeNodeToRust(unwrapPromiseInnerType(m, `Method '${m.name.text}'`, m.type, "TSB4108"))
+      : typeNodeToRust(m.type);
     const body: RustStmt[] = [];
     const methodCtx: EmitCtx = {
       checker: ctx.checker,
       unions: ctx.unions,
       structs: ctx.structs,
+      traitsByKey: ctx.traitsByKey,
+      traitsByName: ctx.traitsByName,
       shapeStructsByKey: ctx.shapeStructsByKey,
       shapeStructsByFile: ctx.shapeStructsByFile,
       kernelDeclBySymbol: ctx.kernelDeclBySymbol,
       gpuRuntime: ctx.gpuRuntime,
       thisName: "self",
+      inAsync: isAsync,
     };
     for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
 
@@ -2587,6 +2761,8 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       kind: "fn",
       span: spanFromNode(m),
       vis,
+      async: isAsync,
+      typeParams: methodTypeParams,
       receiver,
       name: m.name.text,
       params,
@@ -2594,17 +2770,123 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       attrs: [],
       body,
     });
+
+    classMethodsByName.set(m.name.text, {
+      receiver: { mut: receiver.mut, lifetime: receiver.lifetime },
+      typeParams: methodTypeParams,
+      params,
+      ret,
+      body,
+      span: spanFromNode(m),
+      async: isAsync,
+    });
   }
 
-  const implItem: RustItem = { kind: "impl", span: classSpan, typePath: { segments: [className] }, items: implItems };
-
-  const traitImpls: RustItem[] = implementsTraits.map((t) => ({
+  const implItem: RustItem = {
     kind: "impl",
     span: classSpan,
-    traitPath: { segments: [t] },
-    typePath: { segments: [className] },
-    items: [],
-  }));
+    typeParams: classTypeParams,
+    typePath: classTypePath,
+    items: implItems,
+  };
+
+  const traitImpls: RustItem[] = [];
+  for (const imp of implementsTraits) {
+    const traitSegs = imp.traitPath.kind === "path" ? imp.traitPath.path.segments : [];
+    const traitName = traitSegs.length > 0 ? traitSegs[traitSegs.length - 1]! : undefined;
+    const traitCandidates = traitName
+      ? [...(ctx.traitsByName.get(traitName) ?? [])].sort((a, b) => a.key.localeCompare(b.key))
+      : [];
+    const traitArity = imp.traitPath.kind === "path" ? imp.traitPath.args.length : 0;
+    const traitDef = traitCandidates.find((t) => t.typeParams.length === traitArity);
+
+    const traitItems: RustItem[] = [];
+    if (traitDef) {
+      for (const req of traitDef.methods) {
+        const got = classMethodsByName.get(req.name);
+        if (!got) {
+          failAt(
+            imp.node,
+            "TSB4006",
+            `Class '${className}' does not implement required trait method '${req.name}' from '${traitDef.name}'.`
+          );
+        }
+        if (got.async) {
+          failAt(
+            imp.node,
+            "TSB4007",
+            `Trait method '${req.name}' in '${traitDef.name}' cannot be implemented by an async class method in v0.`
+          );
+        }
+        if (got.receiver.mut !== req.receiver.mut || got.receiver.lifetime !== req.receiver.lifetime) {
+          failAt(
+            imp.node,
+            "TSB4007",
+            `Trait method '${req.name}' receiver mismatch for '${traitDef.name}'.`
+          );
+        }
+        if (got.typeParams.length !== req.typeParams.length) {
+          failAt(
+            imp.node,
+            "TSB4007",
+            `Trait method '${req.name}' generic arity mismatch for '${traitDef.name}'.`
+          );
+        }
+        for (let i = 0; i < got.typeParams.length; i++) {
+          const g = got.typeParams[i]!;
+          const r = req.typeParams[i]!;
+          if (g.name !== r.name || g.bounds.length !== r.bounds.length) {
+            failAt(imp.node, "TSB4007", `Trait method '${req.name}' generic constraint mismatch for '${traitDef.name}'.`);
+          }
+          for (let j = 0; j < g.bounds.length; j++) {
+            if (!rustTypeEq(g.bounds[j]!, r.bounds[j]!)) {
+              failAt(imp.node, "TSB4007", `Trait method '${req.name}' generic constraint mismatch for '${traitDef.name}'.`);
+            }
+          }
+        }
+        if (got.params.length !== req.params.length) {
+          failAt(
+            imp.node,
+            "TSB4007",
+            `Trait method '${req.name}' parameter arity mismatch for '${traitDef.name}'.`
+          );
+        }
+        for (let i = 0; i < got.params.length; i++) {
+          const gp = got.params[i]!;
+          const rp = req.params[i]!;
+          if (gp.name !== rp.name || !rustTypeEq(gp.type, rp.type)) {
+            failAt(imp.node, "TSB4007", `Trait method '${req.name}' parameter mismatch for '${traitDef.name}'.`);
+          }
+        }
+        if (!rustTypeEq(got.ret, req.ret)) {
+          failAt(imp.node, "TSB4007", `Trait method '${req.name}' return type mismatch for '${traitDef.name}'.`);
+        }
+
+        traitItems.push({
+          kind: "fn",
+          span: got.span,
+          vis: "private",
+          async: false,
+          typeParams: got.typeParams,
+          receiver: { kind: "ref_self", mut: got.receiver.mut, lifetime: got.receiver.lifetime },
+          name: req.name,
+          params: got.params,
+          ret: got.ret,
+          attrs: [],
+          body: got.body,
+        });
+      }
+    }
+
+    traitImpls.push({
+      kind: "impl",
+      span: classSpan,
+      typeParams: classTypeParams,
+      traitPath: imp.traitPath,
+      typePath: classTypePath,
+      items: traitItems,
+    });
+  }
 
   return [structItem, ...traitImpls, implItem];
 }
@@ -2749,6 +3031,7 @@ function structItemFromDef(def: StructDef, attrs: readonly string[]): RustItem {
     span: def.span,
     vis: def.vis,
     name: def.name,
+    typeParams: [],
     attrs,
     fields: def.fields.map((f) => ({ vis: fieldVis, name: f.name, type: f.type })),
   };
@@ -2779,21 +3062,107 @@ function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: read
   return [];
 }
 
-function lowerInterface(decl: ts.InterfaceDeclaration): readonly RustItem[] {
-  if (decl.typeParameters && decl.typeParameters.length > 0) {
-    failAt(decl, "TSB5100", "Generic interfaces are not supported in v0.");
+function parseInterfaceMethod(
+  decl: ts.InterfaceDeclaration,
+  member: ts.TypeElement
+): TraitMethodDef {
+  if (!ts.isMethodSignature(member)) {
+    failAt(member, "TSB5102", `Only method signatures are supported in interfaces in v0: ${decl.name.text}.`);
   }
-  if (decl.heritageClauses && decl.heritageClauses.length > 0) {
-    failAt(decl, "TSB5101", "Interface extends is not supported in v0.");
+  if (!ts.isIdentifier(member.name)) {
+    failAt(member.name, "TSB5103", `Only identifier-named interface methods are supported in v0: ${decl.name.text}.`);
   }
-  if (decl.members.length > 0) {
-    failAt(decl, "TSB5102", "Interface members are not supported in v0 (marker traits only).");
+  if (member.questionToken) {
+    failAt(member, "TSB5104", `Optional interface methods are not supported in v0: ${decl.name.text}.${member.name.text}.`);
+  }
+  const owner = `Interface '${decl.name.text}' method '${member.name.text}'`;
+  const typeParams = lowerTypeParameters(member, owner, member.typeParameters, "TSB5105");
+
+  const [first, ...rest] = member.parameters;
+  if (!first || !ts.isIdentifier(first.name) || first.name.text !== "this") {
+    failAt(member, "TSB5106", `${owner}: first parameter must be 'this: ref<this>' or 'this: mutref<this>' in v0.`);
+  }
+  const rec = methodReceiverFromThisParam(first.type);
+  if (!rec) {
+    failAt(first, "TSB5106", `${owner}: first parameter must be 'this: ref<this>' or 'this: mutref<this>' in v0.`);
   }
 
-  const isExport = hasModifier(decl, ts.SyntaxKind.ExportKeyword);
-  const vis: "pub" | "private" = isExport ? "pub" : "private";
+  const params: RustParam[] = [];
+  for (const p of rest) {
+    if (!ts.isIdentifier(p.name)) {
+      failAt(p.name, "TSB5107", `${owner}: destructuring parameters are not supported in v0.`);
+    }
+    if (!p.type) {
+      failAt(p, "TSB5108", `${owner}: parameter '${p.name.text}' must have a type annotation in v0.`);
+    }
+    if (p.questionToken || p.initializer) {
+      failAt(p, "TSB5109", `${owner}: optional/default parameters are not supported in v0.`);
+    }
+    params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
+  }
 
-  return [{ kind: "trait", span: spanFromNode(decl), vis, name: decl.name.text, items: [] }];
+  if (!member.type) {
+    failAt(member, "TSB5110", `${owner}: return type annotations are required in v0.`);
+  }
+
+  return {
+    name: member.name.text,
+    span: spanFromNode(member),
+    receiver: rec,
+    typeParams,
+    params,
+    ret: typeNodeToRust(member.type),
+  };
+}
+
+function parseTraitDef(decl: ts.InterfaceDeclaration): TraitDef {
+  const key = traitKeyFromDecl(decl);
+  const vis: "pub" | "private" = hasModifier(decl, ts.SyntaxKind.ExportKeyword) ? "pub" : "private";
+  const typeParams = lowerTypeParameters(decl, `Interface '${decl.name.text}'`, decl.typeParameters, "TSB5100");
+
+  const superTraits: RustType[] = [];
+  for (const h of decl.heritageClauses ?? []) {
+    if (h.token !== ts.SyntaxKind.ExtendsKeyword) {
+      failAt(h, "TSB5101", `Unsupported interface heritage in v0: ${decl.name.text}.`);
+    }
+    for (const t0 of h.types) {
+      if (!ts.isExpressionWithTypeArguments(t0)) {
+        failAt(t0, "TSB5101", `Unsupported interface extends clause in v0: ${decl.name.text}.`);
+      }
+      superTraits.push(lowerExprWithTypeArgsToRustType(`Interface '${decl.name.text}'`, t0, "TSB5101"));
+    }
+  }
+
+  const methods = decl.members.map((m) => parseInterfaceMethod(decl, m));
+  return { key, name: decl.name.text, span: spanFromNode(decl), vis, typeParams, superTraits, methods };
+}
+
+function lowerTraitDef(def: TraitDef): RustItem {
+  return {
+    kind: "trait",
+    span: def.span,
+    vis: def.vis,
+    name: def.name,
+    typeParams: def.typeParams,
+    superTraits: def.superTraits,
+    items: def.methods.map((m) => ({
+      kind: "fn",
+      span: m.span,
+      vis: "private",
+      async: false,
+      typeParams: m.typeParams,
+      receiver: { kind: "ref_self", mut: m.receiver.mut, lifetime: m.receiver.lifetime },
+      name: m.name,
+      params: m.params,
+      ret: m.ret,
+      attrs: [],
+    })),
+  };
+}
+
+function lowerInterface(ctx: EmitCtx, decl: ts.InterfaceDeclaration): readonly RustItem[] {
+  const def = ctx.traitsByKey.get(traitKeyFromDecl(decl)) ?? parseTraitDef(decl);
+  return [lowerTraitDef(def)];
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
@@ -2827,8 +3196,30 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   if (!sf) fail("TSB0001", `Could not read entry file: ${opts.entryFile}`);
 
   const mainFn = getExportedMain(sf);
+  const runtimeKind = opts.runtimeKind ?? "none";
+  const mainIsAsync = hasModifier(mainFn, ts.SyntaxKind.AsyncKeyword);
   const returnTypeNode = mainFn.type;
   const returnKind: "unit" | "result" = (() => {
+    if (mainIsAsync) {
+      if (runtimeKind !== "tokio") {
+        fail("TSB1004", "async main() requires runtime.kind='tokio' in tsuba.workspace.json.");
+      }
+      const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
+      if (inner.kind === ts.SyntaxKind.VoidKeyword) return "unit";
+      if (
+        ts.isTypeReferenceNode(inner) &&
+        ts.isIdentifier(inner.typeName) &&
+        inner.typeName.text === "Result"
+      ) {
+        const [okTy] = inner.typeArguments ?? [];
+        if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
+          fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
+        }
+        return "result";
+      }
+      fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
+    }
+
     if (!returnTypeNode) return "unit";
     if (returnTypeNode.kind === ts.SyntaxKind.VoidKeyword) return "unit";
     if (
@@ -2845,10 +3236,19 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     fail("TSB1003", "main() must return void or Result<void, E> in v0.");
   })();
 
-  const rustReturnType = returnKind === "result" ? typeNodeToRust(returnTypeNode) : undefined;
+  const rustReturnType = (() => {
+    if (returnKind !== "result") return undefined;
+    if (mainIsAsync) {
+      const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
+      return typeNodeToRust(inner);
+    }
+    return typeNodeToRust(returnTypeNode);
+  })();
 
   const unionsByKey = new Map<string, UnionDef>();
   const structAliasesByKey = new Map<string, StructDef>();
+  const traitsByKey = new Map<string, TraitDef>();
+  const traitsByName = new Map<string, TraitDef[]>();
   const shapeStructsByKey = new Map<string, StructDef>();
   const shapeStructsByFile = new Map<string, StructDef[]>();
   const kernelDeclBySymbol = new Map<ts.Symbol, KernelDecl>();
@@ -2857,6 +3257,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     checker,
     unions: unionsByKey,
     structs: structAliasesByKey,
+    traitsByKey,
+    traitsByName,
     shapeStructsByKey,
     shapeStructsByFile,
     kernelDeclBySymbol,
@@ -2916,6 +3318,14 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         features.length === 0 ? { ...base, path: dep.path } : { ...base, path: dep.path, features }
       );
     }
+  }
+
+  if (mainIsAsync && runtimeKind === "tokio") {
+    addUsedCrate(mainFn, {
+      name: "tokio",
+      version: "1.37",
+      features: ["macros", "rt-multi-thread"],
+    });
   }
 
   const userSourceFiles = program
@@ -3247,6 +3657,13 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       const structDef = tryParseStructTypeAlias(ta.decl);
       if (structDef) structAliasesByKey.set(structDef.key, structDef);
     }
+    for (const i0 of lowered.interfaces) {
+      const traitDef = parseTraitDef(i0.decl);
+      traitsByKey.set(traitDef.key, traitDef);
+      const existing = traitsByName.get(traitDef.name) ?? [];
+      existing.push(traitDef);
+      traitsByName.set(traitDef.name, existing);
+    }
   }
 
   // Collect `annotate(...)` attributes per file/target.
@@ -3305,7 +3722,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         items: lowerTypeAlias(ctx, t0.decl, fileAttrs.get(t0.decl.name.text) ?? []),
       });
     }
-    for (const i0 of lowered.interfaces) itemGroups.push({ pos: i0.pos, items: lowerInterface(i0.decl) });
+    for (const i0 of lowered.interfaces) itemGroups.push({ pos: i0.pos, items: lowerInterface(ctx, i0.decl) });
     for (const c of lowered.classes) {
       itemGroups.push({
         pos: c.pos,
@@ -3340,7 +3757,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       items: lowerTypeAlias(ctx, t0.decl, rootAttrs.get(t0.decl.name.text) ?? []),
     });
   }
-  for (const i0 of rootLowered.interfaces) rootGroups.push({ pos: i0.pos, items: lowerInterface(i0.decl) });
+  for (const i0 of rootLowered.interfaces) rootGroups.push({ pos: i0.pos, items: lowerInterface(ctx, i0.decl) });
   for (const c of rootLowered.classes) {
     rootGroups.push({
       pos: c.pos,
@@ -3357,7 +3774,8 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   items.push(...rootGroups.flatMap((g) => g.items));
 
   const mainBody: RustStmt[] = [];
-  for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(ctx, st));
+  const mainCtx: EmitCtx = { ...ctx, inAsync: mainIsAsync };
+  for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(mainCtx, st));
 
   const rootShapeStructs = [...(ctx.shapeStructsByFile.get(entryFileName) ?? [])].sort(
     (a, b) => a.span.start - b.span.start || a.key.localeCompare(b.key)
@@ -3368,11 +3786,16 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     kind: "fn",
     span: spanFromNode(mainFn),
     vis: "private",
+    async: mainIsAsync,
+    typeParams: [],
     receiver: { kind: "none" },
     name: "main",
     params: [],
     ret: returnKind === "unit" ? unitType() : (rustReturnType ?? unitType()),
-    attrs: rootAttrs.get("main") ?? [],
+    attrs: [
+      ...(mainIsAsync && runtimeKind === "tokio" ? ["#[tokio::main]"] : []),
+      ...(rootAttrs.get("main") ?? []),
+    ],
     body: mainBody,
   };
   items.push(mainItem);

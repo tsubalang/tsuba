@@ -1,5 +1,6 @@
 import type {
   RustExpr,
+  RustGenericParam,
   RustItem,
   RustParam,
   RustPattern,
@@ -16,6 +17,15 @@ function emitSpanLine(indent: string, span: Span | undefined): string[] {
 
 function emitPath(segments: readonly string[]): string {
   return segments.join("::");
+}
+
+function emitGenericParams(typeParams: readonly RustGenericParam[]): string {
+  if (typeParams.length === 0) return "";
+  const parts = typeParams.map((p) => {
+    if (p.bounds.length === 0) return p.name;
+    return `${p.name}: ${p.bounds.map(emitType).join(" + ")}`;
+  });
+  return `<${parts.join(", ")}>`;
 }
 
 function emitType(ty: RustType): string {
@@ -108,6 +118,8 @@ function emitExpr(expr: RustExpr): string {
     }
     case "try":
       return `(${emitExpr(expr.expr)})?`;
+    case "await":
+      return `(${emitExpr(expr.expr)}).await`;
     case "unsafe":
       return `unsafe { ${emitExpr(expr.expr)} }`;
     case "block": {
@@ -253,8 +265,10 @@ function emitItem(item: RustItem, indent: string): string[] {
     case "trait": {
       const out: string[] = [];
       const vis = item.vis === "pub" ? "pub " : "";
+      const typeParams = emitGenericParams(item.typeParams);
+      const superTraits = item.superTraits.length > 0 ? `: ${item.superTraits.map(emitType).join(" + ")}` : "";
       out.push(...spanLine);
-      out.push(`${indent}${vis}trait ${item.name} {`);
+      out.push(`${indent}${vis}trait ${item.name}${typeParams}${superTraits} {`);
       const innerIndent = `${indent}  `;
       let first = true;
       for (const inner of item.items) {
@@ -287,11 +301,12 @@ function emitItem(item: RustItem, indent: string): string[] {
       out.push(...spanLine);
       for (const a of item.attrs) out.push(`${indent}${a}`);
       const vis = item.vis === "pub" ? "pub " : "";
+      const typeParams = emitGenericParams(item.typeParams);
       if (item.fields.length === 0) {
-        out.push(`${indent}${vis}struct ${item.name};`);
+        out.push(`${indent}${vis}struct ${item.name}${typeParams};`);
         return out;
       }
-      out.push(`${indent}${vis}struct ${item.name} {`);
+      out.push(`${indent}${vis}struct ${item.name}${typeParams} {`);
       for (const f of item.fields) {
         const fvis = f.vis === "pub" ? "pub " : "";
         out.push(`${indent}  ${fvis}${f.name}: ${emitType(f.type)},`);
@@ -301,9 +316,10 @@ function emitItem(item: RustItem, indent: string): string[] {
     }
     case "impl": {
       const out: string[] = [];
+      const typeParams = emitGenericParams(item.typeParams);
       const head = item.traitPath
-        ? `impl ${emitPath(item.traitPath.segments)} for ${emitPath(item.typePath.segments)}`
-        : `impl ${emitPath(item.typePath.segments)}`;
+        ? `impl${typeParams} ${emitType(item.traitPath)} for ${emitType(item.typePath)}`
+        : `impl${typeParams} ${emitType(item.typePath)}`;
       out.push(...spanLine);
       out.push(`${indent}${head} {`);
       const innerIndent = `${indent}  `;
@@ -322,6 +338,8 @@ function emitItem(item: RustItem, indent: string): string[] {
       for (const a of item.attrs) out.push(`${indent}${a}`);
       const retClause = item.ret.kind === "unit" ? "" : ` -> ${emitType(item.ret)}`;
       const vis = item.vis === "pub" ? "pub " : "";
+      const async = item.async ? "async " : "";
+      const typeParams = emitGenericParams(item.typeParams);
       const receiver = (() => {
         if (item.receiver.kind === "none") return undefined;
         const lt = item.receiver.lifetime ? `'${item.receiver.lifetime} ` : "";
@@ -329,7 +347,11 @@ function emitItem(item: RustItem, indent: string): string[] {
         return `&${lt}${mut}self`;
       })();
       const params = receiver ? [receiver, ...item.params.map(emitParam)] : item.params.map(emitParam);
-      out.push(`${indent}${vis}fn ${item.name}(${params.join(", ")})${retClause} {`);
+      if (!item.body) {
+        out.push(`${indent}${vis}${async}fn ${item.name}${typeParams}(${params.join(", ")})${retClause};`);
+        return out;
+      }
+      out.push(`${indent}${vis}${async}fn ${item.name}${typeParams}(${params.join(", ")})${retClause} {`);
       const bodyIndent = `${indent}  `;
       for (const st of item.body) out.push(...emitStmtLines(st, bodyIndent));
       out.push(`${indent}}`);
