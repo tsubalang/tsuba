@@ -1,0 +1,5 @@
+{
+  "code": "TSB2210",
+  "domain": "control-flow",
+  "messageIncludes": ["Non-exhaustive"]
+}

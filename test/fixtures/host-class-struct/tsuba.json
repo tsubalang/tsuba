@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "host-class-struct",
+  "kind": "bin",
+  "entry": "src/index.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "host_class_struct"
+  }
+}

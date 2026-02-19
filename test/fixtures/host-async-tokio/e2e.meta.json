@@ -1,5 +1,6 @@
 {
   "run": true,
+  "goldenMainRs": "golden/main.rs",
   "runStdoutContains": [
     "tokio 7"
   ]

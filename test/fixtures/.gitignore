@@ -3,3 +3,5 @@
 **/.tsuba-e2e-build.log
 **/.tsuba-e2e-run.log
 **/.tsuba-e2e-test.log
+**/.tsuba-e2e-golden.diff
+**/.tsuba-e2e-golden.*.norm
