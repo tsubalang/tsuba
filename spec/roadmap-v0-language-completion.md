@@ -45,7 +45,7 @@ Fast iteration (allowed during development):
 
 Final verification (required before merge/publish):
 
-- `npm test`
+- `npm run run-all`
 
 Additional gate we should adopt (Tsonic-style):
 
@@ -62,42 +62,53 @@ For all “golden-ish” outputs (generated Rust, CUDA, manifests):
 
 ## 2. Current state snapshot (as of 2026-02-19)
 
-This is a quick reality check so the roadmap stays grounded:
+This snapshot is intentionally implementation-facing.
 
-- Workspace + project configs exist: `tsuba.workspace.json`, `tsuba.json`.
-- Host compiler exists: `@tsuba/compiler` emits a restricted TS subset to Rust.
-- GPU kernel pipeline exists (v0 credibility): emits deterministic CUDA C, compiles PTX via configured toolkit, launches via CUDA driver runtime.
-- Marker APIs exist:
-  - `@tsuba/core/types.js`: numeric markers, `ref/mutref`, `Option/Result`, etc.
-  - `@tsuba/core/lang.js`: `q`, `unsafe`, `tokens/attr/annotate`.
-- `tsubabindgen` exists but is MVP and currently source/regex-based.
+Implemented today:
 
-Known gaps that must be fixed early (because they affect everything else):
+- Mandatory workspace/project config model is active (`tsuba.workspace.json`, `tsuba.json`).
+- Host compiler supports:
+  - generic functions/classes/interfaces,
+  - interface methods → trait items,
+  - `implements` checking with signature/receiver validation,
+  - async/await lowering with runtime policy (`none` vs `tokio`),
+  - stable `TSBxxxx` diagnostics for unsupported/rejected constructs.
+- GPU path is active:
+  - kernel DSL markers,
+  - deterministic CUDA C emission + PTX compilation path,
+  - host launch/runtime glue.
+- CLI no longer depends on an external bindgen binary; it invokes `@tsuba/tsubabindgen` as a library.
+- Bindgen tests avoid fixture dirtiness by generating from copied temp crates.
 
-- **Traits are not implemented** (interfaces are marker traits only; no members; no generic traits).
-- **Async/await is not implemented** in the compiler even though the spec describes it.
-- CLI assumes an external `tsubabindgen` binary is available, but `@tsuba/cli` does not depend on `@tsuba/tsubabindgen`.
-- Some tests cause repository dirtiness (`Cargo.lock` creation under fixtures).
+Still incomplete for parity-grade v0:
+
+- Compiler architecture is still too concentrated in `packages/compiler/src/rust/host.ts` (needs cleaner pass boundaries).
+- `tsubabindgen` is still MVP-grade and source/regex-heavy (needs robust extraction path and broader coverage).
+- Release/publish preflight scripts are missing.
+- External proof-repo verification is not yet wired into the release gate.
+
+For the explicit parity matrix vs Tsonic, see:
+
+- `spec/roadmap-parity-with-tsonic.md`
 
 ---
 
 ## 3. Workstream A: Toolchain hygiene and packaging invariants
 
+Status (current): **Mostly done**, with release preflight still missing.
+
 These items are “small” but unblock the entire repo from being reliable at scale.
 
 ### A1. CLI must be able to run bindgen in a standalone install
 
-Problem:
+Current state:
 
-- `@tsuba/cli` runs `tsubabindgen` via `spawnSync("tsubabindgen", ...)`.
-- `@tsuba/cli` does not depend on `@tsuba/tsubabindgen`.
+- **Completed** via direct library invocation.
+- `@tsuba/cli` imports `runGenerate` from `@tsuba/tsubabindgen` in command handlers.
 
-Acceptable airplane-grade fixes (pick one; prefer the most deterministic):
+Policy:
 
-1. **Library call**: `@tsuba/cli` imports `runGenerate` from `@tsuba/tsubabindgen` and calls it directly.
-2. **Resolved binary path**: locate `@tsuba/tsubabindgen` package root and run its `dist/bin.js` via `node`.
-3. **Dependency + PATH expectation**: add `@tsuba/tsubabindgen` as a dependency and assume npm will place it in `.bin`.
-   This is acceptable but more fragile across install modes than (1) or (2).
+- Keep this as the only supported path (no external PATH binary dependency).
 
 Merge gate:
 
@@ -108,18 +119,17 @@ Merge gate:
 
 ### A2. Tests must not dirty the repo
 
-Problem:
+Current state:
 
-- `tsubabindgen` tests run `cargo metadata` in fixture crate directory and create `Cargo.lock`.
+- **Completed** in bindgen tests by copying fixture crates to temp directories before metadata extraction.
 
-Fix:
+Policy:
 
-- Copy the fixture crate into a temp directory before running cargo commands, or force a `CARGO_TARGET_DIR`
-  and ensure lock file is not created in the fixture directory.
+- Preserve fixture immutability as a hard requirement for all future bindgen tests.
 
 Merge gate:
 
-- `npm test` leaves `git status --porcelain` empty.
+- `npm run run-all` leaves `git status --porcelain` empty.
 
 ### A3. Publish preflight discipline (later, but plan it now)
 
@@ -137,6 +147,8 @@ Merge gate:
 ---
 
 ## 4. Workstream B: Compiler foundations (airplane-grade IR and diagnostics)
+
+Status (current): **Partial**.
 
 Goal: make it safe to extend the compiler without accidental miscompiles.
 
@@ -184,6 +196,8 @@ Merge gate:
 ---
 
 ## 5. Workstream C: Type system and “systems TS” surface completion
+
+Status (current): **Partial** (generic core is implemented; edge-case matrix still expanding).
 
 ### C1. Numeric and literal rules
 
@@ -234,6 +248,8 @@ Merge gates:
 
 ## 6. Workstream D: Full trait support (interfaces → Rust traits)
 
+Status (current): **Core done** for v0 host subset; trait-object strategy remains optional.
+
 This is the highest-leverage “language completion” feature.
 
 ### D0. Design constraints
@@ -244,7 +260,7 @@ This is the highest-leverage “language completion” feature.
 
 ### D1. Interface members (trait items)
 
-Support at least:
+Current support baseline:
 
 - method signatures on interfaces (no bodies)
 - receiver modeled explicitly
@@ -282,7 +298,7 @@ Merge gate:
 
 ### D2. Implementations: `implements`
 
-Support:
+Current support baseline:
 
 - `class X implements Trait { ... }` → `impl Trait for X {}`
 - multiple implements: `implements A, B`
@@ -300,7 +316,7 @@ No “best effort”: mismatch must be a compile error with a stable code.
 
 ### D3. Trait bounds from TS generics
 
-Support:
+Current support baseline:
 
 - `T extends Trait` → `T: Trait`
 - `T extends A & B` → `T: A + B`
@@ -308,7 +324,7 @@ Support:
 
 ### D4. Supertraits: interface extends interface
 
-Support:
+Current support baseline:
 
 ```ts
 export interface Readable { read(this: ref<this>): i32; }
@@ -368,20 +384,22 @@ Merge gate:
 
 ## 7. Workstream E: Async/await (Rust futures + runtime)
 
-This must be implemented because it is required for real apps and discussed heavily.
+Status (current): **Core done** (`Promise<T>` surface + `tokio` runtime policy).
+
+Baseline is implemented; remaining work is breadth/coverage hardening.
 
 ### E1. Define the TS surface for futures
 
 Mojo uses `fn ... raises` etc. Tsuba should stay Rust-like:
 
 - Use `Promise<T>` in TS as the surface type (because it exists in standard TS libs).
-- Lower to Rust `impl Future<Output = T>` in function signatures.
+- Lower to Rust `async fn ... -> T` (future semantics through Rust async lowering).
 
 We must avoid emitting a Rust type named `Promise`.
 
 ### E2. Implement `async function` lowering
 
-Required:
+Current support baseline:
 
 - `async function f(): Promise<T>` → `async fn f() -> T` (or `-> Result<...>` if wrapped)
 - Inside, `await expr` lowers to `expr.await`
@@ -393,7 +411,7 @@ Airplane-grade constraints:
 
 ### E3. Runtime selection
 
-We already have `runtime.kind` in workspace config. Implement:
+Current support baseline (`runtime.kind`):
 
 - `runtime.kind: "none"`: allow async functions but disallow `export async function main` (or require explicit executor call).
 - `runtime.kind: "tokio"`:
@@ -411,6 +429,8 @@ Merge gate:
 ---
 
 ## 8. Workstream F: Compile-time parameterization (Mojo idea, TS-valid)
+
+Status (current): **Partial**.
 
 Mojo’s `[...]` compile-time params and `@parameter` loops are *semantics*, not syntax.
 
@@ -459,6 +479,8 @@ Merge gate:
 
 ## 9. Workstream G: Bindgen hardening (`tsubabindgen`)
 
+Status (current): **Partial** (determinism basics are in place; extractor depth is not yet airplane-grade).
+
 The MVP exists; it must become deterministic and scalable.
 
 ### G1. Source of truth
@@ -500,6 +522,8 @@ Add tests that:
 
 ## 10. Workstream H: Standard library facades
 
+Status (current): **Partial**.
+
 Tsuba does not need to “re-document Rust”, but it needs enough facades to make code ergonomic.
 
 Minimum for v0:
@@ -517,6 +541,8 @@ Later:
 ---
 
 ## 11. Workstream I: GPU completion (toward SOTA kernels)
+
+Status (current): **Partial** (credibility kernels exist; SOTA-ready intrinsics/capability coverage is not complete).
 
 The current kernel dialect is credibility-level; we need a path to SOTA.
 
@@ -599,4 +625,3 @@ v0 is “done” when:
   - kernel dialect is explicitly spec’d
   - PTX pipeline is deterministic
   - at least the credibility kernels compile deterministically
-
