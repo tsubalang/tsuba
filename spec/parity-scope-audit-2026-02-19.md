@@ -6,19 +6,19 @@ This is a structural parity audit to guide the next mega PR waves.
 
 `tsuba` (this repo) vs `tsonic`:
 
-- Tracked files: `217 / 1419` (**15.3%**)
+- Tracked files: `221 / 1419` (**15.6%**)
 - Compiler source files:
-  - Tsuba `packages/compiler/src`: `18`
+  - Tsuba `packages/compiler/src`: `21`
   - Tsonic `packages/frontend/src + packages/emitter/src`: `336`
-  - Ratio: `18 / 336` (**5.4%**)
+  - Ratio: `21 / 336` (**6.3%**)
 - Compiler TypeScript LOC:
-  - Tsuba compiler: `9699`
+  - Tsuba compiler: `9838`
   - Tsonic frontend+emitter: `84772`
-  - Ratio: `9699 / 84772` (**11.4%**)
+  - Ratio: `9838 / 84772` (**11.6%**)
 - Compiler test case count (`it(...)`):
   - Tsuba: `111`
-  - Tsonic frontend+emitter: `331`
-  - Ratio: `111 / 331` (**33.5%**)
+  - Tsonic frontend+emitter: `699`
+  - Ratio: `111 / 699` (**15.9%**)
 - Fixture directory count:
   - Tsuba `test/fixtures`: `12`
   - Tsonic `test/fixtures`: `142`
