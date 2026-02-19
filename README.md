@@ -24,12 +24,19 @@ Use the publish script for invariant checks + publish flow:
 npm run publish:npm -- --dry-run
 ```
 
+For crates.io (when publishable crates exist in this repo):
+
+```bash
+npm run publish:crates -- --dry-run
+```
+
 It enforces:
 
 - branch is `main`
 - clean working tree
 - local `main` matches `origin/main`
 - full `npm run run-all` gate (unless `--no-tests` is explicitly passed)
+- required proof verification via `scripts/verify-proof.sh --require` (unless `--no-proof` is explicitly passed)
 - package versions are not already published on npm
 
 Optional external proof verification (if the sibling repo exists):

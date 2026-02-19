@@ -38,8 +38,8 @@ Status:
 | Async + runtime policy | Deterministic async lowering/runtime contract | **Done** (tokio/none policy) | P0 | `runtimeKind` handling in `host.ts`, async tests in `host.test.ts` | Add more E2E fixtures for async crate deps and error surfaces |
 | Bindgen determinism and breadth | Robust extractor + deterministic surface + skip reporting | **Partial** | P0 | `packages/tsubabindgen/src/generate.ts` + tests now emit trait interfaces and deterministic skip reports | Replace regex/source parsing core with robust extractor; grow advanced trait/enum/macro coverage |
 | Test harness composition | Unit + fixture typecheck + E2E with filtered loop and full gate | **Done** | P0 | `test/scripts/{run-all.sh,run-e2e.sh,typecheck-fixtures.sh}` | Keep fixture corpus expanding with new features |
-| Proof-repo verification loop | Separate integration repo (`proof-is-in-the-pudding`) run as gate | **Partial** | P1 | `scripts/verify-proof.sh` + `npm run verify:proof` wiring | Enforce required-mode proof checks in release/publish flows |
-| Publish preflight discipline | Branch/sync/clean/version checks before publish | **Partial** | P0 | `scripts/publish-npm.sh` enforces branch/sync/clean/full-test/version checks | Add crates publish preflight + signed release notes flow |
+| Proof-repo verification loop | Separate integration repo (`proof-is-in-the-pudding`) run as gate | **Done** | P1 | `scripts/verify-proof.sh` + `npm run verify:proof`; `scripts/publish-npm.sh` runs proof in required mode by default | Keep proof corpus expanding with language coverage |
+| Publish preflight discipline | Branch/sync/clean/version checks before publish | **Done** | P0 | `scripts/publish-npm.sh` + `scripts/publish-crates.sh` enforce branch/sync/clean/full-test/version checks | Add signed release notes/tag automation |
 | Docs parity depth | Architecture + user + limitations docs kept current | **Partial** | P1 | `spec/*` exists and is substantial | Keep roadmap/status docs synchronized with implementation after every major merge |
 
 ---
@@ -92,22 +92,23 @@ Exit gate:
 
 ### P0-C: Release discipline
 
-1. Add `scripts/publish-npm.sh` (and crates release script later).
+1. Maintain `scripts/publish-npm.sh` and `scripts/publish-crates.sh` with parity invariants.
 2. Preflight checks:
    - current branch policy
    - clean tree
    - synced with `origin/main`
    - version bumps present
    - full test gate completed
+   - proof verification required by default for npm publish flow
 
 Exit gate:
 
-- Publish command fails fast if invariants are not satisfied.
+- Both publish commands fail fast if invariants are not satisfied.
 
 ### P1-D: External proof verification
 
-1. Integrate `proof-is-in-the-pudding` verification into release checklist.
-2. Add CI/manual command contract documenting how to run it.
+1. Keep `proof-is-in-the-pudding` verification integrated in release preflight.
+2. Keep manual command contract and docs synchronized as the proof corpus grows.
 
 Exit gate:
 

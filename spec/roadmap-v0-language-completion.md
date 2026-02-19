@@ -84,8 +84,8 @@ Still incomplete for parity-grade v0:
 
 - Compiler architecture is still too concentrated in `packages/compiler/src/rust/host.ts` (needs cleaner pass boundaries).
 - `tsubabindgen` is still MVP-grade and source/regex-heavy (needs robust extraction path and broader coverage).
-- Release/publish preflight scripts are missing.
-- External proof verification has a script entrypoint (`scripts/verify-proof.sh`) but is not yet required in publish gates.
+- Release-note/tag automation is still missing (publish preflight scripts are implemented).
+- External proof verification is wired into publish preflight (`scripts/publish-npm.sh` runs `scripts/verify-proof.sh --require` by default).
 
 For the explicit parity matrix vs Tsonic, see:
 
@@ -95,7 +95,7 @@ For the explicit parity matrix vs Tsonic, see:
 
 ## 3. Workstream A: Toolchain hygiene and packaging invariants
 
-Status (current): **Mostly done**, with release preflight still missing.
+Status (current): **Done for baseline**, with release automation hardening remaining.
 
 These items are “small” but unblock the entire repo from being reliable at scale.
 
@@ -131,21 +131,23 @@ Merge gate:
 
 - `npm run run-all` leaves `git status --porcelain` empty.
 
-### A3. Publish preflight discipline (later, but plan it now)
+### A3. Publish preflight discipline (implemented; keep hardening)
 
 Current state:
 
-- **Partially completed**: npm preflight and publish flow is implemented in `scripts/publish-npm.sh`.
+- **Completed**:
+  - npm preflight and publish flow in `scripts/publish-npm.sh`
+  - crates preflight and publish flow in `scripts/publish-crates.sh`
 - Enforced checks include:
   - branch must be `main`
   - working tree must be clean
   - local `main` must match `origin/main`
   - full `npm run run-all` gate (unless explicitly skipped)
-  - package version must not already exist on npm
+  - package/crate version must not already exist on npm/crates.io
+  - proof verification required by default in npm publish preflight
 
 Remaining scope:
 
-- add crates publish preflight with equivalent invariants
 - add release-note/tag workflow integration
 
 Merge gate:

@@ -39,8 +39,7 @@ This roadmap is the plan to take that v0 scaffold to a “real language” imple
 - 🔶 Remaining high-priority parity work is tracked in `spec/roadmap-parity-with-tsonic.md` and centers on:
   - compiler phase separation/typed IR discipline,
   - bindgen extractor hardening,
-  - crates-side publish preflight automation (npm side is in place),
-  - external proof-repo verification integration.
+  - signed release notes/tag automation.
 
 ---
 
