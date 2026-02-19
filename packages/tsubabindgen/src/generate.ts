@@ -106,6 +106,20 @@ type RustMethod = {
   readonly returnType: RustType;
 };
 
+type RustTraitMethod = {
+  readonly name: string;
+  readonly typeParams: readonly string[];
+  readonly params: readonly RustField[];
+  readonly returnType: RustType;
+};
+
+type RustTrait = {
+  readonly name: string;
+  readonly typeParams: readonly string[];
+  readonly superTraits: readonly RustType[];
+  readonly methods: readonly RustTraitMethod[];
+};
+
 type RustStruct = {
   readonly name: string;
   readonly fields: readonly RustField[];
@@ -125,8 +139,10 @@ type ParsedModule = {
   readonly consts: RustField[];
   enums: RustEnum[];
   structs: RustStruct[];
+  traits: RustTrait[];
   functions: RustFunction[];
   pendingMethods: Map<string, RustFunction[]>;
+  issues: SkipIssue[];
 };
 
 type SkipIssue = {
@@ -166,6 +182,46 @@ function normalizeTypeText(raw: string): string {
 function normalizeIdentifier(raw: string): string {
   const trimmed = raw.trim();
   return JS_KEYWORDS.has(trimmed) ? `${trimmed}_` : trimmed;
+}
+
+function parseGenericParamNames(raw: string, file: string, issues: SkipIssue[]): string[] {
+  const out: string[] = [];
+  for (const entry0 of splitTopLevel(raw, ",")) {
+    const entry = entry0.trim();
+    if (entry.length === 0) continue;
+    if (entry.startsWith("'")) {
+      issues.push({
+        file,
+        kind: "generic",
+        snippet: entry,
+        reason: "Rust lifetime generic parameters are not representable in TS facades and were skipped.",
+      });
+      continue;
+    }
+    const noConst = entry.startsWith("const ") ? entry.slice("const ".length).trim() : entry;
+    if (entry.startsWith("const ")) {
+      issues.push({
+        file,
+        kind: "generic",
+        snippet: entry,
+        reason: "Rust const generic parameters are not representable in TS facades and were skipped.",
+      });
+    }
+    const [lhs] = noConst.split(":");
+    const [namePart] = (lhs ?? noConst).split("=");
+    const name = normalizeIdentifier((namePart ?? "").trim());
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      issues.push({
+        file,
+        kind: "generic",
+        snippet: entry,
+        reason: "Unsupported generic parameter syntax.",
+      });
+      continue;
+    }
+    out.push(name);
+  }
+  return out;
 }
 
 function stripCommentsAndAttrs(text: string): string {
@@ -292,8 +348,9 @@ function parseType(raw: string, file: string, issues: SkipIssue[]): RustType {
         file,
         kind: "type",
         snippet: text,
-        reason: "Spaces in type expression could not be resolved safely.",
+        reason: "Spaces in type expression could not be resolved safely; falling back to unknown.",
       });
+    return "unknown";
   }
   return normalizeIdentifier(text);
 }
@@ -303,29 +360,19 @@ function parseParams(raw: string, file: string, issues: SkipIssue[]): RustField[
   if (!body) return [];
   const parts = splitTopLevel(body, ",");
   return parts.map((entry): RustField => {
-    const trimmed = entry.trim();
-    const [lhs = "", rhs] = trimmed.split("=").map((part) => part.trim());
-    if (rhs && !lhs.includes(":")) {
-      issues.push({
-        file,
-        kind: "param",
-        snippet: entry,
-        reason: "Unsupported default-valued parameter syntax.",
-      });
-    }
-    const segment = (rhs ?? lhs).trim();
+    const segment = entry.trim();
     if (segment === "&self" || segment === "&mut self" || segment === "self") {
       return { kind: "field", name: segment, type: "self" };
     }
     const idx = segment.indexOf(":");
-  if (idx === -1) {
+    if (idx === -1) {
       issues.push({
         file,
         kind: "param",
         snippet: segment,
         reason: "Non-standard function parameter syntax (expected name: type).",
       });
-      return { kind: "field", name: "unsupported", type: "void" };
+      return { kind: "field", name: "unsupported", type: "unknown" };
     }
     const name = segment.slice(0, idx).trim();
     const type = segment.slice(idx + 1).trim();
@@ -472,6 +519,169 @@ function parseEnums(text: string, file: string, issues: SkipIssue[]): RustEnum[]
   return enums;
 }
 
+function parseTraitMethods(body: string, file: string, issues: SkipIssue[]): RustTraitMethod[] {
+  const methods: RustTraitMethod[] = [];
+  const fnRegex = /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  for (const match of body.matchAll(fnRegex)) {
+    const rawName = match[1];
+    if (!rawName) continue;
+    const name = normalizeIdentifier(rawName);
+    let p = match.index + match[0].length;
+    p = skipWs(body, p);
+
+    let methodTypeParams: string[] = [];
+    if (body[p] === "<") {
+      const genEnd = findMatching(body, p, "<", ">");
+      if (genEnd === -1) {
+        issues.push({
+          file,
+          kind: "trait-method",
+          snippet: name,
+          reason: "Could not parse trait method generic parameters.",
+        });
+        continue;
+      }
+      methodTypeParams = parseGenericParamNames(body.slice(p + 1, genEnd), file, issues);
+      p = genEnd + 1;
+      p = skipWs(body, p);
+    }
+
+    if (body[p] !== "(") {
+      issues.push({
+        file,
+        kind: "trait-method",
+        snippet: name,
+        reason: "Trait method parameter list could not be parsed.",
+      });
+      continue;
+    }
+    const paramsStart = p;
+    const paramsEnd = findMatching(body, paramsStart, "(", ")");
+    if (paramsEnd === -1) {
+      issues.push({
+        file,
+        kind: "trait-method",
+        snippet: name,
+        reason: "Unclosed trait method parameter list.",
+      });
+      continue;
+    }
+    const paramsRaw = body.slice(paramsStart + 1, paramsEnd);
+    let q = skipWs(body, paramsEnd + 1);
+    let returnType = "void";
+    if (body[q] === "-" && body[q + 1] === ">") {
+      q += 2;
+      q = skipWs(body, q);
+      let r = q;
+      while (r < body.length && body[r] !== ";" && body[r] !== "{") r += 1;
+      returnType = parseType(body.slice(q, r), file, issues);
+      q = r;
+    }
+    if (body[q] === "{") {
+      const endBody = findMatching(body, q, "{", "}");
+      if (endBody === -1) {
+        issues.push({
+          file,
+          kind: "trait-method",
+          snippet: name,
+          reason: "Unclosed trait method body.",
+        });
+      }
+    }
+    methods.push({
+      name,
+      typeParams: methodTypeParams,
+      params: parseParams(paramsRaw, file, issues),
+      returnType,
+    });
+  }
+  return methods;
+}
+
+function parseTraits(text: string, file: string, issues: SkipIssue[]): RustTrait[] {
+  const traits: RustTrait[] = [];
+  const traitRegex = /\bpub\s+trait\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+  for (const match of text.matchAll(traitRegex)) {
+    const rawName = match[1];
+    if (!rawName) continue;
+    const name = normalizeIdentifier(rawName);
+    let p = match.index + match[0].length;
+    p = skipWs(text, p);
+
+    let traitTypeParams: string[] = [];
+    if (text[p] === "<") {
+      const genEnd = findMatching(text, p, "<", ">");
+      if (genEnd === -1) {
+        issues.push({
+          file,
+          kind: "trait",
+          snippet: name,
+          reason: "Could not parse trait generic parameters.",
+        });
+        continue;
+      }
+      traitTypeParams = parseGenericParamNames(text.slice(p + 1, genEnd), file, issues);
+      p = genEnd + 1;
+      p = skipWs(text, p);
+    }
+
+    let superTraits: RustType[] = [];
+    if (text[p] === ":") {
+      p += 1;
+      p = skipWs(text, p);
+      let s = p;
+      while (s < text.length && text[s] !== "{") s += 1;
+      if (s >= text.length) {
+        issues.push({
+          file,
+          kind: "trait",
+          snippet: name,
+          reason: "Unclosed trait header while reading supertraits.",
+        });
+        continue;
+      }
+      superTraits = splitTopLevel(text.slice(p, s), "+")
+        .map((entry) => parseType(entry, file, issues))
+        .filter((entry) => entry.length > 0 && entry !== "unknown");
+      p = s;
+    }
+
+    if (text[p] !== "{") {
+      issues.push({
+        file,
+        kind: "trait",
+        snippet: name,
+        reason: "Trait body could not be parsed.",
+      });
+      continue;
+    }
+    const bodyEnd = findMatching(text, p, "{", "}");
+    if (bodyEnd === -1) {
+      issues.push({
+        file,
+        kind: "trait",
+        snippet: name,
+        reason: "Unclosed trait body.",
+      });
+      continue;
+    }
+    const body = text.slice(p + 1, bodyEnd);
+    const associatedTypes = [...body.matchAll(/\btype\s+([A-Za-z_][A-Za-z0-9_]*)\b/g)]
+      .map((m) => m[1])
+      .filter((v): v is string => typeof v === "string")
+      .map((v) => normalizeIdentifier(v));
+    const assocSet = new Set<string>(associatedTypes);
+    const typeParams = [...traitTypeParams, ...[...assocSet].filter((v) => !traitTypeParams.includes(v))];
+    traits.push({
+      name,
+      typeParams,
+      superTraits,
+      methods: parseTraitMethods(body, file, issues),
+    });
+  }
+  return traits;
+}
+
 function parseImpls(text: string, file: string, issues: SkipIssue[]): Map<string, RustFunction[]> {
   const methodsByTarget = new Map<string, RustFunction[]>();
   const implRegex = /\bimpl\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
@@ -506,8 +716,10 @@ function parseModuleDeclarations(text: string, file: string): ParsedModule {
     consts: [],
     enums: [],
     structs: [],
+    traits: [],
     functions: [],
     pendingMethods: new Map(),
+    issues: skip,
   };
   const constRegex = /\bpub\s+const\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^;]+);/g;
   for (const match of source.matchAll(constRegex)) {
@@ -522,11 +734,9 @@ function parseModuleDeclarations(text: string, file: string): ParsedModule {
   }
   module.functions = parseFunctions(source, file, skip);
   module.structs = parseStructs(source, file, skip);
+  module.traits = parseTraits(source, file, skip);
   module.enums = parseEnums(source, file, skip);
   module.pendingMethods = parseImpls(source, file, skip);
-  if (skip.length > 0) {
-    void skip;
-  }
   return module;
 }
 
@@ -650,6 +860,16 @@ function collectMarkerTypes(modules: readonly ParsedModule[]): string[] {
       }
     }
     for (const e of module.enums) emitText(e.name);
+    for (const t of module.traits) {
+      for (const st of t.superTraits) emitText(st);
+      for (const m of t.methods) {
+        emitText(m.returnType);
+        const first = m.params.at(0);
+        if (first?.name === "&self") emitText("ref<this>");
+        if (first?.name === "&mut self") emitText("mutref<this>");
+        for (const p of m.params) emitText(p.type);
+      }
+    }
     for (const f of module.functions) {
       emitText(f.returnType);
       for (const p of f.params) emitText(p.type);
@@ -668,6 +888,31 @@ function emitDts(module: ParsedModule): string {
     lines.push("  private constructor();");
     for (const v of e.variants) {
       lines.push(`  static readonly ${v}: ${e.name};`);
+    }
+    lines.push("}");
+    lines.push("");
+  }
+
+  for (const t of module.traits) {
+    const traitTypeParams = t.typeParams.length > 0 ? `<${t.typeParams.join(", ")}>` : "";
+    const extendsClause = t.superTraits.length > 0 ? ` extends ${t.superTraits.join(", ")}` : "";
+    lines.push(`export interface ${t.name}${traitTypeParams}${extendsClause} {`);
+    for (const m of t.methods) {
+      const methodTypeParams = m.typeParams.length > 0 ? `<${m.typeParams.join(", ")}>` : "";
+      const params = [...m.params];
+      const first = params.at(0);
+      const hasSelf = isSelfLike(first?.name ?? "");
+      const thisParam =
+        first?.name === "&mut self"
+          ? "this: mutref<this>"
+          : first?.name === "&self"
+            ? "this: ref<this>"
+            : first?.name === "self"
+              ? "this: this"
+              : undefined;
+      const restParams = hasSelf ? params.slice(1) : params;
+      const args = [...(thisParam ? [thisParam] : []), ...restParams.map((p) => `${p.name}: ${p.type}`)].join(", ");
+      lines.push(`  ${m.name}${methodTypeParams}(${args}): ${m.returnType};`);
     }
     lines.push("}");
     lines.push("");
@@ -760,6 +1005,29 @@ function moduleForRustPath(modules: readonly ParsedModule[], crateName: string, 
   return target;
 }
 
+function collectSkipIssues(modules: readonly ParsedModule[]): readonly SkipIssue[] {
+  const seen = new Set<string>();
+  const out: SkipIssue[] = [];
+  for (const module of modules) {
+    for (const issue of module.issues) {
+      const key = `${issue.file}\u0000${issue.kind}\u0000${issue.snippet}\u0000${issue.reason}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(issue);
+    }
+  }
+  out.sort((a, b) => {
+    const byFile = a.file.localeCompare(b.file);
+    if (byFile !== 0) return byFile;
+    const byKind = a.kind.localeCompare(b.kind);
+    if (byKind !== 0) return byKind;
+    const bySnippet = a.snippet.localeCompare(b.snippet);
+    if (bySnippet !== 0) return bySnippet;
+    return a.reason.localeCompare(b.reason);
+  });
+  return out;
+}
+
 function runCargoMetadata(manifestPath: string): unknown {
   const result = spawnSync("cargo", ["metadata", "--format-version", "1", "--manifest-path", manifestPath], {
     encoding: "utf-8",
@@ -801,6 +1069,7 @@ export function runGenerate(opts: GenerateOptions): void {
 
   const modules = collectModules(absManifest);
   attachMethods(modules);
+  const skipIssues = collectSkipIssues(modules);
 
   const moduleEntries: { spec: string; jsName: string; rustPath: string; dtsName: string }[] = [];
   for (const module of modules) {
@@ -844,7 +1113,7 @@ export function runGenerate(opts: GenerateOptions): void {
   writeFileSync(join(outDir, "README.md"), `# ${chosenPackageName}\n\nGenerated by tsubabindgen.\n`, "utf-8");
   writeFileSync(
     join(outDir, "tsubabindgen.report.json"),
-    `${JSON.stringify({ generated: new Date().toISOString(), skipped: [] }, null, 2)}\n`,
+    `${JSON.stringify({ schema: 1, skipped: skipIssues }, null, 2)}\n`,
     "utf-8"
   );
 
