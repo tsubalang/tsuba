@@ -81,6 +81,22 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(runtimeSource).to.contain("mod __tsuba_cuda {");
   });
 
+  it("keeps kernel dialect lowering isolated from host orchestration", () => {
+    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
+    const hostSource = readFileSync(hostPath, "utf-8");
+    expect(hostSource).to.contain('from "./kernel-dialect.js";');
+    expect(hostSource).to.not.contain("function lowerKernelExprToCuda(");
+    expect(hostSource).to.not.contain("function lowerKernelStmtToCuda(");
+    expect(hostSource).to.not.contain("function lowerKernelToCudaSource(");
+
+    const dialectPath = join(repoRoot(), "packages", "compiler", "src", "rust", "kernel-dialect.ts");
+    const dialectSource = readFileSync(dialectPath, "utf-8");
+    expect(dialectSource).to.contain("export function collectKernelDecls(");
+    expect(dialectSource).to.contain("function lowerKernelExprToCuda(");
+    expect(dialectSource).to.contain("function lowerKernelStmtToCuda(");
+    expect(dialectSource).to.contain("function lowerKernelToCudaSource(");
+  });
+
   it("uses readonly map wrappers inside module-index pass outputs", () => {
     const moduleIndexPath = join(repoRoot(), "packages", "compiler", "src", "rust", "passes", "module-index.ts");
     const body = getFunctionBodyText(moduleIndexPath, "createUserModuleIndexPass");
