@@ -224,12 +224,15 @@ describe("@tsuba/tsubabindgen", () => {
 
     const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
       schema: number;
-      skipped: Array<{ kind: string; reason: string }>;
+      skipped: Array<{ kind: string; reason: string; file: string }>;
     };
     expect(report.schema).to.equal(1);
     expect(
       report.skipped.some(
-        (entry) => entry.kind === "reexport" && entry.reason.includes("Glob re-exports")
+        (entry) =>
+          entry.kind === "reexport" &&
+          entry.reason.includes("Glob re-exports") &&
+          entry.file === "src/lib.rs"
       )
     ).to.equal(true);
   });
@@ -244,13 +247,15 @@ describe("@tsuba/tsubabindgen", () => {
 
     const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
       schema: number;
-      skipped: Array<{ kind: string; reason: string }>;
+      skipped: Array<{ kind: string; reason: string; file: string }>;
     };
     expect(report.schema).to.equal(1);
     expect(
       report.skipped.some(
         (entry) =>
-          entry.kind === "parse" && entry.reason.includes("Failed to parse Rust module")
+          entry.kind === "parse" &&
+          entry.reason.includes("Failed to parse Rust module") &&
+          entry.file === "src/bad.rs"
       )
     ).to.equal(true);
   });

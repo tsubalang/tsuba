@@ -139,6 +139,39 @@ function normalizePath(p: string): string {
   return p.replaceAll("\\", "/");
 }
 
+function compareText(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function createSpanFileNameMapper(entryFile: string): (raw: string) => string {
+  const entryDir = normalizePath(resolve(dirname(entryFile)));
+  return (raw: string): string => {
+    const abs = normalizePath(resolve(raw));
+    const rel = normalizePath(
+      abs === entryDir ? "." : abs.startsWith(`${entryDir}/`) ? abs.slice(entryDir.length + 1) : abs
+    );
+    return rel.length === 0 ? "." : rel;
+  };
+}
+
+let activeSpanFileNameMapper: ((raw: string) => string) | undefined;
+
+function withSpanFileNameMapper<T>(mapper: (raw: string) => string, fn: () => T): T {
+  const prev = activeSpanFileNameMapper;
+  activeSpanFileNameMapper = mapper;
+  try {
+    return fn();
+  } finally {
+    activeSpanFileNameMapper = prev;
+  }
+}
+
+function mapSpanFileName(raw: string): string {
+  const normalized = normalizePath(raw);
+  return activeSpanFileNameMapper ? activeSpanFileNameMapper(normalized) : normalized;
+}
+
 function rustIdentFromStem(stem: string): string {
   const raw = stem
     .replaceAll(/[^A-Za-z0-9_]/g, "_")
@@ -300,7 +333,7 @@ function readBindingsManifest(path: string, specNode: ts.Node): BindingsManifest
 function spanFromNode(node: ts.Node): Span {
   const sf = node.getSourceFile();
   return {
-    fileName: normalizePath(sf.fileName),
+    fileName: mapSpanFileName(sf.fileName),
     start: node.getStart(sf, false),
     end: node.getEnd(),
   };
@@ -1433,7 +1466,7 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
     const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n");
     if (d.file && d.start !== undefined) {
       const pos = d.file.getLineAndCharacterOfPosition(d.start);
-      fail("TSB0002", `${d.file.fileName}:${pos.line + 1}:${pos.character + 1}: ${msg}`);
+      fail("TSB0002", `${mapSpanFileName(d.file.fileName)}:${pos.line + 1}:${pos.character + 1}: ${msg}`);
     }
     fail("TSB0002", msg);
   }
@@ -1525,7 +1558,7 @@ function createEmitCtx(checker: ts.TypeChecker): EmitCtx {
 
 function normalizeCrateDep(dep: CrateDep): CrateDep {
   const features = (dep.features ?? []).filter((x): x is string => typeof x === "string");
-  const unique = [...new Set(features)].sort((a, b) => a.localeCompare(b));
+  const unique = [...new Set(features)].sort((a, b) => compareText(a, b));
   const base = dep.package ? { name: dep.name, package: dep.package } : { name: dep.name };
   if ("version" in dep) {
     return unique.length === 0
@@ -1564,7 +1597,7 @@ function addUsedCrate(usedCratesByName: Map<string, CrateDep>, node: ts.Node, de
   }
 
   const mergedFeatures = new Set<string>([...(prev.features ?? []), ...(dep.features ?? [])]);
-  const features = [...mergedFeatures].sort((a, b) => a.localeCompare(b));
+  const features = [...mergedFeatures].sort((a, b) => compareText(a, b));
   const base = dep.package ? { name: dep.name, package: dep.package } : { name: dep.name };
   if ("version" in dep) {
     usedCratesByName.set(
@@ -1586,7 +1619,7 @@ function collectSortedKernelDecls(
   const seenKernelNames = new Set<string>();
   return userSourceFiles
     .flatMap((f) => collectKernelDecls(ctx, f, seenKernelNames))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => compareText(a.name, b.name));
 }
 
 function createUserModuleIndex(
@@ -1651,10 +1684,10 @@ function sortUseItems(uses: readonly RustItem[]): RustItem[] {
     if (a.kind !== "use" || b.kind !== "use") return 0;
     const pa = a.path.segments.join("::");
     const pb = b.path.segments.join("::");
-    if (pa !== pb) return pa.localeCompare(pb);
+    if (pa !== pb) return compareText(pa, pb);
     const aa = a.alias ?? "";
     const ab = b.alias ?? "";
-    return aa.localeCompare(ab);
+    return compareText(aa, ab);
   });
 }
 
@@ -2272,9 +2305,10 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       }
       def = { key, name, span, vis: "private", fields };
       ctx.shapeStructsByKey.set(key, def);
-      const list = ctx.shapeStructsByFile.get(span.fileName) ?? [];
+      const sourceFileKey = normalizePath(expr.getSourceFile().fileName);
+      const list = ctx.shapeStructsByFile.get(sourceFileKey) ?? [];
       list.push(def);
-      ctx.shapeStructsByFile.set(span.fileName, list);
+      ctx.shapeStructsByFile.set(sourceFileKey, list);
     }
 
     const fields = def.fields.map((f) => {
@@ -3242,7 +3276,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       const segs = path.path.segments;
       const traitName = segs.length > 0 ? segs[segs.length - 1]! : undefined;
       if (!traitName) return undefined;
-      const candidates = [...(ctx.traitsByName.get(traitName) ?? [])].sort((a, b) => a.key.localeCompare(b.key));
+      const candidates = [...(ctx.traitsByName.get(traitName) ?? [])].sort((a, b) => compareText(a.key, b.key));
       return candidates.find((t) => t.typeParams.length === path.args.length);
     };
 
@@ -3688,6 +3722,11 @@ function lowerInterface(ctx: EmitCtx, decl: ts.InterfaceDeclaration): readonly R
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
+  const spanMapper = createSpanFileNameMapper(opts.entryFile);
+  return withSpanFileNameMapper(spanMapper, () => compileHostToRustImpl(opts));
+}
+
+function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
   // Phase 1: bootstrap TypeScript program + entry contract checks.
   const bootstrap = bootstrapCompileHost(opts);
   const {
@@ -3984,7 +4023,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   items.push(...sortUseItems(rootLowered.uses));
 
   // Modules (non-entry files)
-  const moduleFiles = [...moduleNameByFile.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const moduleFiles = [...moduleNameByFile.entries()].sort((a, b) => compareText(a[0], b[0]));
   for (const [fileName, modName] of moduleFiles) {
     const lowered = loweredByFile.get(fileName);
     if (!lowered) continue;
@@ -4014,7 +4053,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
 
     const usesSorted = sortUseItems(lowered.uses);
     const shapeStructs = [...(ctx.shapeStructsByFile.get(fileName) ?? [])].sort(
-      (a, b) => a.span.start - b.span.start || a.key.localeCompare(b.key)
+      (a, b) => a.span.start - b.span.start || compareText(a.key, b.key)
     );
     const shapeItems = shapeStructs.map((d) => structItemFromDef(d, []));
 
@@ -4053,7 +4092,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(mainCtx, st));
 
   const rootShapeStructs = [...(ctx.shapeStructsByFile.get(entryFileName) ?? [])].sort(
-    (a, b) => a.span.start - b.span.start || a.key.localeCompare(b.key)
+    (a, b) => a.span.start - b.span.start || compareText(a.key, b.key)
   );
   for (const d of rootShapeStructs) items.push(structItemFromDef(d, []));
 
@@ -4081,6 +4120,6 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     mainRs = `${mainRs}\n${renderCudaRuntimeModule(kernels)}\n`;
   }
 
-  const crates = [...usedCratesByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const crates = [...usedCratesByName.values()].sort((a, b) => compareText(a.name, b.name));
   return { mainRs, kernels, crates };
 }

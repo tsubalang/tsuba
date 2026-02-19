@@ -101,7 +101,15 @@ Airplane-grade rule:
   - modules/imports
   - declarations
   - helper/generated names
+- explicit ordering rules:
+  - `use` items sorted by `path` then `alias`
+  - non-entry modules sorted by normalized file key
+  - declaration groups emitted in source order within each module
+  - synthesized shape structs sorted by construction span then stable key
+  - crate dependency list sorted by crate name
+- span comments use entry-relative source paths (never machine-local absolute roots in generated Rust)
 - enforced by regression tests:
   - `packages/compiler/src/rust/risk-regressions.test.ts`
   - `packages/compiler/src/rust/write.test.ts`
+  - `packages/compiler/src/rust/host.test.ts` (ordering checks)
   - fixture goldens via `test/scripts/run-e2e.sh`

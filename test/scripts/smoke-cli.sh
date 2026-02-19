@@ -74,4 +74,20 @@ if [ ! -f "$workspace_root/bindings-out/index.d.ts" ]; then
   exit 1
 fi
 
+echo "==> smoke-cli: standalone bindgen (bundled crate)"
+run_bin "$workspace_root" bindgen \
+  --manifest-path ./local-crates/simple-crate/Cargo.toml \
+  --out ./bindings-out-bundled \
+  --package @tsuba/simple-crate-bundled \
+  --bundle-crate
+
+if [ ! -f "$workspace_root/bindings-out-bundled/crate/Cargo.toml" ]; then
+  echo "FAIL: smoke-cli expected bindings-out-bundled/crate/Cargo.toml"
+  exit 1
+fi
+if [ ! -f "$workspace_root/bindings-out-bundled/tsuba.bindings.json" ]; then
+  echo "FAIL: smoke-cli expected bindings-out-bundled/tsuba.bindings.json"
+  exit 1
+fi
+
 echo "smoke-cli: PASS"

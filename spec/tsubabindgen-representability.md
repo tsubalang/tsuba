@@ -87,6 +87,7 @@ Notes:
 - Module ordering, declaration ordering, and skip report ordering are deterministic.
 - Re-export application runs before emission and sorts declaration lists after application.
 - Repeated runs on same input must produce byte-identical `.d.ts`, bindings, and report files.
+- Skip-report `file` values are crate-root-relative paths (`src/...`) when possible, so reports do not leak machine-local absolute paths.
 
 ---
 

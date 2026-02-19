@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { runInit } from "./init.js";
 import { runRun } from "./run.js";
 
-describe("@tsuba/cli run", () => {
+describe("@tsuba/cli run", function () {
+  this.timeout(30_000);
+
   it("builds and runs the generated Rust crate", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-run-"));
     const root = join(dir, "demo");

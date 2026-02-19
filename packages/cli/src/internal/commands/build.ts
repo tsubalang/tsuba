@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { compileHostToRust } from "@tsuba/compiler";
 
@@ -99,6 +99,7 @@ function firstCargoCompilerError(
 
 function tryMapRustErrorToTs(opts: {
   readonly generatedRoot: string;
+  readonly sourceRoot: string;
   readonly rustFileName: string;
   readonly rustLine: number;
 }): { readonly fileName: string; readonly line: number; readonly col: number } | undefined {
@@ -109,9 +110,13 @@ function tryMapRustErrorToTs(opts: {
   for (let i = Math.min(opts.rustLine - 1, rustLines.length - 1); i >= 0; i--) {
     const parsed = parseSpanComment(rustLines[i]!);
     if (!parsed) continue;
-    const tsText = readFileSync(parsed.fileName, "utf-8");
+    const tsFileName = isAbs(parsed.fileName)
+      ? parsed.fileName
+      : normalizePath(resolve(opts.sourceRoot, parsed.fileName));
+    if (!existsSync(tsFileName)) continue;
+    const tsText = readFileSync(tsFileName, "utf-8");
     const lc = posToLineCol(tsText, parsed.start);
-    return { fileName: parsed.fileName, line: lc.line, col: lc.col };
+    return { fileName: tsFileName, line: lc.line, col: lc.col };
   }
   return undefined;
 }
@@ -230,6 +235,7 @@ export async function runBuild(args: BuildArgs): Promise<void> {
     if (err?.span) {
       const mapped = tryMapRustErrorToTs({
         generatedRoot,
+        sourceRoot: dirname(entryFile),
         rustFileName: err.span.file_name,
         rustLine: err.span.line_start,
       });
