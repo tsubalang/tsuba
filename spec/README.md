@@ -29,3 +29,4 @@ Specs:
 - `compiler-pass-contracts.md` — compiler pass graph and pass I/O contract.
 - `diagnostics-catalog.md` — high-frequency `TSBxxxx` diagnostic catalog by domain.
 - `release-playbook.md` — release preflight, publish order, rollback/republish policy.
+- `incremental-build-roadmap.md` — phased deterministic incremental build strategy with fail-safe fallback.

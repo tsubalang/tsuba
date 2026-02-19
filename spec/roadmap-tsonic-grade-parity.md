@@ -248,7 +248,7 @@ Status values for tracking:
 - [x] npm + crates scripts both enforce equivalent preflight discipline.
 
 ### I.2 Release traceability
-- [ ] Automatic changelog notes from merged PR labels.
+- [x] Automatic changelog notes from merged PR labels.
 - [ ] Signed tags.
 - [x] Reproducible release artifact metadata is generated deterministically.
 
@@ -277,9 +277,15 @@ Status values for tracking:
 
 ## 13) Workstream K — Performance and stability SLOs (P2)
 
-- [ ] Track compile latency and memory by fixture class.
+- [x] Track compile latency and memory by fixture class.
 - [x] Set and enforce regression budgets in full unfiltered verification (`run-all` + E2E metrics + `check-perf-budgets`).
-- [ ] Add incremental build strategy roadmap (if needed) without weakening correctness guarantees.
+- [x] Add incremental build strategy roadmap (if needed) without weakening correctness guarantees.
+
+Implementation evidence:
+
+- `test/scripts/run-e2e.sh` emits per-project latency + RSS metrics into `test/fixtures/.tsuba-e2e-metrics.json`.
+- `scripts/check-perf-budgets.mjs` enforces latency + RSS budgets from `spec/perf-budgets.json`.
+- `spec/incremental-build-roadmap.md` defines staged, fail-safe incremental strategy.
 
 **Exit gate K:** Performance is measured and regressions are visible before release.
 

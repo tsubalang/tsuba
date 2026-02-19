@@ -42,10 +42,10 @@ function asNumber(value, fallback) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function compareMetric(label, actual, max) {
+function compareMetric(label, actual, max, unit = "ms") {
   if (max === undefined) return undefined;
   if (actual <= max) return undefined;
-  return `${label}: ${actual}ms exceeds budget ${max}ms`;
+  return `${label}: ${actual}${unit} exceeds budget ${max}${unit}`;
 }
 
 function main() {
@@ -86,6 +86,11 @@ function main() {
       maxTestMs: asNumber(specific.maxTestMs, asNumber(defaultBudget.maxTestMs, undefined)),
       maxGoldenMs: asNumber(specific.maxGoldenMs, asNumber(defaultBudget.maxGoldenMs, undefined)),
       maxTotalMs: asNumber(specific.maxTotalMs, asNumber(defaultBudget.maxTotalMs, undefined)),
+      maxBuildRssKb: asNumber(specific.maxBuildRssKb, asNumber(defaultBudget.maxBuildRssKb, undefined)),
+      maxRunRssKb: asNumber(specific.maxRunRssKb, asNumber(defaultBudget.maxRunRssKb, undefined)),
+      maxTestRssKb: asNumber(specific.maxTestRssKb, asNumber(defaultBudget.maxTestRssKb, undefined)),
+      maxGoldenRssKb: asNumber(specific.maxGoldenRssKb, asNumber(defaultBudget.maxGoldenRssKb, undefined)),
+      maxTotalRssKb: asNumber(specific.maxTotalRssKb, asNumber(defaultBudget.maxTotalRssKb, undefined)),
     };
 
     const checks = [
@@ -94,6 +99,36 @@ function main() {
       compareMetric(`${fixtureName}/${projectName} test`, asNumber(project.testMs, 0), mergedBudget.maxTestMs),
       compareMetric(`${fixtureName}/${projectName} golden`, asNumber(project.goldenMs, 0), mergedBudget.maxGoldenMs),
       compareMetric(`${fixtureName}/${projectName} total`, asNumber(project.totalMs, 0), mergedBudget.maxTotalMs),
+      compareMetric(
+        `${fixtureName}/${projectName} build-rss`,
+        asNumber(project.buildRssKb, 0),
+        mergedBudget.maxBuildRssKb,
+        "KB"
+      ),
+      compareMetric(
+        `${fixtureName}/${projectName} run-rss`,
+        asNumber(project.runRssKb, 0),
+        mergedBudget.maxRunRssKb,
+        "KB"
+      ),
+      compareMetric(
+        `${fixtureName}/${projectName} test-rss`,
+        asNumber(project.testRssKb, 0),
+        mergedBudget.maxTestRssKb,
+        "KB"
+      ),
+      compareMetric(
+        `${fixtureName}/${projectName} golden-rss`,
+        asNumber(project.goldenRssKb, 0),
+        mergedBudget.maxGoldenRssKb,
+        "KB"
+      ),
+      compareMetric(
+        `${fixtureName}/${projectName} total-rss`,
+        asNumber(project.totalRssKb, 0),
+        mergedBudget.maxTotalRssKb,
+        "KB"
+      ),
     ].filter((x) => x !== undefined);
 
     failures.push(...checks);
@@ -105,6 +140,12 @@ function main() {
     const suiteIssue = compareMetric("e2e-total", e2eTotalMs, maxSuiteTotal);
     if (suiteIssue) failures.push(suiteIssue);
   }
+  const maxSuiteTotalRssKb = asNumber(budget?.suiteBudgets?.maxE2eTotalRssKb, undefined);
+  if (maxSuiteTotalRssKb !== undefined) {
+    const e2eTotalRssKb = asNumber(metrics?.summary?.totalRssKb, 0);
+    const suiteIssue = compareMetric("e2e-total-rss", e2eTotalRssKb, maxSuiteTotalRssKb, "KB");
+    if (suiteIssue) failures.push(suiteIssue);
+  }
 
   if (failures.length > 0) {
     process.stdout.write("FAIL: performance budgets exceeded\n");
@@ -113,7 +154,7 @@ function main() {
   }
 
   process.stdout.write(
-    `PASS: performance budgets satisfied for ${projects.length} project metrics (summary total ${asNumber(metrics?.summary?.totalMs, 0)}ms)\n`
+    `PASS: performance budgets satisfied for ${projects.length} project metrics (summary total ${asNumber(metrics?.summary?.totalMs, 0)}ms, ${asNumber(metrics?.summary?.totalRssKb, 0)}KB)\n`
   );
 }
 
