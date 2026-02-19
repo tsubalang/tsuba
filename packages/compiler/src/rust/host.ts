@@ -18,6 +18,9 @@ import { assertCompilerDiagnosticCode } from "./diagnostics.js";
 import { identExpr, pathExpr, pathType, unitExpr, unitType } from "./ir.js";
 import { runBootstrapPass } from "./passes/bootstrap.js";
 import { createUserModuleIndexPass, resolveRelativeImportPass } from "./passes/module-index.js";
+import { collectFileLoweringsPass } from "./passes/file-lowering.js";
+import { collectTypeModelsPass } from "./passes/type-models.js";
+import { collectAnnotationsPass } from "./passes/annotations.js";
 import { writeRustProgram } from "./write.js";
 
 export type CompileIssue = {
@@ -3722,265 +3725,64 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
     failAt,
   });
 
-  type FileLowered = {
-    readonly fileName: string;
-    readonly sourceFile: ts.SourceFile;
-    readonly uses: RustItem[];
-    readonly classes: { readonly pos: number; readonly decl: ts.ClassDeclaration }[];
-    readonly functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[];
-    readonly typeAliases: { readonly pos: number; readonly decl: ts.TypeAliasDeclaration }[];
-    readonly interfaces: { readonly pos: number; readonly decl: ts.InterfaceDeclaration }[];
-    readonly annotations: readonly {
-      readonly pos: number;
-      readonly node: ts.Statement;
-      readonly target: string;
-      readonly attrs: readonly string[];
-    }[];
-  };
-
   // Phase 4: lower file top-level declarations/imports to typed IR buckets.
-  const loweredByFile = new Map<string, FileLowered>();
-
-  for (const f of userSourceFiles) {
-    const fileName = normalizePath(f.fileName);
-    const uses: RustItem[] = [];
-    const classes: { readonly pos: number; readonly decl: ts.ClassDeclaration }[] = [];
-    const functions: { readonly pos: number; readonly decl: ts.FunctionDeclaration }[] = [];
-    const typeAliases: { readonly pos: number; readonly decl: ts.TypeAliasDeclaration }[] = [];
-    const interfaces: { readonly pos: number; readonly decl: ts.InterfaceDeclaration }[] = [];
-    const annotations: { pos: number; node: ts.Statement; target: string; attrs: string[] }[] = [];
-
-    for (const st of f.statements) {
-      if (ts.isImportDeclaration(st)) {
-        const specNode = st.moduleSpecifier;
-        if (!ts.isStringLiteral(specNode)) {
-          failAt(specNode, "TSB3205", "Import module specifier must be a string literal in v0.");
-        }
-        const spec = specNode.text;
-
-        // Marker/facade imports: compile-time only, no Rust `use` emitted.
-        if (isMarkerModuleSpecifier(spec)) continue;
-
-        const clause = st.importClause;
-        if (!clause) {
-          failAt(st, "TSB3206", "Side-effect-only imports are not supported in v0.");
-        }
-        if (clause.name) {
-          failAt(clause.name, "TSB3207", "Default imports are not supported in v0.");
-        }
-
-        const bindings = clause.namedBindings;
-        if (!bindings) {
-          failAt(st, "TSB3208", "Import must have named bindings in v0.");
-        }
-
-        if (ts.isNamespaceImport(bindings)) {
-          failAt(bindings, "TSB3209", "Namespace imports (import * as x) are not supported in v0.");
-        }
-        if (!ts.isNamedImports(bindings)) {
-          failAt(bindings, "TSB3210", "Unsupported import binding form in v0.");
-        }
-
-        if (spec.startsWith(".")) {
-          const resolved = resolveRelativeImportPass(st, f.fileName, spec, userFilesByName, moduleNameByFile, {
-            normalizePath,
-            rustModuleNameFromFileName,
-            failAt,
-          });
-          for (const el of bindings.elements) {
-            if (kernelDeclForIdentifier(ctx, el.name)) continue;
-            const exported = el.propertyName?.text ?? el.name.text;
-            const local = el.name.text;
-            uses.push({
-              kind: "use",
-              span: spanFromNode(el),
-              path: { segments: ["crate", resolved.mod, exported] },
-              alias: local !== exported ? local : undefined,
-            });
-          }
-        } else {
-          const pkgName = packageNameFromSpecifier(spec);
-          const pkgRoot = findNodeModulesPackageRoot(f.fileName, pkgName);
-          if (!pkgRoot) {
-            failAt(specNode, "TSB3211", `Could not resolve package '${pkgName}' for import ${JSON.stringify(spec)}.`);
-          }
-          const manifestPath = join(pkgRoot, "tsuba.bindings.json");
-          if (!existsSync(manifestPath)) {
-            failAt(
-              specNode,
-              "TSB3212",
-              `No tsuba.bindings.json found for package '${pkgName}' (needed for import ${JSON.stringify(spec)}).`
-            );
-          }
-          const manifest = readBindingsManifest(manifestPath, specNode);
-          const rustModule = manifest.modules[spec];
-          if (!rustModule) {
-            failAt(
-              specNode,
-              "TSB3213",
-              `No module mapping for ${JSON.stringify(spec)} in ${manifestPath}.`
-            );
-          }
-          const depBase = {
-            name: manifest.crate.name,
-            package: manifest.crate.package,
-            features: manifest.crate.features,
-          };
-          if (manifest.crate.path) {
-            addUsedCrate(usedCratesByName, specNode, { ...depBase, path: manifest.crate.path });
-          } else {
-            addUsedCrate(usedCratesByName, specNode, { ...depBase, version: manifest.crate.version! });
-          }
-
-          const baseSegs = splitRustPath(rustModule);
-          for (const el of bindings.elements) {
-            if (kernelDeclForIdentifier(ctx, el.name)) continue;
-            const exported = el.propertyName?.text ?? el.name.text;
-            const local = el.name.text;
-            uses.push({
-              kind: "use",
-              span: spanFromNode(el),
-              path: { segments: [...baseSegs, exported] },
-              alias: local !== exported ? local : undefined,
-            });
-          }
-        }
-        continue;
-      }
-
-      if (
-        ts.isExportDeclaration(st) ||
-        ts.isEmptyStatement(st)
-      ) {
-        continue;
-      }
-
-      if (ts.isTypeAliasDeclaration(st)) {
-        typeAliases.push({ pos: st.pos, decl: st });
-        continue;
-      }
-
-      if (ts.isInterfaceDeclaration(st)) {
-        interfaces.push({ pos: st.pos, decl: st });
-        continue;
-      }
-
-      const ann = tryParseAnnotateStatement(ctx, st);
-      if (ann) {
-        annotations.push({ pos: st.pos, node: st, target: ann.target, attrs: [...ann.attrs] });
-        continue;
-      }
-
-      if (ts.isVariableStatement(st)) {
-        if (hasModifier(st, ts.SyntaxKind.DeclareKeyword)) continue;
-
-        // Allow kernel declarations (compile-time only):
-        //   const k = kernel({ ... } as const, (...) => ...)
-        const declList = st.declarationList;
-        const isConst = (declList.flags & ts.NodeFlags.Const) !== 0;
-        if (!isConst) failAt(st, "TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
-
-        const allKernelDecls = declList.declarations.every((d) => {
-          if (!ts.isIdentifier(d.name)) return false;
-          if (!d.initializer) return false;
-          if (!ts.isCallExpression(d.initializer)) return false;
-          if (!ts.isIdentifier(d.initializer.expression)) return false;
-          return (
-            d.initializer.expression.text === "kernel" &&
-            isFromTsubaGpuLang(ctx, d.initializer.expression)
-          );
-        });
-
-        if (allKernelDecls) continue;
-
-        failAt(st, "TSB3100", `Unsupported top-level variable statement: ${st.getText()}`);
-      }
-
-      if (ts.isFunctionDeclaration(st)) {
-        if (!st.body) continue; // ambient
-        if (!st.name) failAt(st, "TSB3000", "Unnamed functions are not supported in v0.");
-        if (st.name.text === "main" && fileName === entryFileName) continue;
-
-        functions.push({ pos: st.pos, decl: st });
-        continue;
-      }
-
-      if (ts.isClassDeclaration(st)) {
-        if (!st.name) failAt(st, "TSB4000", "Anonymous classes are not supported in v0.");
-        classes.push({ pos: st.pos, decl: st });
-        continue;
-      }
-
-      failAt(st, "TSB3102", `Unsupported top-level statement: ${st.getText()}`);
+  const loweredByFile = collectFileLoweringsPass(
+    userSourceFiles,
+    entryFileName,
+    userFilesByName,
+    moduleNameByFile,
+    {
+      normalizePath,
+      failAt,
+      isMarkerModuleSpecifier,
+      hasModifier,
+      tryParseAnnotateStatement: (statement) => tryParseAnnotateStatement(ctx, statement),
+      isKernelImportIdentifier: (identifier) => Boolean(kernelDeclForIdentifier(ctx, identifier)),
+      isKernelInitializer: (initializer) =>
+        ts.isCallExpression(initializer) &&
+        ts.isIdentifier(initializer.expression) &&
+        initializer.expression.text === "kernel" &&
+        isFromTsubaGpuLang(ctx, initializer.expression),
+      resolveRelativeImport: (atNode, fromFileName, spec, users, mods) =>
+        resolveRelativeImportPass(atNode, fromFileName, spec, users, mods, {
+          normalizePath,
+          rustModuleNameFromFileName,
+          failAt,
+        }),
+      packageNameFromSpecifier,
+      findNodeModulesPackageRoot,
+      readBindingsManifest,
+      addUsedCrate: (atNode, dep) => addUsedCrate(usedCratesByName, atNode, dep),
+      splitRustPath,
+      spanFromNode,
     }
-
-    loweredByFile.set(fileName, {
-      fileName,
-      sourceFile: f,
-      uses,
-      classes,
-      functions,
-      typeAliases,
-      interfaces,
-      annotations,
-    });
-  }
+  );
 
   // Phase 5: pre-collect cross-file type models (unions/struct aliases/traits).
-  for (const lowered of loweredByFile.values()) {
-    for (const ta of lowered.typeAliases) {
-      const unionDef = tryParseDiscriminatedUnionTypeAlias(ta.decl);
+  collectTypeModelsPass(loweredByFile, {
+    onTypeAlias: (decl) => {
+      const unionDef = tryParseDiscriminatedUnionTypeAlias(decl);
       if (unionDef) ctx.unions.set(unionDef.key, unionDef);
 
-      const structDef = tryParseStructTypeAlias(ta.decl);
+      const structDef = tryParseStructTypeAlias(decl);
       if (structDef) ctx.structs.set(structDef.key, structDef);
-    }
-    for (const i0 of lowered.interfaces) {
-      const traitDef = parseTraitDef(checker, i0.decl);
+    },
+    onInterface: (decl) => {
+      const traitDef = parseTraitDef(checker, decl);
       ctx.traitsByKey.set(traitDef.key, traitDef);
       const existing = ctx.traitsByName.get(traitDef.name) ?? [];
       existing.push(traitDef);
       ctx.traitsByName.set(traitDef.name, existing);
-    }
-  }
+    },
+  });
 
   // Phase 6: collect `annotate(...)` markers and validate declaration ordering.
-  const attrsByFile = new Map<string, ReadonlyMap<string, readonly string[]>>();
-  for (const [fileName, lowered] of loweredByFile.entries()) {
-    const declPosByName = new Map<string, number>();
-    for (const f0 of lowered.functions) {
-      const n = f0.decl.name?.text;
-      if (n) declPosByName.set(n, f0.pos);
-    }
-    for (const c0 of lowered.classes) {
-      const n = c0.decl.name?.text;
-      if (n) declPosByName.set(n, c0.pos);
-    }
-    for (const t0 of lowered.typeAliases) {
-      const key = unionKeyFromDecl(t0.decl);
-      if (ctx.unions.has(key) || ctx.structs.has(key)) {
-        declPosByName.set(t0.decl.name.text, t0.pos);
-      }
-    }
-    if (fileName === entryFileName) {
-      declPosByName.set("main", mainFn.pos);
-    }
-
-    const attrsByName = new Map<string, string[]>();
-    for (const a of lowered.annotations) {
-      const declPos = declPosByName.get(a.target);
-      if (declPos === undefined) {
-        failAt(a.node, "TSB3310", `annotate(...) target '${a.target}' was not found in this module.`);
-      }
-      if (a.pos <= declPos) {
-        failAt(a.node, "TSB3311", `annotate(${a.target}, ...) must appear after the declaration in v0.`);
-      }
-      const list = attrsByName.get(a.target) ?? [];
-      list.push(...a.attrs);
-      attrsByName.set(a.target, list);
-    }
-    attrsByFile.set(fileName, attrsByName);
-  }
+  const attrsByFile = collectAnnotationsPass(loweredByFile, entryFileName, mainFn, {
+    failAt,
+    unionKeyFromDecl,
+    hasUnionDef: (key) => ctx.unions.has(key),
+    hasStructDef: (key) => ctx.structs.has(key),
+  });
 
   // Phase 7: emit module + root items into Rust IR in deterministic order.
   // Root (entry file) uses
