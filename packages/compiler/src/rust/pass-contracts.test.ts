@@ -19,15 +19,14 @@ describe("@tsuba/compiler pass contracts", () => {
     return mkdtempSync(join(base, prefix));
   }
 
-  function readHostSource(): { readonly text: string; readonly sf: ts.SourceFile } {
-    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
-    const text = readFileSync(hostPath, "utf-8");
-    const sf = ts.createSourceFile(hostPath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  function readTsSource(path: string): { readonly text: string; readonly sf: ts.SourceFile } {
+    const text = readFileSync(path, "utf-8");
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     return { text, sf };
   }
 
-  function getFunctionBodyText(name: string): string {
-    const { text, sf } = readHostSource();
+  function getFunctionBodyText(path: string, name: string): string {
+    const { text, sf } = readTsSource(path);
     let found: ts.FunctionDeclaration | undefined;
     for (const st of sf.statements) {
       if (ts.isFunctionDeclaration(st) && st.name?.text === name) {
@@ -35,25 +34,36 @@ describe("@tsuba/compiler pass contracts", () => {
         break;
       }
     }
-    expect(found, `Function '${name}' must exist in host.ts`).to.not.equal(undefined);
-    expect(found?.body, `Function '${name}' must have a body`).to.not.equal(undefined);
+    expect(found, `Function '${name}' must exist in ${path}`).to.not.equal(undefined);
+    expect(found?.body, `Function '${name}' in ${path} must have a body`).to.not.equal(undefined);
     const body = found!.body!;
     return text.slice(body.pos, body.end);
   }
 
   it("keeps compileHostToRustImpl pass boundaries explicit", () => {
-    const body = getFunctionBodyText("compileHostToRustImpl");
-    expect(body).to.contain("const bootstrap = bootstrapCompileHost(opts);");
+    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
+    const body = getFunctionBodyText(hostPath, "compileHostToRustImpl");
+    expect(body).to.contain("const bootstrap = runBootstrapPass(opts, {");
     expect(body).to.contain("const kernels = collectSortedKernelDecls(ctx, userSourceFiles);");
-    expect(body).to.contain("createUserModuleIndex(userSourceFiles, entryFileName)");
+    expect(body).to.contain("createUserModuleIndexPass(userSourceFiles, entryFileName, {");
+    expect(body).to.contain("resolveRelativeImportPass(st, f.fileName, spec, userFilesByName, moduleNameByFile, {");
 
     expect(body).to.not.contain("ts.createProgram(");
     expect(body).to.not.contain("ts.getPreEmitDiagnostics(");
     expect(body).to.not.contain("ts.createCompilerHost(");
   });
 
-  it("uses readonly map wrappers for module-index pass outputs", () => {
-    const body = getFunctionBodyText("createUserModuleIndex");
+  it("keeps bootstrap TS-program wiring isolated in bootstrap pass", () => {
+    const bootstrapPath = join(repoRoot(), "packages", "compiler", "src", "rust", "passes", "bootstrap.ts");
+    const body = getFunctionBodyText(bootstrapPath, "runBootstrapPass");
+    expect(body).to.contain("const host = ts.createCompilerHost(compilerOptions, true);");
+    expect(body).to.contain("const program = ts.createProgram([opts.entryFile], compilerOptions, host);");
+    expect(body).to.contain("getPreEmitDiagnostics(program)");
+  });
+
+  it("uses readonly map wrappers inside module-index pass outputs", () => {
+    const moduleIndexPath = join(repoRoot(), "packages", "compiler", "src", "rust", "passes", "module-index.ts");
+    const body = getFunctionBodyText(moduleIndexPath, "createUserModuleIndexPass");
     expect(body).to.contain("userFilesByName: asReadonlyMap(userFilesByName)");
     expect(body).to.contain("moduleNameByFile: asReadonlyMap(moduleNameByFile)");
   });

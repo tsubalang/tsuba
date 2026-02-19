@@ -108,6 +108,12 @@ fi
 echo "==> Release traceability snapshot"
 node "$ROOT_DIR/scripts/release-traceability.mjs" --pretty
 
+echo "==> Release notes snapshot"
+mkdir -p "$ROOT_DIR/.tsuba"
+release_notes_path="$ROOT_DIR/.tsuba/release-notes.latest.md"
+node "$ROOT_DIR/scripts/release-notes.mjs" --auto-range --to HEAD --out "$release_notes_path"
+echo "Release notes: $release_notes_path"
+
 mapfile -t crate_manifests < <(
   git ls-files '**/Cargo.toml' |
     grep -v '^test/fixtures/' |

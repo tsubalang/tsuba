@@ -18,15 +18,16 @@ From `main`, clean tree, synced with `origin/main`:
 2. proof verification (included by publish scripts unless `--no-proof`)
 3. confirm version bumps are intentional and monotonic
 4. capture a release traceability snapshot (`npm run release:traceability`)
-5. capture release notes from merged PRs in range (`npm run release:notes -- --from <from-ref> --to <to-ref>`)
+5. capture release notes from merged PRs (`npm run release:notes -- --auto-range --to HEAD`)
 
 Helpers:
 
 - npm packages: `bash scripts/publish-npm.sh --dry-run`
 - crates: `bash scripts/publish-crates.sh --dry-run`
 - release traceability JSON: `node scripts/release-traceability.mjs --pretty`
-- release notes (markdown/json): `node scripts/release-notes.mjs --from <from-ref> --to <to-ref> [--format markdown|json]`
+- release notes (markdown/json): `node scripts/release-notes.mjs --auto-range --to HEAD [--format markdown|json]`
 - E2E perf budget gate (standalone): `npm run perf:check`
+- publish scripts also snapshot release notes to `.tsuba/release-notes.latest.md`
 
 Both scripts enforce:
 

@@ -16,7 +16,12 @@ type PerfMetrics = {
     readonly runMs: number;
     readonly testMs: number;
     readonly goldenMs: number;
+    readonly buildRssKb: number;
+    readonly runRssKb: number;
+    readonly testRssKb: number;
+    readonly goldenRssKb: number;
     readonly totalMs: number;
+    readonly totalRssKb: number;
   }[];
   readonly fixtures: readonly unknown[];
   readonly summary: {
@@ -26,6 +31,11 @@ type PerfMetrics = {
     readonly runMs: number;
     readonly testMs: number;
     readonly goldenMs: number;
+    readonly totalRssKb: number;
+    readonly buildRssKb: number;
+    readonly runRssKb: number;
+    readonly testRssKb: number;
+    readonly goldenRssKb: number;
   };
 };
 
@@ -65,7 +75,23 @@ describe("@tsuba/cli release operations scripts", () => {
     const res = runNode(script, ["--offline", "--format", "json"]);
     expect(res.status).to.not.equal(0);
     const stderr = `${res.stderr ?? ""}${res.stdout ?? ""}`;
-    expect(stderr).to.contain("--from is required");
+    expect(stderr).to.contain("--from is required (or pass --auto-range)");
+  });
+
+  it("supports release notes auto-range mode", () => {
+    const script = join(repoRoot(), "scripts", "release-notes.mjs");
+    const res = runNode(script, ["--auto-range", "--offline", "--format", "json"]);
+    expect(res.status, `${res.stdout ?? ""}${res.stderr ?? ""}`).to.equal(0);
+    const report = JSON.parse(res.stdout) as {
+      readonly schema: number;
+      readonly kind: string;
+      readonly from: string;
+      readonly to: string;
+    };
+    expect(report.schema).to.equal(1);
+    expect(report.kind).to.equal("release-notes");
+    expect(report.from.length).to.be.greaterThan(0);
+    expect(report.to).to.equal("HEAD");
   });
 
   it("checks perf budgets and returns failing exit code on regression", () => {
@@ -86,7 +112,12 @@ describe("@tsuba/cli release operations scripts", () => {
           runMs: 120,
           testMs: 200,
           goldenMs: 140,
+          buildRssKb: 2000,
+          runRssKb: 1000,
+          testRssKb: 1500,
+          goldenRssKb: 0,
           totalMs: 960,
+          totalRssKb: 4500,
         },
       ],
       fixtures: [],
@@ -97,6 +128,11 @@ describe("@tsuba/cli release operations scripts", () => {
         runMs: 120,
         testMs: 200,
         goldenMs: 140,
+        totalRssKb: 4500,
+        buildRssKb: 2000,
+        runRssKb: 1000,
+        testRssKb: 1500,
+        goldenRssKb: 0,
       },
     };
 
@@ -114,10 +150,16 @@ describe("@tsuba/cli release operations scripts", () => {
               maxTestMs: 500,
               maxGoldenMs: 500,
               maxTotalMs: 1500,
+              maxBuildRssKb: 4000,
+              maxRunRssKb: 2000,
+              maxTestRssKb: 2000,
+              maxGoldenRssKb: 1000,
+              maxTotalRssKb: 10000,
             },
           },
           suiteBudgets: {
             maxE2eTotalMs: 2000,
+            maxE2eTotalRssKb: 20000,
           },
         },
         null,
@@ -139,6 +181,7 @@ describe("@tsuba/cli release operations scripts", () => {
           fixtureBudgets: {
             default: {
               maxBuildMs: 400,
+              maxBuildRssKb: 1000,
             },
           },
         },

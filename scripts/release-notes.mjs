@@ -24,6 +24,7 @@ function parseArgs(argv) {
     outPath: undefined,
     format: "markdown",
     offline: false,
+    autoRange: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -51,14 +52,19 @@ function parseArgs(argv) {
       out.offline = true;
       continue;
     }
+    if (arg === "--auto-range") {
+      out.autoRange = true;
+      continue;
+    }
     if (arg === "-h" || arg === "--help") {
       process.stdout.write(
         [
-          "Usage: node scripts/release-notes.mjs --from <ref> [--to <ref>] [--repo <owner/repo>] [--format markdown|json] [--out <path>] [--offline]",
+          "Usage: node scripts/release-notes.mjs [--from <ref> | --auto-range] [--to <ref>] [--repo <owner/repo>] [--format markdown|json] [--out <path>] [--offline]",
           "",
           "Builds release notes from merged PRs in a commit range.",
           "- Uses merge commits to discover PR numbers.",
           "- Uses GitHub API labels when GITHUB_TOKEN is set and --offline is not used.",
+          "- --auto-range resolves --from to the latest tag, or the root commit when no tags exist.",
           "",
         ].join("\n")
       );
@@ -66,13 +72,26 @@ function parseArgs(argv) {
     }
     throw new Error(`Unknown arg: ${arg}`);
   }
-  if (!out.from) {
-    throw new Error("--from is required");
+  if (out.from && out.autoRange) {
+    throw new Error("--from and --auto-range cannot be used together");
   }
   if (out.format !== "markdown" && out.format !== "json") {
     throw new Error("--format must be markdown or json");
   }
   return out;
+}
+
+function inferAutoFromRef(root) {
+  const tag = tryRunGit(root, "describe --tags --abbrev=0");
+  if (tag && tag.length > 0) return tag;
+  const roots = runGit(root, "rev-list --max-parents=0 HEAD")
+    .split(/\r?\n/g)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
+  if (roots.length === 0) {
+    throw new Error("Unable to infer --from via --auto-range.");
+  }
+  return roots[0];
 }
 
 function inferRepoFromOrigin(root) {
@@ -163,9 +182,13 @@ async function main() {
   const here = fileURLToPath(import.meta.url);
   const root = resolve(join(dirname(here), ".."));
   const args = parseArgs(process.argv.slice(2));
+  const fromRef = args.from ?? (args.autoRange ? inferAutoFromRef(root) : undefined);
+  if (!fromRef) {
+    throw new Error("--from is required (or pass --auto-range)");
+  }
 
   const repo = args.repo ?? inferRepoFromOrigin(root);
-  const refs = extractMergedPrRefs(root, args.from, args.to);
+  const refs = extractMergedPrRefs(root, fromRef, args.to);
   const warnings = [];
   const token = process.env.GITHUB_TOKEN;
 
@@ -215,7 +238,7 @@ async function main() {
   const report = {
     schema: 1,
     kind: "release-notes",
-    from: args.from,
+    from: fromRef,
     to: args.to,
     repo,
     pulls,

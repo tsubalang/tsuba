@@ -7,10 +7,16 @@
       "maxRunMs": 10000,
       "maxTestMs": 10000,
       "maxGoldenMs": 10000,
-      "maxTotalMs": 45000
+      "maxTotalMs": 45000,
+      "maxBuildRssKb": 600000,
+      "maxRunRssKb": 500000,
+      "maxTestRssKb": 500000,
+      "maxGoldenRssKb": 150000,
+      "maxTotalRssKb": 1500000
     }
   },
   "suiteBudgets": {
-    "maxE2eTotalMs": 300000
+    "maxE2eTotalMs": 300000,
+    "maxE2eTotalRssKb": 15000000
   }
 }

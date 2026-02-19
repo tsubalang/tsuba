@@ -186,6 +186,72 @@ now_ms() {
   date +%s%3N
 }
 
+TIME_BIN=""
+if command -v /usr/bin/time >/dev/null 2>&1; then
+  TIME_BIN="/usr/bin/time"
+elif command -v gtime >/dev/null 2>&1; then
+  TIME_BIN="$(command -v gtime)"
+fi
+
+STEP_MS=0
+STEP_RSS_KB=0
+
+run_project_step() {
+  local project_dir="$1"
+  local log_file="$2"
+  shift 2
+
+  local start end status rss_file
+  start="$(now_ms)"
+  rss_file="${log_file}.rss"
+  rm -f "$rss_file"
+
+  if [ -n "$TIME_BIN" ]; then
+    if (cd "$project_dir" && "$TIME_BIN" -f '%M' -o "$rss_file" "$@") >"$log_file" 2>&1; then
+      status=0
+    else
+      status=$?
+    fi
+  else
+    if (cd "$project_dir" && "$@") >"$log_file" 2>&1; then
+      status=0
+    else
+      status=$?
+    fi
+  fi
+
+  end="$(now_ms)"
+  STEP_MS=$((end - start))
+  STEP_RSS_KB=0
+  if [ -f "$rss_file" ]; then
+    STEP_RSS_KB="$(tr -dc '0-9' < "$rss_file")"
+    if [ -z "$STEP_RSS_KB" ]; then
+      STEP_RSS_KB=0
+    fi
+    rm -f "$rss_file"
+  fi
+
+  return "$status"
+}
+
+append_metrics_row() {
+  local fixture="$1"
+  local project="$2"
+  local build_ms="$3"
+  local run_ms="$4"
+  local test_ms="$5"
+  local golden_ms="$6"
+  local build_rss="$7"
+  local run_rss="$8"
+  local test_rss="$9"
+  local golden_rss="${10}"
+  local total_ms=$((build_ms + run_ms + test_ms + golden_ms))
+  local total_rss=$((build_rss + run_rss + test_rss + golden_rss))
+  printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    "$fixture" "$project" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+    "$build_rss" "$run_rss" "$test_rss" "$golden_rss" "$total_ms" "$total_rss" >>"$metrics_tsv"
+}
+
 if [ ! -d "$FIXTURES_DIR" ]; then
   echo "No fixture directory found at $FIXTURES_DIR. Nothing to run."
   exit 0
@@ -205,7 +271,7 @@ run_any=false
 mkdir -p "$ROOT_DIR/.tsuba"
 metrics_tsv="$(mktemp "$ROOT_DIR/.tsuba/e2e-metrics-XXXXXX.tsv")"
 trap 'rm -f "$metrics_tsv"' EXIT
-printf 'fixture\tproject\tbuildMs\trunMs\ttestMs\tgoldenMs\ttotalMs\n' >"$metrics_tsv"
+printf 'fixture\tproject\tbuildMs\trunMs\ttestMs\tgoldenMs\tbuildRssKb\trunRssKb\ttestRssKb\tgoldenRssKb\ttotalMs\ttotalRssKb\n' >"$metrics_tsv"
 
 echo "=== E2E fixtures ==="
 if [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
@@ -264,42 +330,44 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
     run_ms=0
     test_ms=0
     golden_ms=0
+    build_rss_kb=0
+    run_rss_kb=0
+    test_rss_kb=0
+    golden_rss_kb=0
     echo "  $fixture_name/$project_name: BUILD"
-    build_start="$(now_ms)"
-    if (cd "$project_dir" && node "$cli_bin" build) >"$project_dir/.tsuba-e2e-build.log" 2>&1; then
-      build_end="$(now_ms)"
-      build_ms=$((build_end - build_start))
-      :
+    if run_project_step "$project_dir" "$project_dir/.tsuba-e2e-build.log" node "$cli_bin" build; then
+      build_ms="$STEP_MS"
+      build_rss_kb="$STEP_RSS_KB"
     else
-      build_end="$(now_ms)"
-      build_ms=$((build_end - build_start))
+      build_ms="$STEP_MS"
+      build_rss_kb="$STEP_RSS_KB"
       fixture_failed=true
       failed=$((failed + 1))
       echo "  $fixture_name/$project_name: FAIL"
       sed -n '1,200p' "$project_dir/.tsuba-e2e-build.log"
-      total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-      printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-        "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+      append_metrics_row \
+        "$fixture_name" "$project_name" \
+        "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+        "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
       break
     fi
 
     if [ "$fixture_run" = "true" ]; then
       echo "  $fixture_name/$project_name: RUN"
-      run_start="$(now_ms)"
-      if (cd "$project_dir" && node "$cli_bin" run) >"$project_dir/.tsuba-e2e-run.log" 2>&1; then
-        run_end="$(now_ms)"
-        run_ms=$((run_end - run_start))
-        :
+      if run_project_step "$project_dir" "$project_dir/.tsuba-e2e-run.log" node "$cli_bin" run; then
+        run_ms="$STEP_MS"
+        run_rss_kb="$STEP_RSS_KB"
       else
-        run_end="$(now_ms)"
-        run_ms=$((run_end - run_start))
+        run_ms="$STEP_MS"
+        run_rss_kb="$STEP_RSS_KB"
         fixture_failed=true
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (run)"
         sed -n '1,200p' "$project_dir/.tsuba-e2e-run.log"
-        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+        append_metrics_row \
+          "$fixture_name" "$project_name" \
+          "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+          "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
         break
       fi
 
@@ -311,9 +379,10 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
             echo "  $fixture_name/$project_name: FAIL (run output)"
             echo "    missing expected substring: $expected"
             sed -n '1,200p' "$project_dir/.tsuba-e2e-run.log"
-            total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-            printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-              "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+            append_metrics_row \
+              "$fixture_name" "$project_name" \
+              "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+              "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
             break 2
           fi
         done
@@ -322,21 +391,20 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
 
     if [ "$fixture_test" = "true" ]; then
       echo "  $fixture_name/$project_name: TEST"
-      test_start="$(now_ms)"
-      if (cd "$project_dir" && node "$cli_bin" test) >"$project_dir/.tsuba-e2e-test.log" 2>&1; then
-        test_end="$(now_ms)"
-        test_ms=$((test_end - test_start))
-        :
+      if run_project_step "$project_dir" "$project_dir/.tsuba-e2e-test.log" node "$cli_bin" test; then
+        test_ms="$STEP_MS"
+        test_rss_kb="$STEP_RSS_KB"
       else
-        test_end="$(now_ms)"
-        test_ms=$((test_end - test_start))
+        test_ms="$STEP_MS"
+        test_rss_kb="$STEP_RSS_KB"
         fixture_failed=true
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (test)"
         sed -n '1,200p' "$project_dir/.tsuba-e2e-test.log"
-        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+        append_metrics_row \
+          "$fixture_name" "$project_name" \
+          "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+          "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
         break
       fi
     fi
@@ -358,9 +426,10 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (missing golden)"
         echo "    expected golden path: $expected_main_rs"
-        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+        append_metrics_row \
+          "$fixture_name" "$project_name" \
+          "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+          "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
         break
       fi
       if [ ! -f "$generated_main_rs" ]; then
@@ -370,9 +439,10 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
         failed=$((failed + 1))
         echo "  $fixture_name/$project_name: FAIL (missing generated main.rs)"
         echo "    generated path: $generated_main_rs"
-        total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-        printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-          "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+        append_metrics_row \
+          "$fixture_name" "$project_name" \
+          "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+          "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
         break
       fi
       if diff -u "$expected_main_rs" "$generated_main_rs" >"$project_dir/.tsuba-e2e-golden.diff"; then
@@ -395,17 +465,19 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
           failed=$((failed + 1))
           echo "  $fixture_name/$project_name: FAIL (golden mismatch)"
           sed -n '1,200p' "$project_dir/.tsuba-e2e-golden.diff"
-          total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-          printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-            "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+          append_metrics_row \
+            "$fixture_name" "$project_name" \
+            "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+            "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
           break
         fi
       fi
     fi
 
-    total_ms=$((build_ms + run_ms + test_ms + golden_ms))
-    printf '%s\t%s\t%d\t%d\t%d\t%d\t%d\n' \
-      "$fixture_name" "$project_name" "$build_ms" "$run_ms" "$test_ms" "$golden_ms" "$total_ms" >>"$metrics_tsv"
+    append_metrics_row \
+      "$fixture_name" "$project_name" \
+      "$build_ms" "$run_ms" "$test_ms" "$golden_ms" \
+      "$build_rss_kb" "$run_rss_kb" "$test_rss_kb" "$golden_rss_kb"
   done
 
   if [ "$fixture_failed" = true ]; then
@@ -427,7 +499,7 @@ const [tsvPath, outPath] = process.argv.slice(1);
 const text = fs.readFileSync(tsvPath, "utf8").trim();
 const lines = text.length === 0 ? [] : text.split(/\r?\n/g);
 const rows = lines.slice(1).map((line) => {
-  const [fixture, project, buildMs, runMs, testMs, goldenMs, totalMs] = line.split("\t");
+  const [fixture, project, buildMs, runMs, testMs, goldenMs, buildRssKb, runRssKb, testRssKb, goldenRssKb, totalMs, totalRssKb] = line.split("\t");
   return {
     fixture,
     project,
@@ -435,18 +507,40 @@ const rows = lines.slice(1).map((line) => {
     runMs: Number.parseInt(runMs, 10) || 0,
     testMs: Number.parseInt(testMs, 10) || 0,
     goldenMs: Number.parseInt(goldenMs, 10) || 0,
+    buildRssKb: Number.parseInt(buildRssKb, 10) || 0,
+    runRssKb: Number.parseInt(runRssKb, 10) || 0,
+    testRssKb: Number.parseInt(testRssKb, 10) || 0,
+    goldenRssKb: Number.parseInt(goldenRssKb, 10) || 0,
     totalMs: Number.parseInt(totalMs, 10) || 0,
+    totalRssKb: Number.parseInt(totalRssKb, 10) || 0,
   };
 });
 const byFixture = new Map();
 for (const row of rows) {
-  const prev = byFixture.get(row.fixture) ?? { projects: 0, totalMs: 0, buildMs: 0, runMs: 0, testMs: 0, goldenMs: 0 };
+  const prev = byFixture.get(row.fixture) ?? {
+    projects: 0,
+    totalMs: 0,
+    buildMs: 0,
+    runMs: 0,
+    testMs: 0,
+    goldenMs: 0,
+    totalRssKb: 0,
+    buildRssKb: 0,
+    runRssKb: 0,
+    testRssKb: 0,
+    goldenRssKb: 0
+  };
   prev.projects += 1;
   prev.totalMs += row.totalMs;
   prev.buildMs += row.buildMs;
   prev.runMs += row.runMs;
   prev.testMs += row.testMs;
   prev.goldenMs += row.goldenMs;
+  prev.totalRssKb += row.totalRssKb;
+  prev.buildRssKb += row.buildRssKb;
+  prev.runRssKb += row.runRssKb;
+  prev.testRssKb += row.testRssKb;
+  prev.goldenRssKb += row.goldenRssKb;
   byFixture.set(row.fixture, prev);
 }
 const fixtures = [...byFixture.entries()]
@@ -460,9 +554,26 @@ const summary = rows.reduce(
     acc.runMs += row.runMs;
     acc.testMs += row.testMs;
     acc.goldenMs += row.goldenMs;
+    acc.totalRssKb += row.totalRssKb;
+    acc.buildRssKb += row.buildRssKb;
+    acc.runRssKb += row.runRssKb;
+    acc.testRssKb += row.testRssKb;
+    acc.goldenRssKb += row.goldenRssKb;
     return acc;
   },
-  { projects: 0, totalMs: 0, buildMs: 0, runMs: 0, testMs: 0, goldenMs: 0 }
+  {
+    projects: 0,
+    totalMs: 0,
+    buildMs: 0,
+    runMs: 0,
+    testMs: 0,
+    goldenMs: 0,
+    totalRssKb: 0,
+    buildRssKb: 0,
+    runRssKb: 0,
+    testRssKb: 0,
+    goldenRssKb: 0
+  }
 );
 const report = {
   schema: 1,

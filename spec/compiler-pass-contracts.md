@@ -15,14 +15,22 @@ Airplane-grade rule:
 1. **Bootstrap pass**
    - Input: `CompileHostOptions`
    - Output: `CompileBootstrap`
-   - Source: `packages/compiler/src/rust/host.ts` (`bootstrapCompileHost`)
+   - Source: `packages/compiler/src/rust/passes/bootstrap.ts` (`runBootstrapPass`)
    - Responsibilities:
      - create TS program/checker
      - enforce entry contract (`main`)
      - resolve runtime policy (`none`/`tokio`)
      - collect source files in compilation scope
 
-2. **Semantic harvest pass**
+2. **Module index / import resolution pass**
+   - Input: user source file set + entry filename
+   - Output: `UserModuleIndex` + resolved relative import targets
+   - Source: `packages/compiler/src/rust/passes/module-index.ts`
+   - Responsibilities:
+     - deterministic source-file → Rust-module mapping
+     - collision diagnostics for module names
+     - strict relative import target resolution
+3. **Semantic harvest pass**
    - Input: `CompileBootstrap`
    - Output:
      - union/type definitions
@@ -34,7 +42,7 @@ Airplane-grade rule:
      - gather nominal semantic entities before statement lowering
      - precompute conformance metadata
 
-3. **Lowering pass**
+4. **Lowering pass**
    - Input: TS AST + harvested semantic context
    - Output: Rust IR (`RustProgram`)
    - Source:
@@ -47,14 +55,14 @@ Airplane-grade rule:
      - discriminated union lowering
      - kernel extraction + launch lowering
 
-4. **Emission pass**
+5. **Emission pass**
    - Input: Rust IR
    - Output: `mainRs` text (deterministic)
    - Source:
      - writer: `packages/compiler/src/rust/write.ts`
      - entry: `writeRustProgram(...)`
 
-5. **CLI build orchestration pass**
+6. **CLI build orchestration pass**
    - Input: compiler output + workspace/project config
    - Output:
      - generated crate (`Cargo.toml`, `src/main.rs`)
@@ -66,6 +74,7 @@ Airplane-grade rule:
 ## 2) Contract types (authoritative)
 
 - `CompileHostOptions` / `CompileHostOutput`: `packages/compiler/src/rust/host.ts`
+- bootstrap/module-index contracts: `packages/compiler/src/rust/passes/contracts.ts`
 - Rust IR:
   - `RustType`, `RustExpr`, `RustStmt`, `RustItem`, `RustProgram`
   - file: `packages/compiler/src/rust/ir.ts`
