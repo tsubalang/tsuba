@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { compileHostToRust } from "@tsuba/compiler";
 
+import { loadProjectContext } from "../config.js";
 import { mergeCargoDependencies, renderCargoToml } from "./cargo.js";
 
 type CargoMessageSpan = {
@@ -22,54 +23,9 @@ type CargoCompilerMessage = {
   };
 };
 
-type WorkspaceConfig = {
-  readonly schema: number;
-  readonly rustEdition: "2021" | "2024";
-  readonly packagesDir: string;
-  readonly generatedDirName: string;
-  readonly cargoTargetDir: string;
-  readonly gpu: {
-    readonly backend: "none" | "cuda";
-    readonly cuda?: {
-      readonly toolkitPath: string;
-      readonly sm: number;
-    };
-  };
-  readonly runtime?: {
-    readonly kind: "none" | "tokio";
-  };
-};
-
-type ProjectConfig = {
-  readonly schema: number;
-  readonly name: string;
-  readonly kind: "bin" | "lib";
-  readonly entry: string;
-  readonly gpu?: {
-    readonly enabled: boolean;
-  };
-  readonly crate: {
-    readonly name: string;
-  };
-  readonly deps?: {
-    readonly crates?: readonly {
-      readonly id: string;
-      readonly package?: string;
-      readonly version?: string;
-      readonly path?: string;
-      readonly features?: readonly string[];
-    }[];
-  };
-};
-
 export type BuildArgs = {
   readonly dir: string;
 };
-
-function readJson<T>(path: string): T {
-  const raw = readFileSync(path, "utf-8");
-  return JSON.parse(raw) as T;
-}
 
 function normalizePath(p: string): string {
   return p.replaceAll("\\", "/");
@@ -160,40 +116,6 @@ function tryMapRustErrorToTs(opts: {
   return undefined;
 }
 
-function findWorkspaceRoot(fromDir: string): string {
-  let cur = resolve(fromDir);
-  while (true) {
-    const candidate = join(cur, "tsuba.workspace.json");
-    try {
-      readFileSync(candidate, "utf-8");
-      return cur;
-    } catch {
-      // continue
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  throw new Error("Could not find tsuba.workspace.json in this directory or any parent.");
-}
-
-function findProjectRoot(fromDir: string): string {
-  let cur = resolve(fromDir);
-  while (true) {
-    const candidate = join(cur, "tsuba.json");
-    try {
-      readFileSync(candidate, "utf-8");
-      return cur;
-    } catch {
-      // continue
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  throw new Error("Could not find tsuba.json in this directory or any parent.");
-}
-
 function compileCudaKernels(opts: {
   readonly generatedRoot: string;
   readonly cuda: { readonly toolkitPath: string; readonly sm: number };
@@ -231,24 +153,18 @@ function compileCudaKernels(opts: {
 }
 
 export async function runBuild(args: BuildArgs): Promise<void> {
-  const workspaceRoot = findWorkspaceRoot(args.dir);
-  const workspace = readJson<WorkspaceConfig>(join(workspaceRoot, "tsuba.workspace.json"));
-  const projectRoot = findProjectRoot(args.dir);
-  const project = readJson<ProjectConfig>(join(projectRoot, "tsuba.json"));
-
-  if (workspace.schema !== 1) throw new Error("Unsupported tsuba.workspace.json schema.");
-  if (project.schema !== 1) throw new Error("Unsupported tsuba.json schema.");
+  const { workspaceRoot, workspace, projectRoot, project } = loadProjectContext(args.dir);
 
   if (project.kind !== "bin") throw new Error("Only kind=bin is supported in v0.");
 
   const entryFile = resolve(projectRoot, project.entry);
   const out = compileHostToRust({
     entryFile,
-    runtimeKind: workspace.runtime?.kind ?? "none",
+    runtimeKind: workspace.runtime.kind,
   });
 
   if (out.kernels.length > 0) {
-    if (!project.gpu?.enabled) {
+    if (!project.gpu.enabled) {
       throw new Error(
         "GPU kernels were found, but this project has gpu.enabled=false. Set it to true in tsuba.json."
       );

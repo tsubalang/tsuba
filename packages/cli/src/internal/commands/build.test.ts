@@ -83,6 +83,27 @@ describe("@tsuba/cli build", function () {
     expect(String(err)).to.contain("Unsupported tsuba.workspace.json schema.");
   });
 
+  it("rejects unknown keys in tsuba.workspace.json (strict schema)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tsuba-build-ws-unknown-key-"));
+    const projectName = basename(root);
+    await runInit({ dir: root });
+    const wsPath = join(root, "tsuba.workspace.json");
+    const projectRoot = join(root, "packages", projectName);
+    const ws = JSON.parse(readFileSync(wsPath, "utf-8")) as Record<string, unknown>;
+
+    ws.unexpected = true;
+    writeFileSync(wsPath, JSON.stringify(ws, null, 2) + "\n", "utf-8");
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(String(err)).to.contain("unknown key 'unexpected'");
+  });
+
   it("rejects unsupported tsuba.json schema", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-build-invalid-project-"));
     const root = join(dir, "demo");
@@ -102,6 +123,27 @@ describe("@tsuba/cli build", function () {
     }
 
     expect(String(err)).to.contain("Unsupported tsuba.json schema.");
+  });
+
+  it("rejects unknown keys in tsuba.json (strict schema)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-build-project-unknown-key-"));
+    const root = join(dir, "demo");
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", "demo");
+    const projectJsonPath = join(projectRoot, "tsuba.json");
+    const project = JSON.parse(readFileSync(projectJsonPath, "utf-8")) as Record<string, unknown>;
+
+    project.unexpected = true;
+    writeFileSync(projectJsonPath, JSON.stringify(project, null, 2) + "\n", "utf-8");
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(String(err)).to.contain("unknown key 'unexpected'");
   });
 
   it("errors when imported bindings manifest is not schema-1 compatible", async () => {
@@ -570,5 +612,35 @@ describe("@tsuba/cli build", function () {
     expect(mainRs).to.contain("mod __tsuba_cuda {");
     expect(mainRs).to.contain('include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/kernels/k.ptx"))');
     expect(mainRs).to.contain("__tsuba_cuda::launch_k(1, 1, 1, 256, 1, 1");
+  });
+
+  it("uses the nearest workspace config when workspaces are nested", async () => {
+    const outerRoot = mkdtempSync(join(tmpdir(), "tsuba-build-nested-workspaces-"));
+    const innerRoot = join(outerRoot, "inner");
+    await runInit({ dir: innerRoot });
+
+    writeFileSync(
+      join(outerRoot, "tsuba.workspace.json"),
+      JSON.stringify(
+        {
+          schema: 1,
+          rustEdition: "2021",
+          packagesDir: "packages",
+          generatedDirName: "outer-generated",
+          cargoTargetDir: ".tsuba/target",
+          gpu: { backend: "none" },
+          runtime: { kind: "none" },
+        },
+        null,
+        2
+      ) + "\n",
+      "utf-8"
+    );
+
+    const projectRoot = join(innerRoot, "packages", "inner");
+    await runBuild({ dir: join(projectRoot, "src") });
+
+    expect(existsSync(join(projectRoot, "generated", "src", "main.rs"))).to.equal(true);
+    expect(existsSync(join(projectRoot, "outer-generated", "src", "main.rs"))).to.equal(false);
   });
 });
