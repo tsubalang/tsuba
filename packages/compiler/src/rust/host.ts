@@ -1926,6 +1926,28 @@ function rustTypeEq(a: RustType, b: RustType): boolean {
   }
 }
 
+function substituteRustType(type: RustType, subst: ReadonlyMap<string, RustType>): RustType {
+  switch (type.kind) {
+    case "unit":
+      return type;
+    case "ref":
+      return { ...type, inner: substituteRustType(type.inner, subst) };
+    case "slice":
+      return { ...type, inner: substituteRustType(type.inner, subst) };
+    case "array":
+      return { ...type, inner: substituteRustType(type.inner, subst) };
+    case "tuple":
+      return { ...type, elems: type.elems.map((e) => substituteRustType(e, subst)) };
+    case "path": {
+      if (type.path.segments.length === 1 && type.args.length === 0) {
+        const replacement = subst.get(type.path.segments[0]!);
+        if (replacement) return replacement;
+      }
+      return { ...type, args: type.args.map((a) => substituteRustType(a, subst)) };
+    }
+  }
+}
+
 function lowerExprWithTypeArgsToRustType(
   ownerLabel: string,
   exprWithTypeArgs: ts.ExpressionWithTypeArguments,
@@ -3215,16 +3237,73 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
 
   const traitImpls: RustItem[] = [];
   for (const imp of implementsTraits) {
-    const traitSegs = imp.traitPath.kind === "path" ? imp.traitPath.path.segments : [];
-    const traitName = traitSegs.length > 0 ? traitSegs[traitSegs.length - 1]! : undefined;
-    const traitCandidates = traitName
-      ? [...(ctx.traitsByName.get(traitName) ?? [])].sort((a, b) => a.key.localeCompare(b.key))
-      : [];
-    const traitArity = imp.traitPath.kind === "path" ? imp.traitPath.args.length : 0;
-    const traitDef = traitCandidates.find((t) => t.typeParams.length === traitArity);
+    const traitDefForPath = (path: RustType): TraitDef | undefined => {
+      if (path.kind !== "path") return undefined;
+      const segs = path.path.segments;
+      const traitName = segs.length > 0 ? segs[segs.length - 1]! : undefined;
+      if (!traitName) return undefined;
+      const candidates = [...(ctx.traitsByName.get(traitName) ?? [])].sort((a, b) => a.key.localeCompare(b.key));
+      return candidates.find((t) => t.typeParams.length === path.args.length);
+    };
 
-    const traitItems: RustItem[] = [];
-    if (traitDef) {
+    const traitTypeKey = (type: RustType): string => {
+      switch (type.kind) {
+        case "unit":
+          return "()";
+        case "ref":
+          return `&${type.mut ? "mut " : ""}${type.lifetime ? `'${type.lifetime} ` : ""}${traitTypeKey(type.inner)}`;
+        case "slice":
+          return `[${traitTypeKey(type.inner)}]`;
+        case "array":
+          return `[${traitTypeKey(type.inner)};${type.len}]`;
+        case "tuple":
+          return `(${type.elems.map((e) => traitTypeKey(e)).join(",")})`;
+        case "path":
+          return `${type.path.segments.join("::")}<${type.args.map((a) => traitTypeKey(a)).join(",")}>`;
+      }
+    };
+
+    const queue: RustType[] = [imp.traitPath];
+    const seenTraitKeys = new Set<string>();
+    const requirements: { readonly path: RustType; readonly def: TraitDef }[] = [];
+
+    while (queue.length > 0) {
+      const nextPath = queue.shift()!;
+      if (nextPath.kind !== "path") continue;
+      const key = traitTypeKey(nextPath);
+      if (seenTraitKeys.has(key)) continue;
+      seenTraitKeys.add(key);
+
+      const nextDef = traitDefForPath(nextPath);
+      if (!nextDef) continue;
+
+      requirements.push({ path: nextPath, def: nextDef });
+
+      const traitTypeSubst = new Map<string, RustType>();
+      for (let i = 0; i < nextDef.typeParams.length; i++) {
+        const traitParam = nextDef.typeParams[i]!;
+        const traitArg = nextPath.args[i];
+        if (traitArg) traitTypeSubst.set(traitParam.name, traitArg);
+      }
+      for (const superTrait of nextDef.superTraits) {
+        queue.push(substituteRustType(superTrait, traitTypeSubst));
+      }
+    }
+
+    for (const requirement of requirements) {
+      const traitDef = requirement.def;
+      const traitPath = requirement.path;
+
+      const traitTypeSubst = new Map<string, RustType>();
+      if (traitPath.kind === "path") {
+        for (let i = 0; i < traitDef.typeParams.length; i++) {
+          const traitParam = traitDef.typeParams[i]!;
+          const traitArg = traitPath.args[i];
+          if (traitArg) traitTypeSubst.set(traitParam.name, traitArg);
+        }
+      }
+
+      const traitItems: RustItem[] = [];
       for (const req of traitDef.methods) {
         const got = classMethodsByName.get(req.name);
         if (!got) {
@@ -3248,7 +3327,20 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
             `Trait method '${req.name}' receiver mismatch for '${traitDef.name}'.`
           );
         }
-        if (got.typeParams.length !== req.typeParams.length) {
+
+        const methodScopeSubst = new Map(traitTypeSubst);
+        for (const tp of req.typeParams) methodScopeSubst.delete(tp.name);
+        const reqTypeParams = req.typeParams.map((tp) => ({
+          ...tp,
+          bounds: tp.bounds.map((b) => substituteRustType(b, methodScopeSubst)),
+        }));
+        const reqParams = req.params.map((p) => ({
+          ...p,
+          type: substituteRustType(p.type, methodScopeSubst),
+        }));
+        const reqRet = substituteRustType(req.ret, methodScopeSubst);
+
+        if (got.typeParams.length !== reqTypeParams.length) {
           failAt(
             imp.node,
             "TSB4007",
@@ -3257,7 +3349,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
         }
         for (let i = 0; i < got.typeParams.length; i++) {
           const g = got.typeParams[i]!;
-          const r = req.typeParams[i]!;
+          const r = reqTypeParams[i]!;
           if (g.name !== r.name || g.bounds.length !== r.bounds.length) {
             failAt(imp.node, "TSB4007", `Trait method '${req.name}' generic constraint mismatch for '${traitDef.name}'.`);
           }
@@ -3267,7 +3359,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
             }
           }
         }
-        if (got.params.length !== req.params.length) {
+        if (got.params.length !== reqParams.length) {
           failAt(
             imp.node,
             "TSB4007",
@@ -3276,12 +3368,12 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
         }
         for (let i = 0; i < got.params.length; i++) {
           const gp = got.params[i]!;
-          const rp = req.params[i]!;
+          const rp = reqParams[i]!;
           if (gp.name !== rp.name || !rustTypeEq(gp.type, rp.type)) {
             failAt(imp.node, "TSB4007", `Trait method '${req.name}' parameter mismatch for '${traitDef.name}'.`);
           }
         }
-        if (!rustTypeEq(got.ret, req.ret)) {
+        if (!rustTypeEq(got.ret, reqRet)) {
           failAt(imp.node, "TSB4007", `Trait method '${req.name}' return type mismatch for '${traitDef.name}'.`);
         }
 
@@ -3299,16 +3391,16 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
           body: got.body,
         });
       }
-    }
 
-    traitImpls.push({
-      kind: "impl",
-      span: classSpan,
-      typeParams: classTypeParams,
-      traitPath: imp.traitPath,
-      typePath: classTypePath,
-      items: traitItems,
-    });
+      traitImpls.push({
+        kind: "impl",
+        span: classSpan,
+        typeParams: classTypeParams,
+        traitPath,
+        typePath: classTypePath,
+        items: traitItems,
+      });
+    }
   }
 
   return [structItem, ...traitImpls, implItem];

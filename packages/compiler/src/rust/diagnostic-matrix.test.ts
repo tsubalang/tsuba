@@ -17,6 +17,7 @@ type CaseDef = {
     | "types-and-traits";
   readonly entrySource: string;
   readonly extraFiles?: Readonly<Record<string, string>>;
+  readonly runtimeKind?: "none" | "tokio";
 };
 
 describe("@tsuba/compiler diagnostics matrix", () => {
@@ -38,7 +39,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       writeFileSync(abs, source, "utf-8");
     }
     try {
-      compileHostToRust({ entryFile: entry });
+      compileHostToRust({ entryFile: entry, runtimeKind: def.runtimeKind });
       throw new Error(`Expected compile failure for case: ${def.name}`);
     } catch (error) {
       expect(error).to.be.instanceOf(CompileError);
@@ -163,6 +164,20 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       ].join("\n"),
     },
     {
+      name: "entry expressions reject await outside async functions",
+      expectedCode: "TSB1308",
+      expectedDomain: "entry-and-expressions",
+      entrySource: [
+        "declare function f(): Promise<void>;",
+        "",
+        "export function main(): void {",
+        "  // @ts-ignore -- intentionally validated by Tsuba diagnostics",
+        "  await f();",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
       name: "entry expressions require place expressions for &mut borrows",
       expectedCode: "TSB1310",
       expectedDomain: "entry-and-expressions",
@@ -179,6 +194,32 @@ describe("@tsuba/compiler diagnostics matrix", () => {
         "}",
         "",
       ].join("\n"),
+    },
+    {
+      name: "entry contract rejects async main without tokio runtime policy",
+      expectedCode: "TSB1004",
+      expectedDomain: "entry-and-expressions",
+      entrySource: [
+        "export async function main(): Promise<void> {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      runtimeKind: "none",
+    },
+    {
+      name: "entry contract rejects async main returning non-void promise payload",
+      expectedCode: "TSB1003",
+      expectedDomain: "entry-and-expressions",
+      entrySource: [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export async function main(): Promise<i32> {",
+        "  return 1 as i32;",
+        "}",
+        "",
+      ].join("\n"),
+      runtimeKind: "tokio",
     },
     {
       name: "control-flow rejects union switch default clauses",

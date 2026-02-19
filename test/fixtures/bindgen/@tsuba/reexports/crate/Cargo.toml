@@ -1,0 +1,8 @@
+[package]
+name = "reexports-crate"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "reexports_crate"
+path = "src/lib.rs"

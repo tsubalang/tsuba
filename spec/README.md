@@ -25,3 +25,6 @@ Specs:
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
 - `tsubabindgen.md` — bindgen design and v0 constraints.
+- `tsubabindgen-representability.md` — concrete bindgen surface/skip taxonomy and determinism contract.
+- `compiler-pass-contracts.md` — compiler pass graph and pass I/O contract.
+- `diagnostics-catalog.md` — high-frequency `TSBxxxx` diagnostic catalog by domain.

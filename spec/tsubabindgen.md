@@ -71,11 +71,14 @@ v0 bindgen supports crates whose public API uses a restricted set of types that 
 - `pub const`
 - `pub trait` (method signatures and associated types represented as trait generic parameters)
 - inherent `impl` methods (`&self`, `&mut self`, constructors, and generic methods)
+- explicit `pub use` re-exports (`name`, `rename`, grouped items)
 - exported macros (`#[macro_export] macro_rules! ...`) emitted as marker-compatible callable stubs
 
 Traits may be supported if they use supported types.
 
 Macros are supported, but only under Tsuba’s TS-valid macro model (see `macros.md`).
+
+Glob re-exports (`pub use module::*`) are intentionally unsupported for v0 facade emission and must appear as explicit `reexport` skip entries in `tsubabindgen.report.json`.
 
 ### 3.2 Supported types
 
@@ -109,6 +112,8 @@ v0 uses a dedicated Rust helper extractor:
 - output: stable JSON IR consumed by `packages/tsubabindgen/src/generate.ts`
 
 This is the required metadata path for v0 (not `rustdoc-json`), chosen for deterministic behavior and stable coverage.
+
+If a Rust module cannot be parsed, extractor must emit an explicit module-scoped `parse` skip issue and generation continues for other modules.
 
 ---
 

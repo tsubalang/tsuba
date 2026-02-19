@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use syn::{
     Fields, FnArg, GenericParam, ImplItem, Item, ItemConst, ItemEnum, ItemImpl, ItemMod,
-    ItemStruct, ItemTrait, Pat, ReturnType, Signature, TraitItem, Type, Visibility,
+    ItemStruct, ItemTrait, Pat, ReturnType, Signature, TraitItem, Type, UseTree, Visibility,
 };
 
 #[derive(Serialize, Clone)]
@@ -61,6 +61,12 @@ struct ExtractTrait {
 }
 
 #[derive(Serialize, Clone)]
+struct ExtractReexport {
+    name: String,
+    source: String,
+}
+
+#[derive(Serialize, Clone)]
 struct PendingMethods {
     target: String,
     methods: Vec<ExtractFunction>,
@@ -75,6 +81,7 @@ struct ExtractModule {
     structs: Vec<ExtractStruct>,
     traits: Vec<ExtractTrait>,
     functions: Vec<ExtractFunction>,
+    reexports: Vec<ExtractReexport>,
     #[serde(rename = "pendingMethods")]
     pending_methods: Vec<PendingMethods>,
     issues: Vec<SkipIssue>,
@@ -329,6 +336,62 @@ fn parse_impl(item: &ItemImpl, file: &str, issues: &mut Vec<SkipIssue>) -> Optio
     Some(PendingMethods { target, methods })
 }
 
+fn use_path_to_string(parts: &[String]) -> String {
+    parts.join("::")
+}
+
+fn parse_use_tree(
+    tree: &UseTree,
+    prefix: &[String],
+    file: &str,
+    issues: &mut Vec<SkipIssue>,
+) -> Vec<ExtractReexport> {
+    match tree {
+        UseTree::Path(path) => {
+            let mut next = prefix.to_vec();
+            next.push(path.ident.to_string());
+            parse_use_tree(path.tree.as_ref(), &next, file, issues)
+        }
+        UseTree::Name(name) => {
+            let mut source = prefix.to_vec();
+            source.push(name.ident.to_string());
+            vec![ExtractReexport {
+                name: name.ident.to_string(),
+                source: use_path_to_string(&source),
+            }]
+        }
+        UseTree::Rename(rename) => {
+            let mut source = prefix.to_vec();
+            source.push(rename.ident.to_string());
+            vec![ExtractReexport {
+                name: rename.rename.to_string(),
+                source: use_path_to_string(&source),
+            }]
+        }
+        UseTree::Group(group) => {
+            let mut out = Vec::new();
+            for item in &group.items {
+                out.extend(parse_use_tree(item, prefix, file, issues));
+            }
+            out
+        }
+        UseTree::Glob(glob) => {
+            issues.push(SkipIssue {
+                file: file.to_string(),
+                kind: "reexport".to_string(),
+                snippet: glob.to_token_stream().to_string(),
+                reason: "Glob re-exports are not supported in TS facades; explicit item re-exports are required."
+                    .to_string(),
+            });
+            Vec::new()
+        }
+    }
+}
+
+fn parse_reexports(item: &syn::ItemUse, file: &str, issues: &mut Vec<SkipIssue>) -> Vec<ExtractReexport> {
+    parse_use_tree(&item.tree, &[], file, issues)
+}
+
 fn has_macro_export(attrs: &[syn::Attribute]) -> bool {
     attrs
         .iter()
@@ -379,6 +442,7 @@ fn collect_module_items(
         structs: Vec::new(),
         traits: Vec::new(),
         functions: Vec::new(),
+        reexports: Vec::new(),
         pending_methods: Vec::new(),
         issues: Vec::new(),
     };
@@ -420,6 +484,11 @@ fn collect_module_items(
             Item::Trait(t) if is_public(&t.vis) => {
                 module.traits.push(parse_trait(t, file_label, &mut module.issues));
             }
+            Item::Use(u) if is_public(&u.vis) => {
+                module
+                    .reexports
+                    .extend(parse_reexports(u, file_label, &mut module.issues));
+            }
             Item::Impl(i) => {
                 if let Some(pending) = parse_impl(i, file_label, &mut module.issues) {
                     module.pending_methods.push(pending);
@@ -446,6 +515,11 @@ fn collect_module_items(
             .pending_methods
             .sort_by(|a, b| a.target.cmp(&b.target));
     }
+    if !module.reexports.is_empty() {
+        module
+            .reexports
+            .sort_by(|a, b| a.name.cmp(&b.name).then(a.source.cmp(&b.source)));
+    }
     out.push(module);
     Ok(())
 }
@@ -468,8 +542,32 @@ fn collect_module_file(
 
     let source = fs::read_to_string(&canonical)
         .map_err(|e| format!("Failed to read module file {}: {e}", canonical.display()))?;
-    let file = syn::parse_file(&source)
-        .map_err(|e| format!("Failed to parse Rust module {}: {e}", canonical.display()))?;
+    let file = match syn::parse_file(&source) {
+        Ok(file) => file,
+        Err(e) => {
+            out.push(ExtractModule {
+                file: canonical.to_string_lossy().to_string(),
+                parts: parts.to_vec(),
+                consts: Vec::new(),
+                enums: Vec::new(),
+                structs: Vec::new(),
+                traits: Vec::new(),
+                functions: Vec::new(),
+                reexports: Vec::new(),
+                pending_methods: Vec::new(),
+                issues: vec![SkipIssue {
+                    file: canonical.to_string_lossy().to_string(),
+                    kind: "parse".to_string(),
+                    snippet: canonical.to_string_lossy().to_string(),
+                    reason: format!(
+                        "Failed to parse Rust module {}; declarations were skipped: {e}",
+                        canonical.display()
+                    ),
+                }],
+            });
+            return Ok(());
+        }
+    };
     let base_dir = module_base_dir_for_file(&canonical);
     collect_module_items(
         &canonical.to_string_lossy(),
