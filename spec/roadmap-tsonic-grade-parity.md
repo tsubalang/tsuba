@@ -191,7 +191,7 @@ Status values for tracking:
 
 ### F.3 GPU proof kernels (P1)
 - [x] Matmul, softmax, MoE-dispatch kernels compile deterministically.
-- [ ] Correctness checks against CPU references where runtime is available.
+- [x] Correctness checks against CPU references where runtime is available.
 
 **Exit gate F:** Kernel compile and launch workflows are test- and doc-complete.
 
@@ -249,7 +249,8 @@ Status values for tracking:
 
 ### I.2 Release traceability
 - [ ] Automatic changelog notes from merged PR labels.
-- [ ] Signed tags and reproducible release artifact metadata.
+- [ ] Signed tags.
+- [x] Reproducible release artifact metadata is generated deterministically.
 
 ### I.3 Rollback readiness
 - [x] Documented rollback and republish playbook.

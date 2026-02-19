@@ -10,6 +10,7 @@
     "typecheck": "tsc -b",
     "build": "npm run typecheck",
     "run-all": "bash test/scripts/run-all.sh",
+    "release:traceability": "node scripts/release-traceability.mjs --pretty",
     "publish:npm": "bash scripts/publish-npm.sh",
     "publish:crates": "bash scripts/publish-crates.sh",
     "verify:proof": "bash scripts/verify-proof.sh",

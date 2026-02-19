@@ -68,6 +68,8 @@ UNIT_STATUS="skipped"
 TSC_STATUS="skipped"
 E2E_STATUS="skipped"
 SMOKE_STATUS="skipped"
+GPU_REF_STATUS="skipped"
+TRACE_STATUS="skipped"
 
 if [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "NOTE: FILTERED mode (${FILTER_PATTERNS[*]}). Not for final verification."
@@ -135,12 +137,51 @@ else
   fi
 fi
 
+# ------------------------------------------------------------
+# 5) Optional GPU correctness check (only when runtime is available)
+# ------------------------------------------------------------
+if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
+  echo "Skipping GPU CPU-reference workflow (requires full, unfiltered run)."
+else
+  echo "==> GPU CPU-reference workflow (auto-skips when CUDA runtime is unavailable)"
+  if bash "$SCRIPT_DIR/gpu-cpu-reference.sh"; then
+    GPU_REF_STATUS="passed"
+  else
+    GPU_REF_STATUS="failed"
+  fi
+fi
+
+# ------------------------------------------------------------
+# 6) Release traceability report validation
+# ------------------------------------------------------------
+if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
+  echo "Skipping release traceability check (requires full, unfiltered run)."
+else
+  echo "==> Release traceability report validation"
+  if node "$ROOT_DIR/scripts/release-traceability.mjs" | node -e '
+const fs = require("node:fs");
+const raw = fs.readFileSync(0, "utf-8");
+const report = JSON.parse(raw);
+if (report?.schema !== 1) process.exit(1);
+if (report?.kind !== "release-traceability") process.exit(1);
+if (typeof report?.git?.commit !== "string" || report.git.commit.length < 7) process.exit(1);
+if (!Array.isArray(report?.npmPackages) || report.npmPackages.length === 0) process.exit(1);
+if (!Array.isArray(report?.crates) || report.crates.length === 0) process.exit(1);
+'; then
+    TRACE_STATUS="passed"
+  else
+    TRACE_STATUS="failed"
+  fi
+fi
+
 echo
 echo "=== Summary ==="
 echo "Unit + golden tests: $UNIT_STATUS"
 echo "Typecheck fixtures: $TSC_STATUS"
 echo "E2E fixtures: $E2E_STATUS"
 echo "CLI smoke workflow: $SMOKE_STATUS"
+echo "GPU CPU-reference workflow: $GPU_REF_STATUS"
+echo "Release traceability: $TRACE_STATUS"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   END_GIT_STATUS="$(git status --porcelain --untracked-files=all || true)"
@@ -178,6 +219,12 @@ if [ "$E2E_STATUS" != "passed" ] && [ "$E2E_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$SMOKE_STATUS" != "passed" ] && [ "$SMOKE_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$GPU_REF_STATUS" != "passed" ] && [ "$GPU_REF_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$TRACE_STATUS" != "passed" ] && [ "$TRACE_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$TREE_STATUS" = "failed" ]; then

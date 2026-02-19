@@ -1446,9 +1446,9 @@ const rustPrimitiveTypes = new Map<string, RustType>([
   ["String", pathType(["std", "string", "String"])],
 ]);
 
-function fail(code: string, message: string): never {
+function fail(code: string, message: string, span?: Span): never {
   assertCompilerDiagnosticCode(code);
-  throw new CompileError(code, message);
+  throw new CompileError(code, message, span);
 }
 
 function getExportedMain(sf: ts.SourceFile): ts.FunctionDeclaration {
@@ -1461,7 +1461,7 @@ function getExportedMain(sf: ts.SourceFile): ts.FunctionDeclaration {
     if (st.parameters.length !== 0) failAt(st, "TSB1002", "main() parameters are not supported in v0.");
     return st;
   }
-  fail("TSB1000", "Entry file must export function main().");
+  failAt(sf, "TSB1000", "Entry file must export function main().");
 }
 
 function isInNodeModules(fileName: string): boolean {
@@ -1496,7 +1496,15 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
     const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n");
     if (d.file && d.start !== undefined) {
       const pos = d.file.getLineAndCharacterOfPosition(d.start);
-      fail("TSB0002", `${mapSpanFileName(d.file.fileName)}:${pos.line + 1}:${pos.character + 1}: ${msg}`);
+      fail(
+        "TSB0002",
+        `${mapSpanFileName(d.file.fileName)}:${pos.line + 1}:${pos.character + 1}: ${msg}`,
+        {
+          fileName: mapSpanFileName(d.file.fileName),
+          start: d.start,
+          end: d.length !== undefined ? d.start + d.length : d.start,
+        }
+      );
     }
     fail("TSB0002", msg);
   }
@@ -1512,7 +1520,7 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
   const returnKind: MainReturnKind = (() => {
     if (mainIsAsync) {
       if (runtimeKind !== "tokio") {
-        fail("TSB1004", "async main() requires runtime.kind='tokio' in tsuba.workspace.json.");
+        failAt(mainFn, "TSB1004", "async main() requires runtime.kind='tokio' in tsuba.workspace.json.");
       }
       const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
       if (inner.kind === ts.SyntaxKind.VoidKeyword) return "unit";
@@ -1523,11 +1531,11 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
       ) {
         const [okTy] = inner.typeArguments ?? [];
         if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
-          fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
+          failAt(mainFn, "TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
         }
         return "result";
       }
-      fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
+      failAt(mainFn, "TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
     }
 
     if (!returnTypeNode) return "unit";
@@ -1539,11 +1547,11 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
     ) {
       const [okTy] = returnTypeNode.typeArguments ?? [];
       if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
-        fail("TSB1003", "main() may only return Result<void, E> in v0.");
+        failAt(mainFn, "TSB1003", "main() may only return Result<void, E> in v0.");
       }
       return "result";
     }
-    fail("TSB1003", "main() must return void or Result<void, E> in v0.");
+    failAt(mainFn, "TSB1003", "main() must return void or Result<void, E> in v0.");
   })();
 
   const rustReturnType = (() => {
@@ -1663,19 +1671,21 @@ function createUserModuleIndex(
   for (const f of userSourceFiles) userFilesByName.set(normalizePath(f.fileName), f);
 
   const moduleNameByFile = new Map<string, string>();
-  const fileByModuleName = new Map<string, string>();
+  const fileByModuleName = new Map<string, ts.SourceFile>();
   for (const f of userSourceFiles) {
     const fileName = normalizePath(f.fileName);
     if (fileName === entryFileName) continue;
     const modName = rustModuleNameFromFileName(f.fileName);
     const prev = fileByModuleName.get(modName);
     if (prev) {
-      fail(
+      const prevFileName = normalizePath(prev.fileName);
+      failAt(
+        f,
         "TSB3200",
-        `Two files map to the same Rust module '${modName}':\n  - ${prev}\n  - ${fileName}\nRename one of the files to avoid a module collision.`
+        `Two files map to the same Rust module '${modName}':\n  - ${prevFileName}\n  - ${fileName}\nRename one of the files to avoid a module collision.`
       );
     }
-    fileByModuleName.set(modName, fileName);
+    fileByModuleName.set(modName, f);
     moduleNameByFile.set(fileName, modName);
   }
 
@@ -1683,28 +1693,29 @@ function createUserModuleIndex(
 }
 
 function resolveRelativeImport(
+  atNode: ts.Node,
   fromFileName: string,
   spec: string,
   userFilesByName: ReadonlyMap<string, ts.SourceFile>,
   moduleNameByFile: ReadonlyMap<string, string>
 ): { readonly targetFile: string; readonly mod: string } {
   if (!spec.startsWith(".")) {
-    fail("TSB3201", `Only relative imports are supported in v0 (got ${JSON.stringify(spec)}).`);
+    failAt(atNode, "TSB3201", `Only relative imports are supported in v0 (got ${JSON.stringify(spec)}).`);
   }
   let rewritten = spec;
   if (rewritten.endsWith(".js")) rewritten = `${rewritten.slice(0, -3)}.ts`;
   if (!rewritten.endsWith(".ts")) {
-    fail("TSB3202", `Import specifier must end with '.js' (source) in v0 (got ${JSON.stringify(spec)}).`);
+    failAt(atNode, "TSB3202", `Import specifier must end with '.js' (source) in v0 (got ${JSON.stringify(spec)}).`);
   }
 
   const abs = normalizePath(resolve(dirname(fromFileName), rewritten));
   const target = userFilesByName.get(abs);
   if (!target) {
-    fail("TSB3203", `Import target not found in the project: ${JSON.stringify(spec)} -> ${abs}`);
+    failAt(atNode, "TSB3203", `Import target not found in the project: ${JSON.stringify(spec)} -> ${abs}`);
   }
   const mod = moduleNameByFile.get(abs);
   if (!mod) {
-    fail("TSB3204", `Importing the entry module is not supported in v0 (got ${JSON.stringify(spec)}).`);
+    failAt(atNode, "TSB3204", `Importing the entry module is not supported in v0 (got ${JSON.stringify(spec)}).`);
   }
   return { targetFile: abs, mod };
 }
@@ -3034,7 +3045,7 @@ function lowerStmtBlock(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
 }
 
 function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: readonly string[]): RustItem {
-  if (!fnDecl.name) fail("TSB3000", "Unnamed functions are not supported in v0.");
+  if (!fnDecl.name) failAt(fnDecl, "TSB3000", "Unnamed functions are not supported in v0.");
   if (!fnDecl.body) failAt(fnDecl, "TSB3001", `Function '${fnDecl.name.text}' must have a body in v0.`);
 
   const span = spanFromNode(fnDecl);
@@ -3926,7 +3937,7 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
         }
 
         if (spec.startsWith(".")) {
-          const resolved = resolveRelativeImport(f.fileName, spec, userFilesByName, moduleNameByFile);
+          const resolved = resolveRelativeImport(st, f.fileName, spec, userFilesByName, moduleNameByFile);
           for (const el of bindings.elements) {
             if (kernelDeclForIdentifier(ctx, el.name)) continue;
             const exported = el.propertyName?.text ?? el.name.text;
@@ -4125,7 +4136,7 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
   // Phase 7: emit module + root items into Rust IR in deterministic order.
   // Root (entry file) uses
   const rootLowered = loweredByFile.get(entryFileName);
-  if (!rootLowered) fail("TSB0001", "Internal error: entry file missing from lowered set.");
+  if (!rootLowered) failAt(sf, "TSB0001", "Internal error: entry file missing from lowered set.");
   items.push(...sortUseItems(rootLowered.uses));
 
   // Modules (non-entry files)
