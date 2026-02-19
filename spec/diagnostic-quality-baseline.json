@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "kind": "diagnostic-quality-baseline",
+  "minimums": {
+    "diagnosticCodeCount": 240,
+    "fixtureFileCount": 12,
+    "matrixTestCaseCount": 25
+  }
+}

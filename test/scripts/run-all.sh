@@ -71,6 +71,8 @@ SMOKE_STATUS="skipped"
 GPU_REF_STATUS="skipped"
 TRACE_STATUS="skipped"
 PERF_STATUS="skipped"
+DIAG_QUALITY_STATUS="skipped"
+EXTERNAL_PROOF_STATUS="skipped"
 
 if [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "NOTE: FILTERED mode (${FILTER_PATTERNS[*]}). Not for final verification."
@@ -177,19 +179,50 @@ if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@
   echo "Skipping release traceability check (requires full, unfiltered run)."
 else
   echo "==> Release traceability report validation"
-  if node "$ROOT_DIR/scripts/release-traceability.mjs" | node -e '
+if node "$ROOT_DIR/scripts/release-traceability.mjs" | node -e '
 const fs = require("node:fs");
 const raw = fs.readFileSync(0, "utf-8");
 const report = JSON.parse(raw);
 if (report?.schema !== 1) process.exit(1);
 if (report?.kind !== "release-traceability") process.exit(1);
 if (typeof report?.git?.commit !== "string" || report.git.commit.length < 7) process.exit(1);
+if (typeof report?.git?.hasSignedTagAtCommit !== "boolean") process.exit(1);
+if (!Array.isArray(report?.git?.tagsAtCommit)) process.exit(1);
+if (!Array.isArray(report?.git?.signedTagsAtCommit)) process.exit(1);
 if (!Array.isArray(report?.npmPackages) || report.npmPackages.length === 0) process.exit(1);
 if (!Array.isArray(report?.crates) || report.crates.length === 0) process.exit(1);
 '; then
     TRACE_STATUS="passed"
   else
     TRACE_STATUS="failed"
+  fi
+fi
+
+# ------------------------------------------------------------
+# 8) Diagnostic quality baseline check
+# ------------------------------------------------------------
+if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
+  echo "Skipping diagnostic quality baseline check (requires full, unfiltered run)."
+else
+  echo "==> Diagnostic quality baseline check"
+  if node "$ROOT_DIR/scripts/check-diagnostic-quality.mjs"; then
+    DIAG_QUALITY_STATUS="passed"
+  else
+    DIAG_QUALITY_STATUS="failed"
+  fi
+fi
+
+# ------------------------------------------------------------
+# 9) External proof matrix (best-effort in run-all)
+# ------------------------------------------------------------
+if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
+  echo "Skipping external proof matrix verification (requires full, unfiltered run)."
+else
+  echo "==> External proof matrix verification (best-effort)"
+  if node "$ROOT_DIR/scripts/verify-external-proof.mjs"; then
+    EXTERNAL_PROOF_STATUS="passed"
+  else
+    EXTERNAL_PROOF_STATUS="failed"
   fi
 fi
 
@@ -202,6 +235,8 @@ echo "E2E perf budgets: $PERF_STATUS"
 echo "CLI smoke workflow: $SMOKE_STATUS"
 echo "GPU CPU-reference workflow: $GPU_REF_STATUS"
 echo "Release traceability: $TRACE_STATUS"
+echo "Diagnostic quality baseline: $DIAG_QUALITY_STATUS"
+echo "External proof matrix: $EXTERNAL_PROOF_STATUS"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   END_GIT_STATUS="$(git status --porcelain --untracked-files=all || true)"
@@ -248,6 +283,12 @@ if [ "$GPU_REF_STATUS" != "passed" ] && [ "$GPU_REF_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$TRACE_STATUS" != "passed" ] && [ "$TRACE_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$DIAG_QUALITY_STATUS" != "passed" ] && [ "$DIAG_QUALITY_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$EXTERNAL_PROOF_STATUS" != "passed" ] && [ "$EXTERNAL_PROOF_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$TREE_STATUS" = "failed" ]; then

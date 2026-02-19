@@ -98,3 +98,4 @@ When adding/changing diagnostics:
 1. Register the code in `packages/compiler/src/rust/diagnostics.ts`.
 2. Add/adjust negative tests in matrix/fixtures/host suites.
 3. Update this catalog when the new code is high-frequency or operationally important.
+4. Update `spec/diagnostic-quality-baseline.json` if intentional coverage floor changes.

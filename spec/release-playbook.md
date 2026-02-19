@@ -16,9 +16,11 @@ From `main`, clean tree, synced with `origin/main`:
 
 1. `npm run run-all`
 2. proof verification (included by publish scripts unless `--no-proof`)
-3. confirm version bumps are intentional and monotonic
-4. capture a release traceability snapshot (`npm run release:traceability`)
-5. capture release notes from merged PRs (`npm run release:notes -- --auto-range --to HEAD`)
+3. external proof matrix verification (`npm run verify:external-proof -- --require`)
+4. signed-tag check (`npm run release:signed-tag`)
+5. confirm version bumps are intentional and monotonic
+6. capture a release traceability snapshot (`npm run release:traceability`)
+7. capture release notes from merged PRs (`npm run release:notes -- --auto-range --to HEAD`)
 
 Helpers:
 
@@ -27,6 +29,7 @@ Helpers:
 - release traceability JSON: `node scripts/release-traceability.mjs --pretty`
 - release notes (markdown/json): `node scripts/release-notes.mjs --auto-range --to HEAD [--format markdown|json]`
 - E2E perf budget gate (standalone): `npm run perf:check`
+- diagnostic quality gate (standalone): `npm run diag:check`
 - publish scripts also snapshot release notes to `.tsuba/release-notes.latest.md`
 
 Both scripts enforce:
@@ -35,6 +38,8 @@ Both scripts enforce:
 - no local modifications
 - local `HEAD` must equal `origin/main`
 - target version must not already exist in registry
+- external proof matrix must pass in required mode (unless explicit `--no-external-proof`)
+- at least one signed tag must point at `HEAD` (unless explicit `--no-signed-tag`)
 
 ---
 
@@ -87,7 +92,9 @@ Do not attempt to overwrite already-published versions.
 - [ ] `git pull --ff-only` done
 - [ ] `npm run run-all` green
 - [ ] perf budgets pass (`npm run perf:check` or `run-all` summary)
-- [ ] proof verification green
+- [ ] diagnostic quality gate passes (`npm run diag:check` or `run-all` summary)
+- [ ] proof verification green (`verify:proof` + `verify:external-proof --require`)
+- [ ] signed-tag check green
 - [ ] release traceability snapshot captured
 - [ ] release notes captured for the release range
 - [ ] dry-run publish plans reviewed

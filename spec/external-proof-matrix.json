@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "kind": "external-proof-matrix",
+  "requiredCategories": [
+    "bindgen-heavy",
+    "gpu-heavy",
+    "host-service"
+  ],
+  "minimumPassingSubstantial": 3,
+  "checks": [
+    {
+      "id": "proof-pudding-host-service",
+      "repo": "../proof-is-in-the-pudding",
+      "cwd": ".",
+      "command": [
+        "bash",
+        "scripts/verify-host-service.sh"
+      ],
+      "categories": [
+        "host-service"
+      ],
+      "substantial": true,
+      "required": true
+    },
+    {
+      "id": "proof-pudding-gpu-heavy",
+      "repo": "../proof-is-in-the-pudding",
+      "cwd": ".",
+      "command": [
+        "bash",
+        "scripts/verify-gpu-heavy.sh"
+      ],
+      "categories": [
+        "gpu-heavy"
+      ],
+      "substantial": true,
+      "required": true
+    },
+    {
+      "id": "proof-pudding-bindgen-heavy",
+      "repo": "../proof-is-in-the-pudding",
+      "cwd": ".",
+      "command": [
+        "bash",
+        "scripts/verify-bindgen-heavy.sh"
+      ],
+      "categories": [
+        "bindgen-heavy"
+      ],
+      "substantial": true,
+      "required": true
+    }
+  ]
+}

@@ -8,11 +8,13 @@ cd "$ROOT_DIR"
 RUN_TESTS=true
 DRY_RUN=false
 RUN_PROOF=true
+RUN_EXTERNAL_PROOF=true
+RUN_SIGNED_TAG=true
 PROOF_REPO=""
 
 print_help() {
   cat <<'EOF_HELP'
-Usage: ./scripts/publish-npm.sh [--no-tests] [--dry-run] [--no-proof] [--proof-repo <path>]
+Usage: ./scripts/publish-npm.sh [--no-tests] [--dry-run] [--no-proof] [--no-external-proof] [--no-signed-tag] [--proof-repo <path>]
 
 Safety checks (always on):
   - must run on branch main
@@ -20,11 +22,15 @@ Safety checks (always on):
   - local main must match origin/main
   - package versions must not already exist on npm
   - proof verification must pass (requires proof repo)
+  - external proof matrix must pass in required mode
+  - at least one signed tag must point at HEAD
 
 Options:
   --no-tests   Skip npm run run-all (not recommended for releases)
   --dry-run    Run checks and print publish plan without publishing
   --no-proof   Skip proof verification (not recommended for releases)
+  --no-external-proof  Skip external proof matrix verification (not recommended for releases)
+  --no-signed-tag      Skip signed-tag check (not recommended for releases)
   --proof-repo Override proof repo path used by verify-proof.sh
   -h, --help   Show this help
 EOF_HELP
@@ -42,6 +48,14 @@ while [ $# -gt 0 ]; do
       ;;
     --no-proof)
       RUN_PROOF=false
+      shift
+      ;;
+    --no-external-proof)
+      RUN_EXTERNAL_PROOF=false
+      shift
+      ;;
+    --no-signed-tag)
+      RUN_SIGNED_TAG=false
       shift
       ;;
     --proof-repo)
@@ -103,6 +117,20 @@ if [ "$RUN_PROOF" = true ]; then
   "${proof_args[@]}"
 else
   echo "WARN: skipping proof verification (--no-proof)."
+fi
+
+if [ "$RUN_EXTERNAL_PROOF" = true ]; then
+  echo "==> Running external proof matrix verification (required)"
+  node "$ROOT_DIR/scripts/verify-external-proof.mjs" --require
+else
+  echo "WARN: skipping external proof matrix verification (--no-external-proof)."
+fi
+
+if [ "$RUN_SIGNED_TAG" = true ]; then
+  echo "==> Verifying signed tags at HEAD (required)"
+  node "$ROOT_DIR/scripts/check-signed-head-tag.mjs" --require
+else
+  echo "WARN: skipping signed-tag check (--no-signed-tag)."
 fi
 
 echo "==> Release traceability snapshot"

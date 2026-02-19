@@ -17,6 +17,34 @@ function readGit(root, command, allowFailure = false) {
   }
 }
 
+function collectTagSignatureInfo(root, ref) {
+  const tagsRaw = readGit(root, `tag --points-at ${ref}`, true) ?? "";
+  const tags = tagsRaw
+    .split(/\r?\n/g)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0)
+    .sort((a, b) => a.localeCompare(b));
+
+  const states = tags.map((tag) => {
+    const objectType = readGit(root, `cat-file -t refs/tags/${tag}`, true) ?? "unknown";
+    if (objectType !== "tag") {
+      return { tag, objectType, annotated: false, signed: false };
+    }
+    const payload = readGit(root, `cat-file -p refs/tags/${tag}`, true) ?? "";
+    const signed =
+      payload.includes("-----BEGIN PGP SIGNATURE-----") ||
+      payload.includes("-----BEGIN SSH SIGNATURE-----");
+    return { tag, objectType, annotated: true, signed };
+  });
+
+  const signedTags = states.filter((x) => x.signed).map((x) => x.tag);
+  return {
+    tags: states,
+    signedTags,
+    hasSignedTag: signedTags.length > 0,
+  };
+}
+
 function parseArgs(argv) {
   let outPath;
   let pretty = false;
@@ -39,6 +67,7 @@ function parseArgs(argv) {
           "",
           "Produces a deterministic release-traceability JSON report containing:",
           "- git commit/branch/sync status",
+          "- tags at HEAD + signed-tag presence",
           "- publishable npm package versions",
           "- crate versions from Cargo manifests",
           "",
@@ -164,6 +193,7 @@ function main() {
   const gitCommitShort = gitCommit === "UNKNOWN" ? "UNKNOWN" : gitCommit.slice(0, 12);
   const gitOriginMain = readGit(root, "rev-parse --verify origin/main", true);
   const gitDirty = (readGit(root, "status --porcelain --untracked-files=all", true) ?? "").length > 0;
+  const tagInfo = collectTagSignatureInfo(root, "HEAD");
 
   const report = {
     schema: 1,
@@ -175,6 +205,9 @@ function main() {
       originMain: gitOriginMain,
       dirty: gitDirty,
       inSyncWithOriginMain: gitOriginMain ? gitCommit === gitOriginMain : undefined,
+      tagsAtCommit: tagInfo.tags,
+      signedTagsAtCommit: tagInfo.signedTags,
+      hasSignedTagAtCommit: tagInfo.hasSignedTag,
     },
     npmPackages: collectNpmPackages(root),
     crates: collectCrates(root),

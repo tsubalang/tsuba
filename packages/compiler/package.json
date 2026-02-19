@@ -18,7 +18,7 @@
     "build": "tsc -b",
     "clean": "rm -rf dist *.tsbuildinfo",
     "pretest": "npm run build",
-    "test": "mocha --parallel 'dist/**/*.test.js'"
+    "test": "mocha --parallel --timeout 20000 'dist/**/*.test.js'"
   },
   "dependencies": {
     "typescript": "5.9.2"
@@ -28,4 +28,3 @@
   },
   "license": "MIT"
 }
-

@@ -232,7 +232,7 @@ Status values for tracking:
 
 ### H.2 Large-codebase rehearsal (P1)
 - [ ] Compile and run at least 3 substantial real codebases (internal/external).
-- [ ] Track compile time, memory, and diagnostic quality regressions per release.
+- [x] Track compile time, memory, and diagnostic quality regressions per release.
 
 ### H.3 Release blocking policy (P1)
 - [x] Publish scripts require proof verification unless explicitly overridden by maintainer flag.
@@ -249,7 +249,7 @@ Status values for tracking:
 
 ### I.2 Release traceability
 - [x] Automatic changelog notes from merged PR labels.
-- [ ] Signed tags.
+- [x] Signed tags.
 - [x] Reproducible release artifact metadata is generated deterministically.
 
 ### I.3 Rollback readiness
