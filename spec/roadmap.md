@@ -6,6 +6,7 @@ For the implementation-grade, super-detailed plan used for the next large PR, se
 
 - `spec/roadmap-v0-language-completion.md`
 - `spec/roadmap-parity-with-tsonic.md`
+- `spec/roadmap-tsonic-grade-parity.md` (full maturity parity checklist)
 
 Tsuba’s primary selling point is **GPU kernels**. GPU is not optional or “later”; it is on the critical path.
 

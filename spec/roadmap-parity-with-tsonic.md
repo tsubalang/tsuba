@@ -8,6 +8,11 @@ This document tracks **parity with Tsonic’s engineering discipline** (compiler
 Scope: this is a planning checkpoint, not a marketing checklist.  
 Date baseline: **2026-02-19**.
 
+This matrix intentionally covers **discipline baseline parity** only.
+For full maturity parity (coverage + scale + operational depth), see:
+
+- `spec/roadmap-tsonic-grade-parity.md`
+
 ---
 
 ## 1) Parity legend

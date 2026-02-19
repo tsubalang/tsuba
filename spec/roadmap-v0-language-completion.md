@@ -90,6 +90,7 @@ Still incomplete for parity-grade v0:
 For the explicit parity matrix vs Tsonic, see:
 
 - `spec/roadmap-parity-with-tsonic.md`
+- `spec/roadmap-tsonic-grade-parity.md` (larger maturity checklist beyond v0 baseline)
 
 ---
 
