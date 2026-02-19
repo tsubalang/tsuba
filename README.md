@@ -102,6 +102,12 @@ Build a project (generates Rust + runs `cargo build`), from inside a project dir
 node /path/to/tsuba/packages/cli/dist/bin.js build
 ```
 
+Build artifacts include:
+
+- `generated/src/main.rs`
+- `generated/src/main.rs.map.json` (Rust→TS source-map metadata)
+- `generated/.build-cache.json` + `generated/.build-cache-state.json` (deterministic incremental build cache)
+
 Run a project (builds + runs `cargo run`), from inside a project directory:
 
 ```bash

@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 
-import { compileHostToRust } from "@tsuba/compiler";
+import { COMPILER_BUILD_ID, compileHostToRust, type CompileHostOutput, type RustSourceMap } from "@tsuba/compiler";
 
 import { loadProjectContext } from "../config.js";
 import { mergeCargoDependencies, renderCargoToml } from "./cargo.js";
@@ -27,6 +28,13 @@ export type BuildArgs = {
   readonly dir: string;
 };
 
+type BuildCacheRecord = {
+  readonly schema: 1;
+  readonly kind: "build-cache";
+  readonly fingerprint: string;
+  readonly output: CompileHostOutput;
+};
+
 function normalizePath(p: string): string {
   return p.replaceAll("\\", "/");
 }
@@ -47,23 +55,23 @@ function posToLineCol(text: string, pos: number): { readonly line: number; reado
   return { line, col };
 }
 
-function parseSpanComment(line: string): { readonly fileName: string; readonly start: number; readonly end: number } | undefined {
-  const trimmed = line.trimStart();
-  const prefix = "// tsuba-span: ";
-  if (!trimmed.startsWith(prefix)) return undefined;
-  const rest = trimmed.slice(prefix.length);
-  const last = rest.lastIndexOf(":");
-  if (last === -1) return undefined;
-  const secondLast = rest.lastIndexOf(":", last - 1);
-  if (secondLast === -1) return undefined;
-  const fileName = rest.slice(0, secondLast);
-  const startText = rest.slice(secondLast + 1, last);
-  const endText = rest.slice(last + 1);
-  const start = Number.parseInt(startText, 10);
-  const end = Number.parseInt(endText, 10);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined;
-  if (start < 0 || end < start) return undefined;
-  return { fileName, start, end };
+function mapRustLineToSourceMap(
+  map: RustSourceMap,
+  rustLine: number
+): { readonly fileName: string; readonly start: number; readonly end: number } | undefined {
+  let best:
+    | {
+        readonly tsFileName: string;
+        readonly tsStart: number;
+        readonly tsEnd: number;
+      }
+    | undefined;
+  for (const entry of map.entries) {
+    if (entry.rustLine > rustLine) break;
+    best = entry;
+  }
+  if (!best) return undefined;
+  return { fileName: best.tsFileName, start: best.tsStart, end: best.tsEnd };
 }
 
 function firstCargoCompilerError(
@@ -97,28 +105,89 @@ function firstCargoCompilerError(
   return undefined;
 }
 
+function collectProjectFiles(root: string): readonly string[] {
+  const out: string[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir || !existsSync(dir)) continue;
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "target" || entry.name === ".tsuba") {
+          continue;
+        }
+        stack.push(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const normalized = normalizePath(abs);
+      if (
+        normalized.endsWith(".ts") ||
+        normalized.endsWith(".tsx") ||
+        normalized.endsWith("tsuba.workspace.json") ||
+        normalized.endsWith("tsuba.json") ||
+        normalized.endsWith("tsuba.bindings.json")
+      ) {
+        out.push(normalized);
+      }
+    }
+  }
+  out.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
+function computeBuildFingerprint(args: {
+  readonly workspaceRoot: string;
+  readonly entryFile: string;
+  readonly runtimeKind: "none" | "tokio";
+}): string {
+  const hash = createHash("sha256");
+  hash.update(`compiler:${COMPILER_BUILD_ID}\n`);
+  hash.update(`entry:${normalizePath(args.entryFile)}\n`);
+  hash.update(`runtime:${args.runtimeKind}\n`);
+
+  const files = collectProjectFiles(args.workspaceRoot);
+  for (const file of files) {
+    hash.update(`file:${normalizePath(file)}\n`);
+    hash.update(readFileSync(file));
+    hash.update("\n");
+  }
+  return hash.digest("hex");
+}
+
+function readBuildCache(cachePath: string): BuildCacheRecord | undefined {
+  if (!existsSync(cachePath)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(cachePath, "utf-8")) as Partial<BuildCacheRecord>;
+    if (parsed.schema !== 1 || parsed.kind !== "build-cache") return undefined;
+    if (typeof parsed.fingerprint !== "string" || !parsed.output || typeof parsed.output !== "object") return undefined;
+    return parsed as BuildCacheRecord;
+  } catch {
+    return undefined;
+  }
+}
+
 function tryMapRustErrorToTs(opts: {
-  readonly generatedRoot: string;
   readonly sourceRoot: string;
-  readonly rustFileName: string;
   readonly rustLine: number;
+  readonly rustFileName: string;
+  readonly sourceMap: RustSourceMap;
 }): { readonly fileName: string; readonly line: number; readonly col: number } | undefined {
   const isAbs = (p: string): boolean => p.startsWith("/") || /^[A-Za-z]:\//.test(p);
-  const rustFileName = isAbs(opts.rustFileName) ? opts.rustFileName : join(opts.generatedRoot, opts.rustFileName);
-  const rustText = readFileSync(rustFileName, "utf-8");
-  const rustLines = rustText.split(/\r?\n/g);
-  for (let i = Math.min(opts.rustLine - 1, rustLines.length - 1); i >= 0; i--) {
-    const parsed = parseSpanComment(rustLines[i]!);
-    if (!parsed) continue;
-    const tsFileName = isAbs(parsed.fileName)
-      ? parsed.fileName
-      : normalizePath(resolve(opts.sourceRoot, parsed.fileName));
-    if (!existsSync(tsFileName)) continue;
-    const tsText = readFileSync(tsFileName, "utf-8");
-    const lc = posToLineCol(tsText, parsed.start);
-    return { fileName: tsFileName, line: lc.line, col: lc.col };
-  }
-  return undefined;
+  const rustFileName = normalizePath(opts.rustFileName);
+  const base = rustFileName.split("/").at(-1);
+  if (base !== "main.rs") return undefined;
+  const parsed = mapRustLineToSourceMap(opts.sourceMap, opts.rustLine);
+  if (!parsed) return undefined;
+  const tsFileName = isAbs(parsed.fileName)
+    ? parsed.fileName
+    : normalizePath(resolve(opts.sourceRoot, parsed.fileName));
+  if (!existsSync(tsFileName)) return undefined;
+  const tsText = readFileSync(tsFileName, "utf-8");
+  const lc = posToLineCol(tsText, parsed.start);
+  return { fileName: tsFileName, line: lc.line, col: lc.col };
 }
 
 function compileCudaKernels(opts: {
@@ -163,10 +232,42 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   if (project.kind !== "bin") throw new Error("Only kind=bin is supported in v0.");
 
   const entryFile = resolve(projectRoot, project.entry);
-  const out = compileHostToRust({
+  const generatedRoot = join(projectRoot, workspace.generatedDirName);
+  const generatedSrcDir = join(generatedRoot, "src");
+  mkdirSync(generatedSrcDir, { recursive: true });
+  const cachePath = join(generatedRoot, ".build-cache.json");
+  const cacheStatePath = join(generatedRoot, ".build-cache-state.json");
+
+  const fingerprint = computeBuildFingerprint({
+    workspaceRoot,
     entryFile,
     runtimeKind: workspace.runtime.kind,
   });
+
+  const cached = readBuildCache(cachePath);
+  let out: CompileHostOutput;
+  let cacheMode: "hit" | "miss" = "miss";
+  if (cached && cached.fingerprint === fingerprint) {
+    out = cached.output;
+    cacheMode = "hit";
+  } else {
+    out = compileHostToRust({
+      entryFile,
+      runtimeKind: workspace.runtime.kind,
+    });
+    const record: BuildCacheRecord = {
+      schema: 1,
+      kind: "build-cache",
+      fingerprint,
+      output: out,
+    };
+    writeFileSync(cachePath, `${JSON.stringify(record, null, 2)}\n`, "utf-8");
+  }
+  writeFileSync(
+    cacheStatePath,
+    `${JSON.stringify({ schema: 1, kind: "build-cache-state", mode: cacheMode, fingerprint }, null, 2)}\n`,
+    "utf-8"
+  );
 
   if (out.kernels.length > 0) {
     if (!project.gpu.enabled) {
@@ -188,14 +289,8 @@ export async function runBuild(args: BuildArgs): Promise<void> {
       );
     }
 
-    const generatedRoot = join(projectRoot, workspace.generatedDirName);
-    mkdirSync(generatedRoot, { recursive: true });
     compileCudaKernels({ generatedRoot, cuda, kernels: out.kernels });
   }
-
-  const generatedRoot = join(projectRoot, workspace.generatedDirName);
-  const generatedSrcDir = join(generatedRoot, "src");
-  mkdirSync(generatedSrcDir, { recursive: true });
 
   const declaredCrates =
     project.deps?.crates?.map((d) => {
@@ -218,6 +313,7 @@ export async function runBuild(args: BuildArgs): Promise<void> {
 
   writeFileSync(join(generatedRoot, "Cargo.toml"), cargoToml, "utf-8");
   writeFileSync(join(generatedSrcDir, "main.rs"), out.mainRs, "utf-8");
+  writeFileSync(join(generatedSrcDir, "main.rs.map.json"), `${JSON.stringify(out.sourceMap, null, 2)}\n`, "utf-8");
 
   const cargoTargetDir = resolve(workspaceRoot, workspace.cargoTargetDir);
   mkdirSync(cargoTargetDir, { recursive: true });
@@ -234,10 +330,10 @@ export async function runBuild(args: BuildArgs): Promise<void> {
     const err = firstCargoCompilerError(stdout, generatedRoot);
     if (err?.span) {
       const mapped = tryMapRustErrorToTs({
-        generatedRoot,
         sourceRoot: dirname(entryFile),
-        rustFileName: err.span.file_name,
         rustLine: err.span.line_start,
+        rustFileName: err.span.file_name,
+        sourceMap: out.sourceMap,
       });
       if (mapped) {
         throw new Error(`${mapped.fileName}:${mapped.line}:${mapped.col}: cargo build failed.\n${err.rendered}`);

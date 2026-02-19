@@ -6,6 +6,7 @@ import {
   type MainReturnKind,
   type ShapeStructDefLike,
 } from "./contracts.js";
+import { emitMirBodyToRustStmtsPass, lowerRustBodyToMirPass } from "./mir.js";
 
 type MainEmissionPassInput<TCtx extends { readonly inAsync?: boolean }> = {
   readonly ctx: TCtx;
@@ -42,11 +43,12 @@ export function emitMainAndRootShapesPass<TCtx extends { readonly inAsync?: bool
     entryFileName,
   } = input;
 
-  const mainBody: RustStmt[] = [];
+  const mainBodyRaw: RustStmt[] = [];
   const mainCtx = { ...ctx, inAsync: mainIsAsync } as TCtx;
   for (const st of mainFn.body!.statements) {
-    mainBody.push(...deps.lowerStmt(mainCtx, st));
+    mainBodyRaw.push(...deps.lowerStmt(mainCtx, st));
   }
+  const mainBody = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(mainBodyRaw));
 
   const items: RustItem[] = [];
   const rootShapeStructs = [...deps.getShapeStructsByFile(entryFileName)].sort(

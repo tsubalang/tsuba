@@ -1,20 +1,18 @@
-import type { FileLowered } from "./contracts.js";
+import type { HirModule } from "./contracts.js";
 
 type TypeModelsPassDeps = {
-  readonly onTypeAlias: (decl: FileLowered["typeAliases"][number]["decl"]) => void;
-  readonly onInterface: (decl: FileLowered["interfaces"][number]["decl"]) => void;
+  readonly onTypeAlias: (decl: Extract<HirModule["declarations"][number], { readonly kind: "typeAlias" }>["decl"]) => void;
+  readonly onInterface: (decl: Extract<HirModule["declarations"][number], { readonly kind: "interface" }>["decl"]) => void;
 };
 
 export function collectTypeModelsPass(
-  loweredByFile: ReadonlyMap<string, FileLowered>,
+  hirByFile: ReadonlyMap<string, HirModule>,
   deps: TypeModelsPassDeps
 ): void {
-  for (const lowered of loweredByFile.values()) {
-    for (const typeAlias of lowered.typeAliases) {
-      deps.onTypeAlias(typeAlias.decl);
-    }
-    for (const i0 of lowered.interfaces) {
-      deps.onInterface(i0.decl);
+  for (const module of hirByFile.values()) {
+    for (const decl of module.declarations) {
+      if (decl.kind === "typeAlias") deps.onTypeAlias(decl.decl);
+      if (decl.kind === "interface") deps.onInterface(decl.decl);
     }
   }
 }

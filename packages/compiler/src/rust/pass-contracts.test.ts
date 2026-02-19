@@ -47,8 +47,9 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(body).to.contain("const kernels = collectSortedKernelDecls(ctx, userSourceFiles);");
     expect(body).to.contain("createUserModuleIndexPass(userSourceFiles, entryFileName, {");
     expect(body).to.contain("const loweredByFile = collectFileLoweringsPass(");
-    expect(body).to.contain("collectTypeModelsPass(loweredByFile, {");
-    expect(body).to.contain("const attrsByFile = collectAnnotationsPass(loweredByFile, entryFileName, mainFn, {");
+    expect(body).to.contain("const hirByFile = buildHirModulesPass(loweredByFile);");
+    expect(body).to.contain("collectTypeModelsPass(hirByFile, {");
+    expect(body).to.contain("const attrsByFile = collectAnnotationsPass(hirByFile, entryFileName, mainFn, {");
     expect(body).to.contain("const declarationPhase = emitModuleAndRootDeclarationsPass(");
     expect(body).to.contain("const mainItems = emitMainAndRootShapesPass(");
 
@@ -81,6 +82,19 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(runtimeSource).to.contain("mod __tsuba_cuda {");
   });
 
+  it("keeps rust source-map generation isolated from host lowering", () => {
+    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
+    const hostSource = readFileSync(hostPath, "utf-8");
+    expect(hostSource).to.contain('from "./source-map.js";');
+    expect(hostSource).to.contain("const sourceMap = buildRustSourceMap(mainRs);");
+    expect(hostSource).to.contain("return { mainRs, kernels, crates, sourceMap };");
+
+    const sourceMapPath = join(repoRoot(), "packages", "compiler", "src", "rust", "source-map.ts");
+    const sourceMapSource = readFileSync(sourceMapPath, "utf-8");
+    expect(sourceMapSource).to.contain("export function buildRustSourceMap(");
+    expect(sourceMapSource).to.contain("export function mapRustLineToTs(");
+  });
+
   it("keeps kernel dialect lowering isolated from host orchestration", () => {
     const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
     const hostSource = readFileSync(hostPath, "utf-8");
@@ -95,6 +109,21 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(dialectSource).to.contain("function lowerKernelExprToCuda(");
     expect(dialectSource).to.contain("function lowerKernelStmtToCuda(");
     expect(dialectSource).to.contain("function lowerKernelToCudaSource(");
+  });
+
+  it("routes entry-body lowering through MIR pass before emission", () => {
+    const mainEmissionPath = join(
+      repoRoot(),
+      "packages",
+      "compiler",
+      "src",
+      "rust",
+      "passes",
+      "main-emission.ts"
+    );
+    const body = getFunctionBodyText(mainEmissionPath, "emitMainAndRootShapesPass");
+    expect(body).to.contain("lowerRustBodyToMirPass(");
+    expect(body).to.contain("emitMirBodyToRustStmtsPass(");
   });
 
   it("uses readonly map wrappers inside module-index pass outputs", () => {

@@ -4,6 +4,14 @@ Goal: reduce rebuild latency without weakening determinism or diagnostics qualit
 
 This is a **design-stage roadmap**. No behavior in this document bypasses current full-check semantics.
 
+Current implementation status:
+
+- Phase A baseline is now partially implemented in `packages/cli/src/internal/commands/build.ts`:
+  - deterministic build fingerprint keyed by compiler build id + workspace/project sources
+  - cache artifacts at `generated/.build-cache.json` and `generated/.build-cache-state.json`
+  - hard fallback to full compile on cache miss/parse mismatch
+- Remaining sections below still track the full v2 target.
+
 ---
 
 ## 1) Invariants (non-negotiable)
