@@ -1,7 +1,6 @@
 import ts from "typescript";
 
-import type { RustType } from "../ir.js";
-import type { RustItem } from "../ir.js";
+import type { RustItem, RustType, Span } from "../ir.js";
 
 export type MainReturnKind = "unit" | "result";
 
@@ -36,4 +35,12 @@ export type FileLowered = {
     readonly target: string;
     readonly attrs: readonly string[];
   }[];
+};
+
+export type ShapeStructDefLike = {
+  readonly key: string;
+  readonly name: string;
+  readonly span: Span;
+  readonly vis: "pub" | "private";
+  readonly fields: readonly { readonly name: string; readonly type: RustType }[];
 };
