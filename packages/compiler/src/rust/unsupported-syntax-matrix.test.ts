@@ -76,6 +76,18 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       ),
     },
     {
+      name: "barrel re-exports are rejected",
+      expectedCode: "TSB3214",
+      source: [
+        'export { a } from "./dep.js";',
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      extraFiles: { "dep.ts": "export function a(): void {\n  return;\n}\n" },
+    },
+    {
       name: "generic arrow functions are rejected",
       expectedCode: "TSB1100",
       source: ['import type { i32 } from "@tsuba/core/types.js";', "export function main(): void {", "  const id = <T,>(x: T): T => x;", "  const x = id(1 as i32);", "  void x;", "}", ""].join(

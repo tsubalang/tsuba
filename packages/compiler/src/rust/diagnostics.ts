@@ -157,6 +157,7 @@ const compilerDiagnosticCodes = [
   "TSB3211",
   "TSB3212",
   "TSB3213",
+  "TSB3214",
   "TSB3220",
   "TSB3221",
   "TSB3222",

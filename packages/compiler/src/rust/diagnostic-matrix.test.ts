@@ -84,6 +84,22 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       },
     },
     {
+      name: "import surface rejects barrel re-exports",
+      expectedCode: "TSB3214",
+      expectedDomain: "functions-imports-and-annotations",
+      entrySource: [
+        'export { dep } from "./dep.js";',
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      extraFiles: {
+        "dep.ts": "export function dep(): void {\n  return;\n}\n",
+      },
+    },
+    {
       name: "class fields require explicit type annotations",
       expectedCode: "TSB4013",
       expectedDomain: "classes-and-methods",

@@ -56,6 +56,7 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | Code | Meaning |
 | --- | --- |
 | `TSB3206` | side-effect-only imports are rejected |
+| `TSB3214` | export declarations/re-exports are rejected in v0 |
 | `TSB3225` | malformed or inconsistent `tsuba.bindings.json` module mapping |
 | `TSB3304` | `annotate(...)` item is not `attr(...)`, `AttrMacro(...)`, or `DeriveMacro` |
 | `TSB3311` | `annotate(...)` used before declaration |
