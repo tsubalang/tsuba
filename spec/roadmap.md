@@ -2,6 +2,10 @@
 
 This roadmap is organized around **merge gates**: each phase is “done” only when the required test suite passes deterministically.
 
+For the implementation-grade, super-detailed plan used for the next large PR, see:
+
+- `spec/roadmap-v0-language-completion.md`
+
 Tsuba’s primary selling point is **GPU kernels**. GPU is not optional or “later”; it is on the critical path.
 
 “95% TypeScript” in this roadmap means: **95% of the syntax people use in “systems TS”** (strict, typed, no dynamic JS patterns), *not* “any JS program”.
