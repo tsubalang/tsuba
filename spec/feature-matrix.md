@@ -8,6 +8,10 @@ Policy:
 - **Rejected**: hard error with stable `TSBxxxx` diagnostic.
 - **Planned**: intentionally deferred; not silently approximated.
 
+For the explicit TS omission catalog (user-facing), see:
+
+- `spec/omissions-v0.md`
+
 ---
 
 ## 1) Entry + expression model

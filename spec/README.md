@@ -14,6 +14,7 @@ Specs:
 - `tsuba-v0.md` — high-level v0 overview + scope checklist.
 - `language.md` — the Tsuba TS subset + Rust lowering rules.
 - `feature-matrix.md` — executable support matrix (supported/rejected/planned) with test evidence.
+- `omissions-v0.md` — explicit TS surface omissions for v0 (must stay synced with diagnostics/tests).
 - `markers.md` — marker APIs in `@tsuba/core/types.js` + `@tsuba/core/lang.js`.
 - `gpu.md` — GPU-first kernel dialect + CUDA/PTX direction.
 - `examples.md` — side-by-side Python/Rust/Tsuba examples (host + kernels).
@@ -23,6 +24,7 @@ Specs:
 - `roadmap-parity-with-tsonic.md` — parity matrix and remaining transfer work from Tsonic quality gates.
 - `checkpoint-tsonic-2026-02-19.md` — transfer matrix from Tsonic (no-drift checkpoint).
 - `parity-scope-audit-2026-02-19.md` — structural scope audit vs Tsonic (files/LOC/tests/fixtures and gap priorities).
+- `tsonic-tsbindgen-feature-coverage-audit-2026-02-19.md` — doc-driven feature/omission audit against Tsonic + tsbindgen surfaces.
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
 - `tsubabindgen.md` — bindgen design and v0 constraints.

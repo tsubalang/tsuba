@@ -164,10 +164,23 @@ export function collectFileLoweringsPass(
         continue;
       }
 
-      if (
-        ts.isExportDeclaration(st) ||
-        ts.isEmptyStatement(st)
-      ) {
+      if (ts.isExportDeclaration(st)) {
+        const isNoopExportMarker =
+          !st.moduleSpecifier &&
+          !!st.exportClause &&
+          ts.isNamedExports(st.exportClause) &&
+          st.exportClause.elements.length === 0;
+
+        if (isNoopExportMarker) continue;
+
+        deps.failAt(
+          st,
+          "TSB3214",
+          "Export declarations (re-exports/barrel exports) are not supported in v0. Import directly from source modules."
+        );
+      }
+
+      if (ts.isEmptyStatement(st)) {
         continue;
       }
 
