@@ -220,6 +220,36 @@ function unionKeyFromType(type: ts.Type): string | undefined {
   return undefined;
 }
 
+function unionDefFromType(ctx: EmitCtx, type: ts.Type): UnionDef | undefined {
+  const key = unionKeyFromType(type);
+  return key ? ctx.unions.get(key) : undefined;
+}
+
+function unionDefFromIdentifier(ctx: EmitCtx, ident: ts.Identifier): UnionDef | undefined {
+  const direct = unionDefFromType(ctx, ctx.checker.getTypeAtLocation(ident));
+  if (direct) return direct;
+
+  const symbol = ctx.checker.getSymbolAtLocation(ident);
+  for (const decl of symbol?.declarations ?? []) {
+    const maybeTypeNode = (() => {
+      if (
+        ts.isVariableDeclaration(decl) ||
+        ts.isParameter(decl) ||
+        ts.isPropertyDeclaration(decl) ||
+        ts.isPropertySignature(decl)
+      ) {
+        return decl.type;
+      }
+      return undefined;
+    })();
+    if (!maybeTypeNode) continue;
+    const declared = unionDefFromType(ctx, ctx.checker.getTypeFromTypeNode(maybeTypeNode));
+    if (declared) return declared;
+  }
+
+  return undefined;
+}
+
 function entityNameToSegments(name: ts.EntityName): readonly string[] {
   if (ts.isIdentifier(name)) return [name.text];
   return [...entityNameToSegments(name.left), name.right.text];
@@ -1708,13 +1738,13 @@ function parseTokensArg(ctx: EmitCtx, expr: ts.Expression): string {
   return tmpl.text;
 }
 
-function parseAttrMarker(ctx: EmitCtx, expr: ts.Expression): string {
-  if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) {
-    failAt(expr, "TSB3304", "annotate(...) only supports attr(...) markers in v0.");
+function parseCoreAttrMarker(ctx: EmitCtx, expr: ts.CallExpression): string {
+  if (!ts.isIdentifier(expr.expression)) {
+    failAt(expr, "TSB3305", "annotate(...) @tsuba/core attr markers must use attr(...).");
   }
   const callee = expr.expression;
   if (callee.text !== "attr" || !isFromTsubaCoreLang(ctx, callee)) {
-    failAt(callee, "TSB3305", "annotate(...) only supports @tsuba/core attr(...) markers in v0.");
+    failAt(callee, "TSB3305", "annotate(...) @tsuba/core attr markers must use attr(...).");
   }
   const [nameArg, ...rest] = expr.arguments;
   if (!nameArg || !ts.isStringLiteral(nameArg)) {
@@ -1723,6 +1753,53 @@ function parseAttrMarker(ctx: EmitCtx, expr: ts.Expression): string {
   const args = rest.map((item) => parseTokensArg(ctx, item));
   if (args.length === 0) return `#[${nameArg.text}]`;
   return `#[${nameArg.text}(${args.join(", ")})]`;
+}
+
+function annotatePathFromExpr(expr: ts.Expression): string {
+  const segs = expressionToSegments(expr);
+  if (!segs || segs.length === 0) {
+    failAt(
+      expr,
+      "TSB3304",
+      "annotate(...) only supports attr(...), AttrMacro calls, and DeriveMacro values in v0."
+    );
+  }
+  return segs.join("::");
+}
+
+function parseAnnotateItem(
+  ctx: EmitCtx,
+  item: ts.Expression
+): { readonly attr?: string; readonly derive?: string } {
+  if (ts.isCallExpression(item)) {
+    if (ts.isIdentifier(item.expression) && item.expression.text === "attr" && isFromTsubaCoreLang(ctx, item.expression)) {
+      return { attr: parseCoreAttrMarker(ctx, item) };
+    }
+    if (isAttrMacroType(ctx.checker, item.expression)) {
+      if ((item.typeArguments?.length ?? 0) > 0) {
+        failAt(item, "TSB3304", "annotate(...) AttrMacro calls do not support type arguments in v0.");
+      }
+      const name = annotatePathFromExpr(item.expression);
+      const args = item.arguments.map((arg) => parseTokensArg(ctx, arg));
+      if (args.length === 0) return { attr: `#[${name}]` };
+      return { attr: `#[${name}(${args.join(", ")})]` };
+    }
+    failAt(
+      item,
+      "TSB3304",
+      "annotate(...) only supports attr(...), AttrMacro calls, and DeriveMacro values in v0."
+    );
+  }
+
+  if (isDeriveMacroType(ctx.checker, item)) {
+    return { derive: annotatePathFromExpr(item) };
+  }
+
+  failAt(
+    item,
+    "TSB3304",
+    "annotate(...) only supports attr(...), AttrMacro calls, and DeriveMacro values in v0."
+  );
 }
 
 function tryParseAnnotateStatement(
@@ -1742,7 +1819,15 @@ function tryParseAnnotateStatement(
   if (!target || !ts.isIdentifier(target)) {
     failAt(e, "TSB3308", "annotate(...) target must be an identifier in v0.");
   }
-  const attrs = items.map((item) => parseAttrMarker(ctx, item));
+
+  const attrs: string[] = [];
+  const derives: string[] = [];
+  for (const item of items) {
+    const parsed = parseAnnotateItem(ctx, item);
+    if (parsed.attr) attrs.push(parsed.attr);
+    if (parsed.derive) derives.push(parsed.derive);
+  }
+  if (derives.length > 0) attrs.push(`#[derive(${derives.join(", ")})]`);
   return { target: target.text, attrs };
 }
 
@@ -2002,9 +2087,21 @@ function isMutMarkerType(typeNode: ts.TypeNode | undefined): boolean {
   return tn.text === "mut";
 }
 
-function isMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
+function hasTypeBrand(checker: ts.TypeChecker, node: ts.Expression, brand: string): boolean {
   const ty = checker.getTypeAtLocation(node);
-  return ty.getProperty("__tsuba_macro") !== undefined;
+  return ty.getProperty(brand) !== undefined;
+}
+
+function isMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
+  return hasTypeBrand(checker, node, "__tsuba_macro");
+}
+
+function isAttrMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
+  return hasTypeBrand(checker, node, "__tsuba_attr_macro");
+}
+
+function isDeriveMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
+  return hasTypeBrand(checker, node, "__tsuba_derive");
 }
 
 function isFromTsubaCoreTypesSymbol(sym: ts.Symbol): boolean {
@@ -2138,6 +2235,15 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
           failAt(expr.name, "TSB1116", `Property '${expr.name.text}' is not available on this union variant in v0.`);
         }
         return identExpr(bound);
+      }
+
+      const unionDef = unionDefFromIdentifier(ctx, base);
+      if (unionDef && expr.name.text !== unionDef.discriminant) {
+        failAt(
+          expr.name,
+          "TSB1116",
+          `Property '${expr.name.text}' is not available on union '${unionDef.name}' without switch-based variant narrowing in v0.`
+        );
       }
 
       // Associated items on nominal types (e.g., enum variants / associated consts) use `::` in Rust.

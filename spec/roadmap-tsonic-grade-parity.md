@@ -86,7 +86,7 @@ Status values for tracking:
   - [x] block closures (either supported fully or hard-error with dedicated code)
 
 ### B.2 Control-flow and narrowing (P0)
-- [ ] Narrowing rules are explicit and deterministic (no best-effort branching).
+- [x] Narrowing rules are explicit and deterministic (no best-effort branching).
 - [x] Exhaustive discriminated union handling (`switch`→`match`) has negative tests for non-exhaustive cases.
 - [x] Mutation and initialization rules are proven with tests on nested scopes and shadowing.
 
@@ -102,7 +102,7 @@ Status values for tracking:
 ### B.4 Objects/classes/unions (P0)
 - [ ] Object-literal lowering matrix is explicit:
   - [x] contextual nominal target
-  - [ ] enum variant payload construction
+  - [x] enum variant payload construction
   - [x] synthesized shape structs (scoped, deterministic)
   - [x] hard-error non-representable escape paths
 - [x] Class-to-struct lowering has constructor/field/method correctness coverage.
@@ -110,7 +110,7 @@ Status values for tracking:
 ### B.5 Async model (P1)
 - [x] Runtime policy (`none`/`tokio`) is fully validated at compile time.
 - [x] Async diagnostic coverage includes all prohibited forms (e.g. unsupported Promise chains).
-- [ ] Runnable async proof fixtures exist for host services/jobs.
+- [x] Runnable async proof fixtures exist for host services/jobs.
 
 **Exit gate B:** Published feature matrix with every supported semantic shape mapped to tests.
 
@@ -125,7 +125,7 @@ Status values for tracking:
 
 ### C.2 Error precision (P1)
 - [ ] All diagnostics include actionable message + source span.
-- [ ] rustc mapping is preserved where available and tested.
+- [x] rustc mapping is preserved where available and tested.
 - [ ] Equivalent error shapes are normalized (same cause ⇒ same code/message family).
 
 ### C.3 Diagnostic regression harness (P1)
@@ -144,13 +144,13 @@ Status values for tracking:
 - [x] Parse failures produce explicit skip issues (never silent drop).
 
 ### D.2 Surface coverage (P1)
-- [ ] Traits, impl methods, enums (including payload variants), consts, macros, attributes.
-- [ ] Generic signatures (functions/structs/traits/methods) preserved where representable.
-- [ ] Unsupported Rust constructs always appear in `tsubabindgen.report.json`.
+- [x] Traits, impl methods, enums (including payload variants), consts, macros, attributes.
+- [x] Generic signatures (functions/structs/traits/methods) preserved where representable.
+- [x] Unsupported Rust constructs always appear in `tsubabindgen.report.json`.
 
 ### D.3 Cross-crate fidelity (P1)
 - [x] Re-export and module-path correctness for nested modules.
-- [ ] Deterministic behavior on crates with heavy generic and macro usage.
+- [x] Deterministic behavior on crates with heavy generic and macro usage.
 - [x] Bundled crate mode and path-backed mode both verified via CLI integration fixtures.
 
 **Exit gate D:** Two-run byte identity + no unexplained surface loss across advanced fixture set.
@@ -190,7 +190,7 @@ Status values for tracking:
 - [x] Capability/config mismatch diagnostics are clear and stable.
 
 ### F.3 GPU proof kernels (P1)
-- [ ] Matmul, softmax, MoE-dispatch kernels compile deterministically.
+- [x] Matmul, softmax, MoE-dispatch kernels compile deterministically.
 - [ ] Correctness checks against CPU references where runtime is available.
 
 **Exit gate F:** Kernel compile and launch workflows are test- and doc-complete.

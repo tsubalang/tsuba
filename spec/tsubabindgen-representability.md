@@ -34,10 +34,11 @@ Airplane-grade behavior:
 ### 2.1 Declarations emitted
 
 - public `const`
-- public `enum`
+- public `enum` (unit + payload variants)
 - public `struct` (plus inherent methods/constructors)
 - public `trait` (methods + supertraits)
 - public free functions
+- macro markers (`Macro`, `AttrMacro`, `DeriveMacro`) from exported `macro_rules!`/proc-macro surfaces
 - explicit `pub use` item re-exports (`name`, `rename`, grouped items)
 
 ### 2.2 Re-export behavior
@@ -86,6 +87,7 @@ Notes:
 
 - Module ordering, declaration ordering, and skip report ordering are deterministic.
 - Re-export application runs before emission and sorts declaration lists after application.
+- Pending method attachment merges repeated impl blocks by nominal target deterministically.
 - Repeated runs on same input must produce byte-identical `.d.ts`, bindings, and report files.
 - Skip-report `file` values are crate-root-relative paths (`src/...`) when possible, so reports do not leak machine-local absolute paths.
 

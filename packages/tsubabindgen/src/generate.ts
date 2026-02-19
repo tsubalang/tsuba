@@ -92,7 +92,10 @@ type RustField = {
   readonly type: RustType;
 };
 
+type RustFunctionKind = "fn" | "macro" | "attr_macro" | "derive";
+
 type RustFunction = {
+  readonly kind: RustFunctionKind;
   readonly name: string;
   readonly typeParams: readonly string[];
   readonly params: readonly RustField[];
@@ -139,7 +142,10 @@ type RustStruct = {
 type RustEnum = {
   readonly name: string;
   readonly typeParams: readonly string[];
-  readonly variants: readonly string[];
+  readonly variants: readonly {
+    readonly name: string;
+    readonly fields: readonly RustField[];
+  }[];
 };
 
 type ParsedModule = {
@@ -439,7 +445,7 @@ function parseParams(raw: string, file: string, issues: SkipIssue[]): RustField[
 
 function parseFunctions(text: string, file: string, issues: SkipIssue[]): RustFunction[] {
   const toplevel = (() => {
-    const implRegex = /\bimpl\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
+    const implRegex = /\bimpl(?:\s*<[^>]*>)?\s+[^{}]+\{/g;
     const ranges: Array<readonly [number, number]> = [];
     for (const match of text.matchAll(implRegex)) {
       const open = match.index + match[0].length - 1;
@@ -506,6 +512,7 @@ function parseFunctions(text: string, file: string, issues: SkipIssue[]): RustFu
     const bodyEnd = findMatching(toplevel, bodyStart, "{", "}");
     if (bodyEnd === -1) continue;
     const fn: RustFunction = {
+      kind: "fn",
       name: normalizeIdentifier(name),
       typeParams,
       params: parseParams(paramsRaw, file, issues),
@@ -562,13 +569,78 @@ function parseEnums(text: string, file: string, issues: SkipIssue[]): RustEnum[]
     const end = findMatching(text, start, "{", "}");
     if (end === -1) fail(`Unclosed enum body for ${name} in ${file}.`);
     const body = text.slice(start + 1, end);
-    const variants = body
-      .split(",")
-      .map((entry) => normalizeTypeText(entry))
-      .map((entry) => entry.replace(/[\r\n]+/g, " ").trim())
-      .map((entry) => entry.replace(/\s+(=|:).*$/g, "").trim())
-      .filter((entry) => entry.length > 0 && entry !== "{")
-      .map((entry) => normalizeIdentifier(entry));
+    const variants = splitTopLevel(body, ",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .map((entry) => {
+        const cleaned = entry.replace(/\s*=\s*.*$/g, "").trim();
+        const openTuple = cleaned.indexOf("(");
+        const openNamed = cleaned.indexOf("{");
+        const firstDelim = (() => {
+          if (openTuple === -1) return openNamed;
+          if (openNamed === -1) return openTuple;
+          return Math.min(openTuple, openNamed);
+        })();
+
+        if (firstDelim === -1) {
+          return { name: normalizeIdentifier(cleaned), fields: [] as RustField[] };
+        }
+
+        const variantName = normalizeIdentifier(cleaned.slice(0, firstDelim).trim());
+        if (cleaned[firstDelim] === "(") {
+          const close = findMatching(cleaned, firstDelim, "(", ")");
+          if (close === -1) {
+            issues.push({
+              file,
+              kind: "enum",
+              snippet: cleaned,
+              reason: "Tuple enum variant payload could not be parsed.",
+            });
+            return { name: variantName, fields: [] as RustField[] };
+          }
+          const payload = cleaned.slice(firstDelim + 1, close);
+          const fields = splitTopLevel(payload, ",")
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+            .map((value, index) => ({
+              kind: "field" as const,
+              name: `_${index}`,
+              type: parseType(value, file, issues),
+            }));
+          return { name: variantName, fields };
+        }
+
+        const close = findMatching(cleaned, firstDelim, "{", "}");
+        if (close === -1) {
+          issues.push({
+            file,
+            kind: "enum",
+            snippet: cleaned,
+            reason: "Struct enum variant payload could not be parsed.",
+          });
+          return { name: variantName, fields: [] as RustField[] };
+        }
+        const payload = cleaned.slice(firstDelim + 1, close);
+        const fields = splitTopLevel(payload, ",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+          .map((value) => {
+            const idx = value.indexOf(":");
+            if (idx === -1) {
+              issues.push({
+                file,
+                kind: "enum",
+                snippet: value,
+                reason: "Struct enum payload fields must be name: type.",
+              });
+              return { kind: "field" as const, name: "value", type: "unknown" };
+            }
+            const fieldName = normalizeIdentifier(value.slice(0, idx).trim());
+            const fieldType = parseType(value.slice(idx + 1).trim(), file, issues);
+            return { kind: "field" as const, name: fieldName, type: fieldType };
+          });
+        return { name: variantName, fields };
+      });
     if (variants.length === 0) {
       issues.push({
         file,
@@ -751,17 +823,39 @@ function parseTraits(text: string, file: string, issues: SkipIssue[]): RustTrait
 
 function parseImpls(text: string, file: string, issues: SkipIssue[]): Map<string, RustFunction[]> {
   const methodsByTarget = new Map<string, RustFunction[]>();
-  const implRegex = /\bimpl\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/g;
+  const implRegex = /\bimpl(?:\s*<[^>]*>)?\s+([^{}]+)\{/g;
   for (const match of text.matchAll(implRegex)) {
-    const target = match[1];
-    if (!target) continue;
+    const headerRaw = normalizeTypeText(match[1] ?? "");
+    if (!headerRaw) continue;
+    const targetExpr = (() => {
+      if (headerRaw.includes(" for ")) {
+        return headerRaw.split(/\s+for\s+/g).at(-1)?.trim() ?? "";
+      }
+      return headerRaw;
+    })();
+    const targetBase = targetExpr
+      .split(/\s+where\s+/g)[0]
+      ?.split("::")
+      .at(-1)
+      ?.replace(/<.*$/g, "")
+      .trim();
+    const target = targetBase ? normalizeIdentifier(targetBase) : "";
+    if (!target) {
+      issues.push({
+        file,
+        kind: "impl",
+        snippet: headerRaw,
+        reason: "Could not determine impl target type.",
+      });
+      continue;
+    }
     const start = match.index + match[0].length - 1;
     const end = findMatching(text, start, "{", "}");
     if (end === -1) {
       issues.push({
         file,
         kind: "impl",
-        snippet: String(target),
+        snippet: String(headerRaw),
         reason: `Could not parse impl body for ${target}.`,
       });
       continue;
@@ -861,6 +955,7 @@ function collectModulesLegacy(manifestPath: string): ParsedModule[] {
 
 function mapExtractedFunction(fn: RustFunction, file: string, issues: SkipIssue[]): RustFunction {
   return {
+    kind: fn.kind ?? "fn",
     name: normalizeIdentifier(fn.name),
     typeParams: [...(fn.typeParams ?? [])].map((p) => normalizeIdentifier(p)),
     params: fn.params.map((p) => ({
@@ -898,7 +993,14 @@ function mapExtractedModule(module: ExtractedModule): ParsedModule {
     enums: module.enums.map((e) => ({
       name: normalizeIdentifier(e.name),
       typeParams: [...(e.typeParams ?? [])].map((p) => normalizeIdentifier(p)),
-      variants: e.variants.map((v) => normalizeIdentifier(v)),
+      variants: e.variants.map((v) => ({
+        name: normalizeIdentifier(v.name),
+        fields: (v.fields ?? []).map((f) => ({
+          kind: "field",
+          name: normalizeIdentifier(f.name),
+          type: parseType(f.type, source, issues),
+        })),
+      })),
     })),
     structs,
     traits: module.traits.map((t) => ({
@@ -924,14 +1026,15 @@ function mapExtractedModule(module: ExtractedModule): ParsedModule {
         if (byName !== 0) return byName;
         return compareText(a.source, b.source);
       }),
-    pendingMethods: new Map(
-      module.pendingMethods.map((entry) => [
-        normalizeIdentifier(entry.target),
-        entry.methods.map((m) => mapExtractedFunction(m, source, issues)),
-      ])
-    ),
+    pendingMethods: new Map<string, RustFunction[]>(),
     issues,
   };
+  for (const entry of module.pendingMethods) {
+    const target = normalizeIdentifier(entry.target);
+    const mapped = entry.methods.map((m) => mapExtractedFunction(m, source, issues));
+    const existing = parsed.pendingMethods.get(target) ?? [];
+    parsed.pendingMethods.set(target, [...existing, ...mapped]);
+  }
   return parsed;
 }
 
@@ -998,6 +1101,21 @@ function rustPath(crateName: string, parts: readonly string[]): string {
 }
 
 function attachMethods(modules: ParsedModule[]): void {
+  const methodKey = (method: {
+    readonly kind: RustMethodKind;
+    readonly name: string;
+    readonly typeParams: readonly string[];
+    readonly params: readonly RustField[];
+    readonly returnType: RustType;
+  }): string =>
+    [
+      method.kind,
+      method.name,
+      method.typeParams.join(","),
+      method.params.map((p) => `${p.name}:${p.type}`).join(","),
+      method.returnType,
+    ].join("|");
+
   const structByName = new Map<string, RustStruct>();
   for (const m of modules) {
     for (const s of m.structs) structByName.set(s.name, s);
@@ -1013,22 +1131,27 @@ function attachMethods(modules: ParsedModule[]): void {
           ? mth.params.slice(1).filter((p) => p.type !== "void")
           : mth.params.filter((p) => p.type !== "void");
         if (mth.name === "new" || mth.name === "new_") {
-          struct.constructorMethod = {
+          const nextCtor: RustMethod = {
             name: "new",
             kind: "constructor",
             typeParams: mth.typeParams,
             params,
             returnType: mth.returnType,
           };
+          if (!struct.constructorMethod || methodKey(struct.constructorMethod) !== methodKey(nextCtor)) {
+            struct.constructorMethod = nextCtor;
+          }
           continue;
         }
-        struct.methods.push({
+        const nextMethod: RustMethod = {
           name: mth.name,
           kind: isInstance ? "instance" : "static",
           typeParams: mth.typeParams,
           params,
           returnType: mth.returnType,
-        });
+        };
+        if (struct.methods.some((existing) => methodKey(existing) === methodKey(nextMethod))) continue;
+        struct.methods.push(nextMethod);
       }
     }
   }
@@ -1042,7 +1165,10 @@ function cloneAsEnum(value: RustEnum, name: string): RustEnum {
   return {
     name,
     typeParams: [...value.typeParams],
-    variants: [...value.variants],
+    variants: value.variants.map((v) => ({
+      name: v.name,
+      fields: v.fields.map((f) => ({ kind: "field", name: f.name, type: f.type })),
+    })),
   };
 }
 
@@ -1086,6 +1212,7 @@ function cloneAsTrait(value: RustTrait, name: string): RustTrait {
 
 function cloneAsFunction(value: RustFunction, name: string): RustFunction {
   return {
+    kind: value.kind,
     name,
     typeParams: [...value.typeParams],
     params: value.params.map((p) => ({ kind: "field", name: p.name, type: p.type })),
@@ -1187,7 +1314,11 @@ function sortModuleDeclarations(module: ParsedModule): void {
   module.enums.sort((a, b) => compareText(a.name, b.name));
   module.structs.sort((a, b) => compareText(a.name, b.name));
   module.traits.sort((a, b) => compareText(a.name, b.name));
-  module.functions.sort((a, b) => compareText(a.name, b.name));
+  module.functions.sort((a, b) => {
+    const byName = compareText(a.name, b.name);
+    if (byName !== 0) return byName;
+    return compareText(a.kind, b.kind);
+  });
 }
 
 function applyReexports(modules: ParsedModule[]): void {
@@ -1241,7 +1372,11 @@ function collectMarkerTypes(modules: readonly ParsedModule[]): string[] {
         for (const p of m.params) emitText(p.type);
       }
     }
-    for (const e of module.enums) emitText(e.name);
+    for (const e of module.enums) {
+      for (const v of e.variants) {
+        for (const f of v.fields) emitText(f.type);
+      }
+    }
     for (const t of module.traits) {
       for (const st of t.superTraits) emitText(st);
       for (const m of t.methods) {
@@ -1253,6 +1388,9 @@ function collectMarkerTypes(modules: readonly ParsedModule[]): string[] {
       }
     }
     for (const f of module.functions) {
+      if (f.kind === "macro") emitText("Macro Tokens");
+      if (f.kind === "attr_macro") emitText("AttrMacro Attr Tokens");
+      if (f.kind === "derive") emitText("DeriveMacro");
       emitText(f.returnType);
       for (const p of f.params) emitText(p.type);
     }
@@ -1270,7 +1408,12 @@ function emitDts(module: ParsedModule): string {
     lines.push(`export declare class ${e.name}${enumTypeParams} {`);
     lines.push("  private constructor();");
     for (const v of e.variants) {
-      lines.push(`  static readonly ${v}: ${e.name}${enumTypeParams};`);
+      if (v.fields.length === 0) {
+        lines.push(`  static readonly ${v.name}: ${e.name}${enumTypeParams};`);
+        continue;
+      }
+      const args = v.fields.map((f) => `${f.name}: ${f.type}`).join(", ");
+      lines.push(`  static ${v.name}(${args}): ${e.name}${enumTypeParams};`);
     }
     lines.push("}");
     lines.push("");
@@ -1328,6 +1471,18 @@ function emitDts(module: ParsedModule): string {
   }
 
   for (const f of module.functions) {
+    if (f.kind === "derive") {
+      lines.push(`export const ${f.name}: DeriveMacro;`);
+      continue;
+    }
+    if (f.kind === "macro") {
+      lines.push(`export const ${f.name}: Macro<(...args: readonly Tokens[]) => Tokens>;`);
+      continue;
+    }
+    if (f.kind === "attr_macro") {
+      lines.push(`export const ${f.name}: AttrMacro<(...args: readonly Tokens[]) => Attr>;`);
+      continue;
+    }
     const fnTypeParams = f.typeParams.length > 0 ? `<${f.typeParams.join(", ")}>` : "";
     const args = f.params.map((p) => `${p.name}: ${p.type}`).join(", ");
     lines.push(`export function ${f.name}${fnTypeParams}(${args}): ${f.returnType};`);

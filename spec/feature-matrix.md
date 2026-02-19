@@ -17,7 +17,7 @@ Policy:
 | Entry contract | `export function main()`; `void` and `Result<void, E>` returns; async `main` only with `runtime.kind=tokio` | missing/non-export `main`; invalid main return shapes | broader runtime strategies |
 | Closures | expression-bodied arrow closures; `move(...)` arrow closures | block-bodied arrow closures; `move(...)` non-arrow arguments | block-closure lowering |
 | Async expressions | `await` in async functions; async lowering to Rust async/await | Promise `.then(...)` chains | additional async combinators |
-| Marker calls | `q(...)`, `unsafe(...)`, macro markers, annotate markers | marker misuse (wrong arity/callee/form) | richer marker libraries |
+| Marker calls | `q(...)`, `unsafe(...)`, macro markers, annotate markers (`attr(...)`, `AttrMacro`, `DeriveMacro`) | marker misuse (wrong arity/callee/form) | richer marker libraries |
 
 Primary evidence:
 
@@ -82,7 +82,7 @@ Primary evidence:
 | --- | --- | --- | --- |
 | Project imports | deterministic module lowering (`mod` + `use`) for relative project modules | side-effect-only imports | wider import forms if representable |
 | External bindings | `tsuba.bindings.json` crate mapping, version/path source tracking, crate dep emission | unsupported/malformed manifests, mapping conflicts | richer manifest metadata |
-| tsubabindgen | deterministic generation, traits/enums/macros coverage for supported Rust syntax, explicit skip reports, explicit `pub use` re-export resolution, parser-failure skip reporting | silent drop of unsupported constructs; glob re-exports in TS facades | expanded Rust surface coverage |
+| tsubabindgen | deterministic generation, payload-enum constructors, traits + impl methods, proc-macro markers (`Macro`, `AttrMacro`, `DeriveMacro`), explicit skip reports, explicit `pub use` re-export resolution, parser-failure skip reporting | silent drop of unsupported constructs; glob re-exports in TS facades | expanded Rust surface coverage |
 
 Primary evidence:
 

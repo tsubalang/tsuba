@@ -26,6 +26,7 @@ struct ExtractField {
 
 #[derive(Serialize, Clone)]
 struct ExtractFunction {
+    kind: String,
     name: String,
     #[serde(rename = "typeParams")]
     type_params: Vec<String>,
@@ -43,11 +44,17 @@ struct ExtractStruct {
 }
 
 #[derive(Serialize, Clone)]
+struct ExtractEnumVariant {
+    name: String,
+    fields: Vec<ExtractField>,
+}
+
+#[derive(Serialize, Clone)]
 struct ExtractEnum {
     name: String,
     #[serde(rename = "typeParams")]
     type_params: Vec<String>,
-    variants: Vec<String>,
+    variants: Vec<ExtractEnumVariant>,
 }
 
 #[derive(Serialize, Clone)]
@@ -95,6 +102,7 @@ struct ExtractOutput {
 
 fn macro_stub(name: String) -> ExtractFunction {
     ExtractFunction {
+        kind: "macro".to_string(),
         name,
         type_params: Vec::new(),
         params: vec![ExtractField {
@@ -171,7 +179,12 @@ fn parse_type_params(
     out
 }
 
-fn parse_signature(sig: &Signature, file: &str, issues: &mut Vec<SkipIssue>) -> ExtractFunction {
+fn parse_signature(
+    sig: &Signature,
+    file: &str,
+    issues: &mut Vec<SkipIssue>,
+    kind: &str,
+) -> ExtractFunction {
     let type_params = parse_type_params(&sig.generics, file, "Function", &sig.ident.to_string(), issues);
     let mut params = Vec::new();
     for input in &sig.inputs {
@@ -209,6 +222,7 @@ fn parse_signature(sig: &Signature, file: &str, issues: &mut Vec<SkipIssue>) -> 
         }
     }
     ExtractFunction {
+        kind: kind.to_string(),
         name: sig.ident.to_string(),
         type_params,
         params,
@@ -260,15 +274,34 @@ fn parse_enum(item: &ItemEnum, file: &str, issues: &mut Vec<SkipIssue>) -> Extra
     let type_params = parse_type_params(&item.generics, file, "Enum", &item.ident.to_string(), issues);
     let mut variants = Vec::new();
     for variant in &item.variants {
-        if !matches!(variant.fields, Fields::Unit) {
-            issues.push(SkipIssue {
-                file: file.to_string(),
-                kind: "enum".to_string(),
-                snippet: variant.ident.to_string(),
-                reason: "Enum variants with payload fields are currently represented as unit variants in TS facades.".to_string(),
-            });
-        }
-        variants.push(variant.ident.to_string());
+        let fields = match &variant.fields {
+            Fields::Unit => Vec::new(),
+            Fields::Named(named) => named
+                .named
+                .iter()
+                .map(|field| ExtractField {
+                    name: field
+                        .ident
+                        .as_ref()
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "value".to_string()),
+                    type_text: type_to_string(&field.ty),
+                })
+                .collect(),
+            Fields::Unnamed(unnamed) => unnamed
+                .unnamed
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| ExtractField {
+                    name: format!("_{idx}"),
+                    type_text: type_to_string(&field.ty),
+                })
+                .collect(),
+        };
+        variants.push(ExtractEnumVariant {
+            name: variant.ident.to_string(),
+            fields,
+        });
     }
     ExtractEnum {
         name: item.ident.to_string(),
@@ -283,7 +316,7 @@ fn parse_trait(item: &ItemTrait, file: &str, issues: &mut Vec<SkipIssue>) -> Ext
 
     for trait_item in &item.items {
         match trait_item {
-            TraitItem::Fn(method) => methods.push(parse_signature(&method.sig, file, issues)),
+            TraitItem::Fn(method) => methods.push(parse_signature(&method.sig, file, issues, "fn")),
             TraitItem::Type(assoc_type) => {
                 let assoc = assoc_type.ident.to_string();
                 if !type_params.contains(&assoc) {
@@ -314,9 +347,6 @@ fn parse_trait(item: &ItemTrait, file: &str, issues: &mut Vec<SkipIssue>) -> Ext
 }
 
 fn parse_impl(item: &ItemImpl, file: &str, issues: &mut Vec<SkipIssue>) -> Option<PendingMethods> {
-    if item.trait_.is_some() {
-        return None;
-    }
     let target = match item.self_ty.as_ref() {
         Type::Path(path) => path
             .path
@@ -336,12 +366,13 @@ fn parse_impl(item: &ItemImpl, file: &str, issues: &mut Vec<SkipIssue>) -> Optio
     };
 
     let mut methods = Vec::new();
+    let include_inherited_visibility = item.trait_.is_some();
     for impl_item in &item.items {
         if let ImplItem::Fn(m) = impl_item {
-            if !is_public(&m.vis) {
+            if !include_inherited_visibility && !is_public(&m.vis) {
                 continue;
             }
-            methods.push(parse_signature(&m.sig, file, issues));
+            methods.push(parse_signature(&m.sig, file, issues, "fn"));
         }
     }
 
@@ -411,6 +442,40 @@ fn has_macro_export(attrs: &[syn::Attribute]) -> bool {
     attrs
         .iter()
         .any(|attr| attr.path().is_ident("macro_export"))
+}
+
+fn has_attr(attrs: &[syn::Attribute], name: &str) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident(name))
+}
+
+fn proc_macro_derive_names(attrs: &[syn::Attribute]) -> Vec<String> {
+    let mut out = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("proc_macro_derive") {
+            continue;
+        }
+        let text = normalize_ws(attr.meta.to_token_stream().to_string());
+        let open = text.find('(');
+        let close = text.rfind(')');
+        let Some(open) = open else {
+            continue;
+        };
+        let Some(close) = close else {
+            continue;
+        };
+        if close <= open + 1 {
+            continue;
+        }
+        let inner = &text[(open + 1)..close];
+        if let Some(first) = inner
+            .split(',')
+            .map(|part| part.trim())
+            .find(|part| !part.is_empty())
+        {
+            out.push(first.to_string());
+        }
+    }
+    out
 }
 
 fn resolve_child_module_file(base_dir: &Path, module_name: &str) -> Result<PathBuf, String> {
@@ -486,9 +551,38 @@ fn collect_module_items(
             }
             Item::Const(c) if is_public(&c.vis) => module.consts.push(parse_const(c)),
             Item::Fn(f) if is_public(&f.vis) => {
-                module
-                    .functions
-                    .push(parse_signature(&f.sig, file_label, &mut module.issues));
+                let derive_names = proc_macro_derive_names(&f.attrs);
+                for derive_name in &derive_names {
+                    module.functions.push(ExtractFunction {
+                        kind: "derive".to_string(),
+                        name: derive_name.to_string(),
+                        type_params: Vec::new(),
+                        params: Vec::new(),
+                        return_type: "()".to_string(),
+                    });
+                }
+                if has_attr(&f.attrs, "proc_macro_attribute") {
+                    module.functions.push(parse_signature(
+                        &f.sig,
+                        file_label,
+                        &mut module.issues,
+                        "attr_macro",
+                    ));
+                } else if has_attr(&f.attrs, "proc_macro") {
+                    module.functions.push(parse_signature(
+                        &f.sig,
+                        file_label,
+                        &mut module.issues,
+                        "macro",
+                    ));
+                } else if derive_names.is_empty() {
+                    module.functions.push(parse_signature(
+                        &f.sig,
+                        file_label,
+                        &mut module.issues,
+                        "fn",
+                    ));
+                }
             }
             Item::Struct(s) if is_public(&s.vis) => {
                 module

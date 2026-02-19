@@ -151,7 +151,7 @@ describe("@tsuba/tsubabindgen", () => {
     expect(report.skipped.some((entry) => entry.kind === "type")).to.equal(true);
   });
 
-  it("generates advanced facades with generic methods, macros, and enum payload reporting", () => {
+  it("generates advanced facades with generic methods, macro markers, and enum payload constructors", () => {
     const out = runTempFixture({ fixture: "advanced", packageName: "@tsuba/advanced", bundleCrate: false });
     const rootDts = read(join(out, "index.d.ts"));
     const nestedDts = read(join(out, "nested.d.ts"));
@@ -159,12 +159,19 @@ describe("@tsuba/tsubabindgen", () => {
     expect(rootDts).to.include("export declare class Wrapper<T> {");
     expect(rootDts).to.include("constructor(value: T);");
     expect(rootDts).to.include("map<U>(value: U): U;");
+    expect(rootDts).to.include("label(): i32;");
     expect(rootDts).to.include("export declare class Payload<T> {");
-    expect(rootDts).to.include("static readonly One: Payload<T>;");
+    expect(rootDts).to.include("static One(_0: T): Payload<T>;");
+    expect(rootDts).to.include("static Pair(left: T, right: T): Payload<T>;");
     expect(rootDts).to.include("export interface Service<T, Output> extends Clone {");
     expect(rootDts).to.include("run(this: ref<this>, input: T): Output;");
+    expect(rootDts).to.include("export interface Named {");
+    expect(rootDts).to.include("label(this: ref<this>): i32;");
     expect(rootDts).to.include("export function fold_pair<T>(left: T, _right: T): T;");
-    expect(rootDts).to.include("export function make_pair(tokens: Tokens): Tokens;");
+    expect(rootDts).to.include("export const make_pair: Macro<(...args: readonly Tokens[]) => Tokens>;");
+    expect(rootDts).to.include("export const mk_tokens: Macro<(...args: readonly Tokens[]) => Tokens>;");
+    expect(rootDts).to.include("export const traced: AttrMacro<(...args: readonly Tokens[]) => Attr>;");
+    expect(rootDts).to.include("export const Serialize: DeriveMacro;");
 
     expect(nestedDts).to.include("export const NESTED_ANSWER: i32;");
     expect(nestedDts).to.include("export function nested_mul<T>(value: T): T;");
@@ -174,11 +181,7 @@ describe("@tsuba/tsubabindgen", () => {
       skipped: Array<{ kind: string; reason: string }>;
     };
     expect(report.schema).to.equal(1);
-    expect(
-      report.skipped.some(
-        (entry) => entry.kind === "enum" && entry.reason.includes("payload")
-      )
-    ).to.equal(true);
+    expect(report.skipped.some((entry) => entry.kind === "enum" && entry.reason.includes("payload"))).to.equal(false);
   });
 
   it("reports unsupported edge syntax deterministically while still emitting usable modules", () => {
@@ -188,6 +191,7 @@ describe("@tsuba/tsubabindgen", () => {
 
     expect(rootDts).to.include("export declare class Event {");
     expect(rootDts).to.include("static readonly Ready: Event;");
+    expect(rootDts).to.include("static Message(_0: String): Event;");
     expect(rootDts).to.include("export interface Borrowing<Item> {");
     expect(rootDts).to.include("get(this: ref<this>): Option<refLt<\"a\", Item>>;");
     expect(rootDts).to.include("export declare class Bytes {");
@@ -204,7 +208,7 @@ describe("@tsuba/tsubabindgen", () => {
     expect(report.schema).to.equal(1);
     expect(report.skipped.some((entry) => entry.kind === "generic" && entry.snippet.includes("'a"))).to.equal(true);
     expect(report.skipped.some((entry) => entry.kind === "generic" && entry.snippet.startsWith("const "))).to.equal(true);
-    expect(report.skipped.some((entry) => entry.kind === "enum" && entry.reason.includes("payload"))).to.equal(true);
+    expect(report.skipped.some((entry) => entry.kind === "enum" && entry.reason.includes("payload"))).to.equal(false);
     expect(report.skipped.some((entry) => entry.kind === "type" && entry.snippet.includes("impl Iterator"))).to.equal(
       true
     );
