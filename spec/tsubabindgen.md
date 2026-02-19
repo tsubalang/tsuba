@@ -135,8 +135,11 @@ Tsuba CLI can provide:
 
 Behavior:
 
-- updates `Cargo.toml` for the project (or workspace lockfile)
+- updates `tsuba.json` for the project (declares the Cargo dependency)
 - runs `tsubabindgen` to generate a facade package (`.d.ts` + `tsuba.bindings.json`)
+  - output is cached under `.tsuba/bindings-cache/`
+  - the generated package is linked into `node_modules/@tsuba/<crate>/` so TypeScript + Tsuba can import it
+- enforces a v0 policy of **single version per workspace** per Cargo package
 
 Tsuba does not rely on a curated set of pre-generated crate packages in v0; bindgen is the standard mechanism.
 

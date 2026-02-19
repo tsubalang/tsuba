@@ -148,7 +148,7 @@ Deliverables:
   - function-like macros as values
   - attribute macros as values producing `Attr`
   - derive macros as `DeriveMacro`
-  - hard error on unrepresentable surfaces (no omission)
+  - best-effort skipping, but **no silent omission** (emit a deterministic skip report)
 
 Merge gate:
 

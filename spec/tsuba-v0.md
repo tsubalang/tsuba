@@ -340,7 +340,12 @@ For a crate `my_crate`:
 ```json
 {
   "schema": 1,
-  "crate": "my_crate",
+  "kind": "crate",
+  "crate": {
+    "name": "my_crate",
+    "package": "my-crate",
+    "version": "1.2.3"
+  },
   "modules": {
     "@tsuba/my-crate/index.js": "my_crate",
     "@tsuba/my-crate/foo.js": "my_crate::foo"
@@ -351,17 +356,18 @@ For a crate `my_crate`:
 ### 12.3 Design constraints (airplane-grade)
 
 - Generation must be deterministic.
-- Missing metadata must be an error, not silent omission.
-- If a Rust item cannot be represented in the Tsuba TS surface, tsubabindgen errors.
+- Bindgen is best-effort, but **must not silently omit**:
+  - if a public Rust item cannot be represented in the Tsuba TS surface, bindgen skips it and records the skip deterministically in `tsubabindgen.report.json`.
+- Bindgen must never “guess” a type mapping that could miscompile; when in doubt, skip with a report entry.
 
 ### 12.4 Generics and traits
 
 tsubabindgen must emit nominal TS surfaces for:
 - structs/enums
-- trait methods
-- generic functions
+- trait methods (when representable)
+- generic functions (when representable)
 
-It should not attempt to model every Rust feature in v0 (e.g. higher-kinded types), and should error when unsupported.
+It should not attempt to model every Rust feature in v0 (e.g. higher-kinded types). Unsupported surfaces are expected to be skipped with explicit reporting.
 
 ---
 

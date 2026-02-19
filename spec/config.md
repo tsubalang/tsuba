@@ -59,7 +59,8 @@ Example:
   "deps": {
     "crates": [
       { "id": "tokio", "version": "1.37", "features": ["rt-multi-thread", "macros"] },
-      { "id": "serde", "version": "1.0", "features": ["derive"] }
+      { "id": "serde", "version": "1.0", "features": ["derive"] },
+      { "id": "simple_crate", "package": "simple-crate", "version": "0.1.0" }
     ]
   }
 }
@@ -74,6 +75,11 @@ Fields (v0):
 - `gpu.enabled` (boolean): whether this project can compile/launch kernels (requires workspace GPU backend).
 - `crate.name` (string): Rust crate name (snake_case recommended). If omitted, derived from `name`.
 - `deps.crates[]`: declared Cargo dependencies (normally managed by `tsuba add crate`).
+  - `id` is the Rust **crate name** used in `use` paths (often underscores).
+  - `package` is the Cargo **package name** when it differs from `id` (often hyphens).
+    - Example: `simple-crate` package is imported as `simple_crate` in Rust, so use `{ "id": "simple_crate", "package": "simple-crate", ... }`.
+  - Airplane-grade policy (v0): **single version per workspace** for a given Cargo package.
+    - If two projects request different versions of the same package, Tsuba errors and requires you to align versions.
 
 ## `tsuba.bindings.json`
 
