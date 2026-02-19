@@ -24,6 +24,12 @@ Use the publish script for invariant checks + publish flow:
 npm run publish:npm -- --dry-run
 ```
 
+For crates.io (when publishable crates exist in this repo):
+
+```bash
+npm run publish:crates -- --dry-run
+```
+
 It enforces:
 
 - branch is `main`
