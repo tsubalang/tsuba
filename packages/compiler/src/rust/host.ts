@@ -14,6 +14,7 @@ import type {
   RustVisibility,
   Span,
 } from "./ir.js";
+import { assertCompilerDiagnosticCode } from "./diagnostics.js";
 import { identExpr, pathExpr, pathType, unitExpr, unitType } from "./ir.js";
 import { writeRustProgram } from "./write.js";
 
@@ -27,6 +28,7 @@ export class CompileError extends Error {
   readonly span?: Span;
 
   constructor(code: string, message: string, span?: Span) {
+    assertCompilerDiagnosticCode(code);
     super(message);
     this.code = code;
     this.span = span;
@@ -291,6 +293,7 @@ function spanFromNode(node: ts.Node): Span {
 }
 
 function failAt(node: ts.Node, code: string, message: string): never {
+  assertCompilerDiagnosticCode(code);
   throw new CompileError(code, message, spanFromNode(node));
 }
 
@@ -1363,6 +1366,7 @@ const rustPrimitiveTypes = new Map<string, RustType>([
 ]);
 
 function fail(code: string, message: string): never {
+  assertCompilerDiagnosticCode(code);
   throw new CompileError(code, message);
 }
 
