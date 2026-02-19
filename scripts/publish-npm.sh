@@ -105,6 +105,9 @@ else
   echo "WARN: skipping proof verification (--no-proof)."
 fi
 
+echo "==> Release traceability snapshot"
+node "$ROOT_DIR/scripts/release-traceability.mjs" --pretty
+
 PACKAGE_DIRS=(
   "packages/core"
   "packages/std"

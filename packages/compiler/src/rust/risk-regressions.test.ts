@@ -80,6 +80,49 @@ describe("@tsuba/compiler risk regressions", () => {
     expect(rust).to.contain("let y = read(&(v));");
   });
 
+  it("inserts receiver borrows for method calls through ref/mutref bindings", () => {
+    const rust = compileEntry(
+      [
+        'import type { i32, mut, mutref, ref } from "@tsuba/core/types.js";',
+        "",
+        "class Counter {",
+        "  value: i32 = 0 as i32;",
+        "",
+        "  bump(this: mutref<Counter>, by: i32): i32 {",
+        "    this.value = (this.value + by) as i32;",
+        "    return this.value;",
+        "  }",
+        "",
+        "  read(this: ref<Counter>): i32 {",
+        "    return this.value;",
+        "  }",
+        "}",
+        "",
+        "function tick(c: mutref<Counter>): i32 {",
+        "  return c.bump(1 as i32);",
+        "}",
+        "",
+        "function peek(c: ref<Counter>): i32 {",
+        "  return c.read();",
+        "}",
+        "",
+        "export function main(): void {",
+        "  let c: mut<Counter> = new Counter();",
+        "  const a = tick(c);",
+        "  const b = peek(c);",
+        "  void a;",
+        "  void b;",
+        "}",
+        "",
+      ].join("\n")
+    );
+
+    expect(rust).to.contain("return c.bump((1) as i32);");
+    expect(rust).to.contain("return c.read();");
+    expect(rust).to.contain("let a = tick(&mut (c));");
+    expect(rust).to.contain("let b = peek(&(c));");
+  });
+
   it("uses contextual nominal object literal lowering instead of synthesized anon structs", () => {
     const rust = compileEntry(
       [

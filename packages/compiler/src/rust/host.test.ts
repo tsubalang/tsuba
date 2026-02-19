@@ -1598,6 +1598,77 @@ describe("@tsuba/compiler host emitter", () => {
     }
     expect(err).to.be.instanceOf(CompileError);
     expect((err as CompileError).code).to.equal("TSB0002");
+    expect((err as CompileError).span).to.not.equal(undefined);
+    expect((err as CompileError).span?.fileName).to.match(/main\.ts$/);
+    expect((err as CompileError).span?.end).to.be.gte((err as CompileError).span?.start ?? 0);
+  });
+
+  it("reports module-name collisions with a source span on the colliding file", () => {
+    const dir = makeRepoTempDir("compiler-module-collision-");
+    const entry = join(dir, "main.ts");
+    const dash = join(dir, "foo-bar.ts");
+    const underscore = join(dir, "foo_bar.ts");
+
+    writeFileSync(
+      entry,
+      [
+        'import { a } from "./foo-bar.js";',
+        'import { b } from "./foo_bar.js";',
+        "",
+        "export function main(): void {",
+        "  void a;",
+        "  void b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+    writeFileSync(dash, "export const a = 1;\n", "utf-8");
+    writeFileSync(underscore, "export const b = 2;\n", "utf-8");
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB3200");
+    expect((err as CompileError).message).to.contain("foo-bar.ts");
+    expect((err as CompileError).message).to.contain("foo_bar.ts");
+    expect((err as CompileError).span).to.not.equal(undefined);
+    expect((err as CompileError).span?.fileName).to.match(/foo_bar\.ts$/);
+  });
+
+  it("reports span for unnamed default-exported functions", () => {
+    const dir = makeRepoTempDir("compiler-unnamed-default-fn-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "export default function (): void {",
+        "  return;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB3000");
+    expect((err as CompileError).span).to.not.equal(undefined);
+    expect((err as CompileError).span?.fileName).to.match(/main\.ts$/);
+    expect((err as CompileError).span?.end).to.be.gte((err as CompileError).span?.start ?? 0);
   });
 
   it("errors when trait method receiver mutability does not match", () => {
