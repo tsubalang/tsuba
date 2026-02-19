@@ -36,10 +36,8 @@ This roadmap is the plan to take that v0 scaffold to a “real language” imple
 
 - ✅ Checkpoint artifacts and test harness transfer are in place.
 - ✅ Command architecture and workspace model parity are in place.
-- 🔶 Remaining high-priority parity work is tracked in `spec/roadmap-parity-with-tsonic.md` and centers on:
-  - compiler phase separation/typed IR discipline,
-  - bindgen extractor hardening,
-  - signed release notes/tag automation.
+- ✅ P0 parity gates in `spec/roadmap-parity-with-tsonic.md` are complete.
+- 🔶 Remaining release-discipline work is primarily signed release notes/tag automation.
 
 ---
 

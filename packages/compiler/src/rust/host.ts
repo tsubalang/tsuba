@@ -53,6 +53,20 @@ export type CompileHostOutput = {
   readonly crates: readonly CrateDep[];
 };
 
+type MainReturnKind = "unit" | "result";
+
+type CompileBootstrap = {
+  readonly program: ts.Program;
+  readonly checker: ts.TypeChecker;
+  readonly entrySourceFile: ts.SourceFile;
+  readonly mainFn: ts.FunctionDeclaration;
+  readonly runtimeKind: "none" | "tokio";
+  readonly mainIsAsync: boolean;
+  readonly returnKind: MainReturnKind;
+  readonly rustReturnType?: RustType;
+  readonly userSourceFiles: readonly ts.SourceFile[];
+};
+
 type UnionVariantDef = {
   readonly tag: string;
   readonly name: string;
@@ -97,10 +111,10 @@ type EmitCtx = {
   readonly checker: ts.TypeChecker;
   readonly thisName?: string;
   readonly inAsync?: boolean;
-  readonly unions: ReadonlyMap<string, UnionDef>;
-  readonly structs: ReadonlyMap<string, StructDef>;
-  readonly traitsByKey: ReadonlyMap<string, TraitDef>;
-  readonly traitsByName: ReadonlyMap<string, TraitDef[]>;
+  readonly unions: Map<string, UnionDef>;
+  readonly structs: Map<string, StructDef>;
+  readonly traitsByKey: Map<string, TraitDef>;
+  readonly traitsByName: Map<string, TraitDef[]>;
   readonly shapeStructsByKey: Map<string, StructDef>;
   readonly shapeStructsByFile: Map<string, StructDef[]>;
   readonly kernelDeclBySymbol: Map<ts.Symbol, KernelDecl>;
@@ -1392,6 +1406,307 @@ function hasModifier(
   kind: ts.SyntaxKind
 ): boolean {
   return node.modifiers?.some((m: ts.ModifierLike) => m.kind === kind) ?? false;
+}
+
+function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
+  const compilerOptions: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    strict: true,
+    skipLibCheck: true,
+    noEmit: true,
+  };
+
+  const host = ts.createCompilerHost(compilerOptions, true);
+  const program = ts.createProgram([opts.entryFile], compilerOptions, host);
+  const diagnostics = ts
+    .getPreEmitDiagnostics(program)
+    .filter((d) => d.category === ts.DiagnosticCategory.Error);
+  if (diagnostics.length > 0) {
+    const d = diagnostics.at(0);
+    if (!d) fail("TSB0002", "Compilation failed with diagnostics.");
+    const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n");
+    if (d.file && d.start !== undefined) {
+      const pos = d.file.getLineAndCharacterOfPosition(d.start);
+      fail("TSB0002", `${d.file.fileName}:${pos.line + 1}:${pos.character + 1}: ${msg}`);
+    }
+    fail("TSB0002", msg);
+  }
+  const checker = program.getTypeChecker();
+
+  const entrySourceFile = program.getSourceFile(opts.entryFile);
+  if (!entrySourceFile) fail("TSB0001", `Could not read entry file: ${opts.entryFile}`);
+
+  const mainFn = getExportedMain(entrySourceFile);
+  const runtimeKind = opts.runtimeKind ?? "none";
+  const mainIsAsync = hasModifier(mainFn, ts.SyntaxKind.AsyncKeyword);
+  const returnTypeNode = mainFn.type;
+  const returnKind: MainReturnKind = (() => {
+    if (mainIsAsync) {
+      if (runtimeKind !== "tokio") {
+        fail("TSB1004", "async main() requires runtime.kind='tokio' in tsuba.workspace.json.");
+      }
+      const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
+      if (inner.kind === ts.SyntaxKind.VoidKeyword) return "unit";
+      if (
+        ts.isTypeReferenceNode(inner) &&
+        ts.isIdentifier(inner.typeName) &&
+        inner.typeName.text === "Result"
+      ) {
+        const [okTy] = inner.typeArguments ?? [];
+        if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
+          fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
+        }
+        return "result";
+      }
+      fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
+    }
+
+    if (!returnTypeNode) return "unit";
+    if (returnTypeNode.kind === ts.SyntaxKind.VoidKeyword) return "unit";
+    if (
+      ts.isTypeReferenceNode(returnTypeNode) &&
+      ts.isIdentifier(returnTypeNode.typeName) &&
+      returnTypeNode.typeName.text === "Result"
+    ) {
+      const [okTy] = returnTypeNode.typeArguments ?? [];
+      if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
+        fail("TSB1003", "main() may only return Result<void, E> in v0.");
+      }
+      return "result";
+    }
+    fail("TSB1003", "main() must return void or Result<void, E> in v0.");
+  })();
+
+  const rustReturnType = (() => {
+    if (returnKind !== "result") return undefined;
+    if (mainIsAsync) {
+      const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
+      return typeNodeToRust(inner);
+    }
+    return typeNodeToRust(returnTypeNode);
+  })();
+
+  const userSourceFiles = program
+    .getSourceFiles()
+    .filter((f) => !f.isDeclarationFile && !isInNodeModules(f.fileName));
+
+  return {
+    program,
+    checker,
+    entrySourceFile,
+    mainFn,
+    runtimeKind,
+    mainIsAsync,
+    returnKind,
+    rustReturnType,
+    userSourceFiles,
+  };
+}
+
+function createEmitCtx(checker: ts.TypeChecker): EmitCtx {
+  return {
+    checker,
+    unions: new Map<string, UnionDef>(),
+    structs: new Map<string, StructDef>(),
+    traitsByKey: new Map<string, TraitDef>(),
+    traitsByName: new Map<string, TraitDef[]>(),
+    shapeStructsByKey: new Map<string, StructDef>(),
+    shapeStructsByFile: new Map<string, StructDef[]>(),
+    kernelDeclBySymbol: new Map<ts.Symbol, KernelDecl>(),
+    gpuRuntime: { used: false },
+  };
+}
+
+function normalizeCrateDep(dep: CrateDep): CrateDep {
+  const features = (dep.features ?? []).filter((x): x is string => typeof x === "string");
+  const unique = [...new Set(features)].sort((a, b) => a.localeCompare(b));
+  const base = dep.package ? { name: dep.name, package: dep.package } : { name: dep.name };
+  if ("version" in dep) {
+    return unique.length === 0
+      ? { ...base, version: dep.version }
+      : { ...base, version: dep.version, features: unique };
+  }
+  return unique.length === 0 ? { ...base, path: dep.path } : { ...base, path: dep.path, features: unique };
+}
+
+function addUsedCrate(usedCratesByName: Map<string, CrateDep>, node: ts.Node, dep: CrateDep): void {
+  const prev = usedCratesByName.get(dep.name);
+  if (!prev) {
+    usedCratesByName.set(dep.name, normalizeCrateDep(dep));
+    return;
+  }
+
+  const prevPkg = prev.package ?? prev.name;
+  const depPkg = dep.package ?? dep.name;
+  if (prevPkg !== depPkg) {
+    failAt(node, "TSB3226", `Conflicting cargo package names for '${dep.name}': '${prevPkg}' vs '${depPkg}'.`);
+  }
+  if ("version" in prev && "version" in dep && prev.version !== dep.version) {
+    failAt(
+      node,
+      "TSB3226",
+      `Conflicting crate versions for '${dep.name}': '${prev.version}' vs '${dep.version}'.`
+    );
+  }
+  if ("path" in prev && "path" in dep && prev.path !== dep.path) {
+    failAt(node, "TSB3226", `Conflicting crate paths for '${dep.name}': '${prev.path}' vs '${dep.path}'.`);
+  }
+  if ("version" in prev !== "version" in dep) {
+    const left = "version" in prev ? `version '${prev.version}'` : `path '${prev.path}'`;
+    const right = "version" in dep ? `version '${dep.version}'` : `path '${dep.path}'`;
+    failAt(node, "TSB3226", `Conflicting crate sources for '${dep.name}': ${left} vs ${right}.`);
+  }
+
+  const mergedFeatures = new Set<string>([...(prev.features ?? []), ...(dep.features ?? [])]);
+  const features = [...mergedFeatures].sort((a, b) => a.localeCompare(b));
+  const base = dep.package ? { name: dep.name, package: dep.package } : { name: dep.name };
+  if ("version" in dep) {
+    usedCratesByName.set(
+      dep.name,
+      features.length === 0 ? { ...base, version: dep.version } : { ...base, version: dep.version, features }
+    );
+  } else {
+    usedCratesByName.set(
+      dep.name,
+      features.length === 0 ? { ...base, path: dep.path } : { ...base, path: dep.path, features }
+    );
+  }
+}
+
+function collectSortedKernelDecls(
+  ctx: EmitCtx,
+  userSourceFiles: readonly ts.SourceFile[]
+): readonly KernelDecl[] {
+  const seenKernelNames = new Set<string>();
+  return userSourceFiles
+    .flatMap((f) => collectKernelDecls(ctx, f, seenKernelNames))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function createUserModuleIndex(
+  userSourceFiles: readonly ts.SourceFile[],
+  entryFileName: string
+): {
+  readonly userFilesByName: ReadonlyMap<string, ts.SourceFile>;
+  readonly moduleNameByFile: ReadonlyMap<string, string>;
+} {
+  const userFilesByName = new Map<string, ts.SourceFile>();
+  for (const f of userSourceFiles) userFilesByName.set(normalizePath(f.fileName), f);
+
+  const moduleNameByFile = new Map<string, string>();
+  const fileByModuleName = new Map<string, string>();
+  for (const f of userSourceFiles) {
+    const fileName = normalizePath(f.fileName);
+    if (fileName === entryFileName) continue;
+    const modName = rustModuleNameFromFileName(f.fileName);
+    const prev = fileByModuleName.get(modName);
+    if (prev) {
+      fail(
+        "TSB3200",
+        `Two files map to the same Rust module '${modName}':\n  - ${prev}\n  - ${fileName}\nRename one of the files to avoid a module collision.`
+      );
+    }
+    fileByModuleName.set(modName, fileName);
+    moduleNameByFile.set(fileName, modName);
+  }
+
+  return { userFilesByName, moduleNameByFile };
+}
+
+function resolveRelativeImport(
+  fromFileName: string,
+  spec: string,
+  userFilesByName: ReadonlyMap<string, ts.SourceFile>,
+  moduleNameByFile: ReadonlyMap<string, string>
+): { readonly targetFile: string; readonly mod: string } {
+  if (!spec.startsWith(".")) {
+    fail("TSB3201", `Only relative imports are supported in v0 (got ${JSON.stringify(spec)}).`);
+  }
+  let rewritten = spec;
+  if (rewritten.endsWith(".js")) rewritten = `${rewritten.slice(0, -3)}.ts`;
+  if (!rewritten.endsWith(".ts")) {
+    fail("TSB3202", `Import specifier must end with '.js' (source) in v0 (got ${JSON.stringify(spec)}).`);
+  }
+
+  const abs = normalizePath(resolve(dirname(fromFileName), rewritten));
+  const target = userFilesByName.get(abs);
+  if (!target) {
+    fail("TSB3203", `Import target not found in the project: ${JSON.stringify(spec)} -> ${abs}`);
+  }
+  const mod = moduleNameByFile.get(abs);
+  if (!mod) {
+    fail("TSB3204", `Importing the entry module is not supported in v0 (got ${JSON.stringify(spec)}).`);
+  }
+  return { targetFile: abs, mod };
+}
+
+function sortUseItems(uses: readonly RustItem[]): RustItem[] {
+  return [...uses].sort((a, b) => {
+    if (a.kind !== "use" || b.kind !== "use") return 0;
+    const pa = a.path.segments.join("::");
+    const pb = b.path.segments.join("::");
+    if (pa !== pb) return pa.localeCompare(pb);
+    const aa = a.alias ?? "";
+    const ab = b.alias ?? "";
+    return aa.localeCompare(ab);
+  });
+}
+
+function parseTokensArg(ctx: EmitCtx, expr: ts.Expression): string {
+  if (!ts.isTaggedTemplateExpression(expr) || !ts.isIdentifier(expr.tag)) {
+    failAt(expr, "TSB3300", "attr(...) arguments must be tokens`...` in v0.");
+  }
+  if (expr.tag.text !== "tokens" || !isFromTsubaCoreLang(ctx, expr.tag)) {
+    failAt(expr.tag, "TSB3301", "attr(...) arguments must use @tsuba/core tokens`...` in v0.");
+  }
+  const tmpl = expr.template;
+  if (!ts.isNoSubstitutionTemplateLiteral(tmpl)) {
+    failAt(tmpl, "TSB3302", "tokens`...` must not contain substitutions in v0.");
+  }
+  if (tmpl.text.includes("\n") || tmpl.text.includes("\r")) {
+    failAt(tmpl, "TSB3303", "tokens`...` must be single-line in v0.");
+  }
+  return tmpl.text;
+}
+
+function parseAttrMarker(ctx: EmitCtx, expr: ts.Expression): string {
+  if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) {
+    failAt(expr, "TSB3304", "annotate(...) only supports attr(...) markers in v0.");
+  }
+  const callee = expr.expression;
+  if (callee.text !== "attr" || !isFromTsubaCoreLang(ctx, callee)) {
+    failAt(callee, "TSB3305", "annotate(...) only supports @tsuba/core attr(...) markers in v0.");
+  }
+  const [nameArg, ...rest] = expr.arguments;
+  if (!nameArg || !ts.isStringLiteral(nameArg)) {
+    failAt(expr, "TSB3306", "attr(name, ...) requires a string literal name in v0.");
+  }
+  const args = rest.map((item) => parseTokensArg(ctx, item));
+  if (args.length === 0) return `#[${nameArg.text}]`;
+  return `#[${nameArg.text}(${args.join(", ")})]`;
+}
+
+function tryParseAnnotateStatement(
+  ctx: EmitCtx,
+  st: ts.Statement
+): { readonly target: string; readonly attrs: readonly string[] } | undefined {
+  if (!ts.isExpressionStatement(st)) return undefined;
+  const e = st.expression;
+  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression)) return undefined;
+  const callee = e.expression;
+  if (callee.text !== "annotate" || !isFromTsubaCoreLang(ctx, callee)) return undefined;
+
+  if (e.arguments.length < 2) {
+    failAt(e, "TSB3307", "annotate(target, ...) requires at least one attribute in v0.");
+  }
+  const [target, ...items] = e.arguments;
+  if (!target || !ts.isIdentifier(target)) {
+    failAt(e, "TSB3308", "annotate(...) target must be an identifier in v0.");
+  }
+  const attrs = items.map((item) => parseAttrMarker(ctx, item));
+  return { target: target.text, attrs };
 }
 
 function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
@@ -3170,288 +3485,38 @@ function lowerInterface(ctx: EmitCtx, decl: ts.InterfaceDeclaration): readonly R
 }
 
 export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
-  const compilerOptions: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    strict: true,
-    skipLibCheck: true,
-    noEmit: true,
-  };
-
-  const host = ts.createCompilerHost(compilerOptions, true);
-  const program = ts.createProgram([opts.entryFile], compilerOptions, host);
-  const diagnostics = ts
-    .getPreEmitDiagnostics(program)
-    .filter((d) => d.category === ts.DiagnosticCategory.Error);
-  if (diagnostics.length > 0) {
-    const d = diagnostics.at(0);
-    if (!d) fail("TSB0002", "Compilation failed with diagnostics.");
-    const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n");
-    if (d.file && d.start !== undefined) {
-      const pos = d.file.getLineAndCharacterOfPosition(d.start);
-      fail("TSB0002", `${d.file.fileName}:${pos.line + 1}:${pos.character + 1}: ${msg}`);
-    }
-    fail("TSB0002", msg);
-  }
-  const checker = program.getTypeChecker();
-
-  const sf = program.getSourceFile(opts.entryFile);
-  if (!sf) fail("TSB0001", `Could not read entry file: ${opts.entryFile}`);
-
-  const mainFn = getExportedMain(sf);
-  const runtimeKind = opts.runtimeKind ?? "none";
-  const mainIsAsync = hasModifier(mainFn, ts.SyntaxKind.AsyncKeyword);
-  const returnTypeNode = mainFn.type;
-  const returnKind: "unit" | "result" = (() => {
-    if (mainIsAsync) {
-      if (runtimeKind !== "tokio") {
-        fail("TSB1004", "async main() requires runtime.kind='tokio' in tsuba.workspace.json.");
-      }
-      const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
-      if (inner.kind === ts.SyntaxKind.VoidKeyword) return "unit";
-      if (
-        ts.isTypeReferenceNode(inner) &&
-        ts.isIdentifier(inner.typeName) &&
-        inner.typeName.text === "Result"
-      ) {
-        const [okTy] = inner.typeArguments ?? [];
-        if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
-          fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
-        }
-        return "result";
-      }
-      fail("TSB1003", "async main() may only return Promise<void> or Promise<Result<void, E>> in v0.");
-    }
-
-    if (!returnTypeNode) return "unit";
-    if (returnTypeNode.kind === ts.SyntaxKind.VoidKeyword) return "unit";
-    if (
-      ts.isTypeReferenceNode(returnTypeNode) &&
-      ts.isIdentifier(returnTypeNode.typeName) &&
-      returnTypeNode.typeName.text === "Result"
-    ) {
-      const [okTy] = returnTypeNode.typeArguments ?? [];
-      if (!okTy || okTy.kind !== ts.SyntaxKind.VoidKeyword) {
-        fail("TSB1003", "main() may only return Result<void, E> in v0.");
-      }
-      return "result";
-    }
-    fail("TSB1003", "main() must return void or Result<void, E> in v0.");
-  })();
-
-  const rustReturnType = (() => {
-    if (returnKind !== "result") return undefined;
-    if (mainIsAsync) {
-      const inner = unwrapPromiseInnerType(mainFn, "main()", returnTypeNode, "TSB1003");
-      return typeNodeToRust(inner);
-    }
-    return typeNodeToRust(returnTypeNode);
-  })();
-
-  const unionsByKey = new Map<string, UnionDef>();
-  const structAliasesByKey = new Map<string, StructDef>();
-  const traitsByKey = new Map<string, TraitDef>();
-  const traitsByName = new Map<string, TraitDef[]>();
-  const shapeStructsByKey = new Map<string, StructDef>();
-  const shapeStructsByFile = new Map<string, StructDef[]>();
-  const kernelDeclBySymbol = new Map<ts.Symbol, KernelDecl>();
-  const gpuRuntime = { used: false };
-  const ctx: EmitCtx = {
+  // Phase 1: bootstrap TypeScript program + entry contract checks.
+  const bootstrap = bootstrapCompileHost(opts);
+  const {
     checker,
-    unions: unionsByKey,
-    structs: structAliasesByKey,
-    traitsByKey,
-    traitsByName,
-    shapeStructsByKey,
-    shapeStructsByFile,
-    kernelDeclBySymbol,
-    gpuRuntime,
-  };
+    entrySourceFile: sf,
+    mainFn,
+    runtimeKind,
+    mainIsAsync,
+    returnKind,
+    rustReturnType,
+    userSourceFiles,
+  } = bootstrap;
+
+  // Phase 2: initialize compiler context and crate dependency accumulator.
+  const ctx = createEmitCtx(checker);
   const usedCratesByName = new Map<string, CrateDep>();
 
-  function addUsedCrate(node: ts.Node, dep: CrateDep): void {
-    const normalize = (d: CrateDep): CrateDep => {
-      const features = (d.features ?? []).filter((x): x is string => typeof x === "string");
-      const unique = [...new Set(features)].sort((a, b) => a.localeCompare(b));
-      const base = d.package ? { name: d.name, package: d.package } : { name: d.name };
-      if ("version" in d) {
-        return unique.length === 0
-          ? { ...base, version: d.version }
-          : { ...base, version: d.version, features: unique };
-      }
-      return unique.length === 0 ? { ...base, path: d.path } : { ...base, path: d.path, features: unique };
-    };
-
-    const prev = usedCratesByName.get(dep.name);
-    if (!prev) {
-      usedCratesByName.set(dep.name, normalize(dep));
-      return;
-    }
-    const prevPkg = prev.package ?? prev.name;
-    const depPkg = dep.package ?? dep.name;
-    if (prevPkg !== depPkg) {
-      failAt(node, "TSB3226", `Conflicting cargo package names for '${dep.name}': '${prevPkg}' vs '${depPkg}'.`);
-    }
-    if ("version" in prev && "version" in dep && prev.version !== dep.version) {
-      failAt(
-        node,
-        "TSB3226",
-        `Conflicting crate versions for '${dep.name}': '${prev.version}' vs '${dep.version}'.`
-      );
-    }
-    if ("path" in prev && "path" in dep && prev.path !== dep.path) {
-      failAt(node, "TSB3226", `Conflicting crate paths for '${dep.name}': '${prev.path}' vs '${dep.path}'.`);
-    }
-    if ("version" in prev !== "version" in dep) {
-      const left = "version" in prev ? `version '${prev.version}'` : `path '${prev.path}'`;
-      const right = "version" in dep ? `version '${dep.version}'` : `path '${dep.path}'`;
-      failAt(node, "TSB3226", `Conflicting crate sources for '${dep.name}': ${left} vs ${right}.`);
-    }
-    const mergedFeatures = new Set<string>([...(prev.features ?? []), ...(dep.features ?? [])]);
-    const features = [...mergedFeatures].sort((a, b) => a.localeCompare(b));
-    const base = dep.package ? { name: dep.name, package: dep.package } : { name: dep.name };
-    if ("version" in dep) {
-      usedCratesByName.set(
-        dep.name,
-        features.length === 0 ? { ...base, version: dep.version } : { ...base, version: dep.version, features }
-      );
-    } else {
-      usedCratesByName.set(
-        dep.name,
-        features.length === 0 ? { ...base, path: dep.path } : { ...base, path: dep.path, features }
-      );
-    }
-  }
-
   if (mainIsAsync && runtimeKind === "tokio") {
-    addUsedCrate(mainFn, {
+    addUsedCrate(usedCratesByName, mainFn, {
       name: "tokio",
       version: "1.37",
       features: ["macros", "rt-multi-thread"],
     });
   }
 
-  const userSourceFiles = program
-    .getSourceFiles()
-    .filter((f) => !f.isDeclarationFile && !isInNodeModules(f.fileName));
-
-  const seenKernelNames = new Set<string>();
-  const kernels = userSourceFiles
-    .flatMap((f) => collectKernelDecls(ctx, f, seenKernelNames))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Phase 3: collect kernel declarations + user module index.
+  const kernels = collectSortedKernelDecls(ctx, userSourceFiles);
 
   const items: RustItem[] = [];
 
   const entryFileName = normalizePath(sf.fileName);
-
-  const userFilesByName = new Map<string, ts.SourceFile>();
-  for (const f of userSourceFiles) userFilesByName.set(normalizePath(f.fileName), f);
-
-  // Map user files (excluding entry) to Rust module names.
-  const moduleNameByFile = new Map<string, string>();
-  const fileByModuleName = new Map<string, string>();
-
-  for (const f of userSourceFiles) {
-    const fileName = normalizePath(f.fileName);
-    if (fileName === entryFileName) continue;
-    const modName = rustModuleNameFromFileName(f.fileName);
-    const prev = fileByModuleName.get(modName);
-    if (prev) {
-      fail(
-        "TSB3200",
-        `Two files map to the same Rust module '${modName}':\n  - ${prev}\n  - ${fileName}\nRename one of the files to avoid a module collision.`
-      );
-    }
-    fileByModuleName.set(modName, fileName);
-    moduleNameByFile.set(fileName, modName);
-  }
-
-  function resolveRelativeImport(fromFileName: string, spec: string): { readonly targetFile: string; readonly mod: string } {
-    if (!spec.startsWith(".")) {
-      fail("TSB3201", `Only relative imports are supported in v0 (got ${JSON.stringify(spec)}).`);
-    }
-    let rewritten = spec;
-    if (rewritten.endsWith(".js")) rewritten = `${rewritten.slice(0, -3)}.ts`;
-    if (!rewritten.endsWith(".ts")) {
-      fail("TSB3202", `Import specifier must end with '.js' (source) in v0 (got ${JSON.stringify(spec)}).`);
-    }
-
-    const abs = normalizePath(resolve(dirname(fromFileName), rewritten));
-    const target = userFilesByName.get(abs);
-    if (!target) {
-      fail("TSB3203", `Import target not found in the project: ${JSON.stringify(spec)} -> ${abs}`);
-    }
-    const mod = moduleNameByFile.get(abs);
-    if (!mod) {
-      fail("TSB3204", `Importing the entry module is not supported in v0 (got ${JSON.stringify(spec)}).`);
-    }
-    return { targetFile: abs, mod };
-  }
-
-  function sortUses(uses: readonly RustItem[]): RustItem[] {
-    return [...uses].sort((a, b) => {
-      if (a.kind !== "use" || b.kind !== "use") return 0;
-      const pa = a.path.segments.join("::");
-      const pb = b.path.segments.join("::");
-      if (pa !== pb) return pa.localeCompare(pb);
-      const aa = a.alias ?? "";
-      const ab = b.alias ?? "";
-      return aa.localeCompare(ab);
-    });
-  }
-
-  function parseTokensArg(expr: ts.Expression): string {
-    if (!ts.isTaggedTemplateExpression(expr) || !ts.isIdentifier(expr.tag)) {
-      failAt(expr, "TSB3300", "attr(...) arguments must be tokens`...` in v0.");
-    }
-    if (expr.tag.text !== "tokens" || !isFromTsubaCoreLang(ctx, expr.tag)) {
-      failAt(expr.tag, "TSB3301", "attr(...) arguments must use @tsuba/core tokens`...` in v0.");
-    }
-    const tmpl = expr.template;
-    if (!ts.isNoSubstitutionTemplateLiteral(tmpl)) {
-      failAt(tmpl, "TSB3302", "tokens`...` must not contain substitutions in v0.");
-    }
-    if (tmpl.text.includes("\n") || tmpl.text.includes("\r")) {
-      failAt(tmpl, "TSB3303", "tokens`...` must be single-line in v0.");
-    }
-    return tmpl.text;
-  }
-
-  function parseAttrMarker(expr: ts.Expression): string {
-    if (!ts.isCallExpression(expr) || !ts.isIdentifier(expr.expression)) {
-      failAt(expr, "TSB3304", "annotate(...) only supports attr(...) markers in v0.");
-    }
-    const callee = expr.expression;
-    if (callee.text !== "attr" || !isFromTsubaCoreLang(ctx, callee)) {
-      failAt(callee, "TSB3305", "annotate(...) only supports @tsuba/core attr(...) markers in v0.");
-    }
-    const [nameArg, ...rest] = expr.arguments;
-    if (!nameArg || !ts.isStringLiteral(nameArg)) {
-      failAt(expr, "TSB3306", "attr(name, ...) requires a string literal name in v0.");
-    }
-    const args = rest.map(parseTokensArg);
-    if (args.length === 0) return `#[${nameArg.text}]`;
-    return `#[${nameArg.text}(${args.join(", ")})]`;
-  }
-
-  function tryParseAnnotateStatement(st: ts.Statement): { readonly target: string; readonly attrs: readonly string[] } | undefined {
-    if (!ts.isExpressionStatement(st)) return undefined;
-    const e = st.expression;
-    if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression)) return undefined;
-    const callee = e.expression;
-    if (callee.text !== "annotate" || !isFromTsubaCoreLang(ctx, callee)) return undefined;
-
-    if (e.arguments.length < 2) {
-      failAt(e, "TSB3307", "annotate(target, ...) requires at least one attribute in v0.");
-    }
-    const [target, ...items] = e.arguments;
-    if (!target || !ts.isIdentifier(target)) {
-      failAt(e, "TSB3308", "annotate(...) target must be an identifier in v0.");
-    }
-    const attrs = items.map(parseAttrMarker);
-    return { target: target.text, attrs };
-  }
+  const { userFilesByName, moduleNameByFile } = createUserModuleIndex(userSourceFiles, entryFileName);
 
   type FileLowered = {
     readonly fileName: string;
@@ -3469,6 +3534,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     }[];
   };
 
+  // Phase 4: lower file top-level declarations/imports to typed IR buckets.
   const loweredByFile = new Map<string, FileLowered>();
 
   for (const f of userSourceFiles) {
@@ -3512,7 +3578,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         }
 
         if (spec.startsWith(".")) {
-          const resolved = resolveRelativeImport(f.fileName, spec);
+          const resolved = resolveRelativeImport(f.fileName, spec, userFilesByName, moduleNameByFile);
           for (const el of bindings.elements) {
             if (kernelDeclForIdentifier(ctx, el.name)) continue;
             const exported = el.propertyName?.text ?? el.name.text;
@@ -3553,9 +3619,9 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
             features: manifest.crate.features,
           };
           if (manifest.crate.path) {
-            addUsedCrate(specNode, { ...depBase, path: manifest.crate.path });
+            addUsedCrate(usedCratesByName, specNode, { ...depBase, path: manifest.crate.path });
           } else {
-            addUsedCrate(specNode, { ...depBase, version: manifest.crate.version! });
+            addUsedCrate(usedCratesByName, specNode, { ...depBase, version: manifest.crate.version! });
           }
 
           const baseSegs = splitRustPath(rustModule);
@@ -3591,7 +3657,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
         continue;
       }
 
-      const ann = tryParseAnnotateStatement(st);
+      const ann = tryParseAnnotateStatement(ctx, st);
       if (ann) {
         annotations.push({ pos: st.pos, node: st, target: ann.target, attrs: [...ann.attrs] });
         continue;
@@ -3652,25 +3718,25 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     });
   }
 
-  // Collect discriminated unions (type aliases) up-front so they can be used during expression/statement lowering.
+  // Phase 5: pre-collect cross-file type models (unions/struct aliases/traits).
   for (const lowered of loweredByFile.values()) {
     for (const ta of lowered.typeAliases) {
       const unionDef = tryParseDiscriminatedUnionTypeAlias(ta.decl);
-      if (unionDef) unionsByKey.set(unionDef.key, unionDef);
+      if (unionDef) ctx.unions.set(unionDef.key, unionDef);
 
       const structDef = tryParseStructTypeAlias(ta.decl);
-      if (structDef) structAliasesByKey.set(structDef.key, structDef);
+      if (structDef) ctx.structs.set(structDef.key, structDef);
     }
     for (const i0 of lowered.interfaces) {
       const traitDef = parseTraitDef(i0.decl);
-      traitsByKey.set(traitDef.key, traitDef);
-      const existing = traitsByName.get(traitDef.name) ?? [];
+      ctx.traitsByKey.set(traitDef.key, traitDef);
+      const existing = ctx.traitsByName.get(traitDef.name) ?? [];
       existing.push(traitDef);
-      traitsByName.set(traitDef.name, existing);
+      ctx.traitsByName.set(traitDef.name, existing);
     }
   }
 
-  // Collect `annotate(...)` attributes per file/target.
+  // Phase 6: collect `annotate(...)` markers and validate declaration ordering.
   const attrsByFile = new Map<string, ReadonlyMap<string, readonly string[]>>();
   for (const [fileName, lowered] of loweredByFile.entries()) {
     const declPosByName = new Map<string, number>();
@@ -3708,10 +3774,11 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     attrsByFile.set(fileName, attrsByName);
   }
 
+  // Phase 7: emit module + root items into Rust IR in deterministic order.
   // Root (entry file) uses
   const rootLowered = loweredByFile.get(entryFileName);
   if (!rootLowered) fail("TSB0001", "Internal error: entry file missing from lowered set.");
-  items.push(...sortUses(rootLowered.uses));
+  items.push(...sortUseItems(rootLowered.uses));
 
   // Modules (non-entry files)
   const moduleFiles = [...moduleNameByFile.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -3742,7 +3809,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
     itemGroups.sort((a, b) => a.pos - b.pos);
     const declItems = itemGroups.flatMap((g) => g.items);
 
-    const usesSorted = sortUses(lowered.uses);
+    const usesSorted = sortUseItems(lowered.uses);
     const shapeStructs = [...(ctx.shapeStructsByFile.get(fileName) ?? [])].sort(
       (a, b) => a.span.start - b.span.start || a.key.localeCompare(b.key)
     );
@@ -3777,6 +3844,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
   rootGroups.sort((a, b) => a.pos - b.pos);
   items.push(...rootGroups.flatMap((g) => g.items));
 
+  // Phase 8: lower entry main body and finalize Rust program text.
   const mainBody: RustStmt[] = [];
   const mainCtx: EmitCtx = { ...ctx, inAsync: mainIsAsync };
   for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(mainCtx, st));

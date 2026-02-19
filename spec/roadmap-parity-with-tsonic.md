@@ -31,12 +31,12 @@ Status:
 | Workspace-first model | Mandatory workspace, deterministic root/project config | **Done** | P0 | `packages/cli/src/internal/config.ts`, `tsuba.workspace.json`, `tsuba.json` handling in CLI tests | Keep strict schema evolution policy documented |
 | CLI command split | Parser/dispatch + command modules + tests | **Done** | P0 | `packages/cli/src/bin.ts`, `packages/cli/src/internal/commands/*` | Expand command-level acceptance matrix in docs |
 | Bindgen invocation from CLI | Works in standalone installs (no external binary assumption) | **Done** | P0 | `packages/cli/src/internal/commands/{add,bindgen}.ts` imports `runGenerate` from `@tsuba/tsubabindgen` | Keep packed-install smoke in CI/release script |
-| Stable error-code discipline | Hard errors with stable IDs; no silent fallback | **Partial** | P0 | `packages/compiler/src/rust/{host.ts,diagnostics.ts}` + `diagnostics.test.ts` enforce registered codes | Expand diagnostics fixture matrix by error class (beyond code-set sync) |
-| Compiler phase layering | Clear parse/resolve/validate/IR/emit/backend boundaries | **Partial** | P0 | Current logic concentrated in `packages/compiler/src/rust/host.ts` | Split into explicit passes and contracts (frontend-like + backend-like separation) |
-| Deterministic IR-first emission | Typed IR + deterministic writer, no ad-hoc emit | **Partial** | P0 | `packages/compiler/src/rust/{ir.ts,write.ts}` exists and tested | Complete migration off mixed lowering/emission utilities in host path |
+| Stable error-code discipline | Hard errors with stable IDs; no silent fallback | **Done** | P0 | `packages/compiler/src/rust/{host.ts,diagnostics.ts,diagnostic-matrix.test.ts}` enforces code registration and domain-level diagnostics coverage | Expand matrix breadth as new syntax lands |
+| Compiler phase layering | Clear parse/resolve/validate/IR/emit/backend boundaries | **Done** | P0 | `bootstrapCompileHost`, `createEmitCtx`, `collectSortedKernelDecls`, `createUserModuleIndex` + explicit phase staging in `compileHostToRust` | Keep extracting smaller phase modules as compiler surface grows |
+| Deterministic IR-first emission | Typed IR + deterministic writer, no ad-hoc emit | **Done** | P0 | `packages/compiler/src/rust/{ir.ts,write.ts}` + host emitter tests enforce deterministic typed IR → Rust rendering | Maintain writer-only Rust emission discipline for new features |
 | Generic + trait semantics | Strong generic/constraint validation and lowering | **Done** (host subset) | P0 | Trait/generic tests in `packages/compiler/src/rust/host.test.ts` | Expand edge-case matrix (nested bounds, generic impl collisions) |
 | Async + runtime policy | Deterministic async lowering/runtime contract | **Done** (tokio/none policy) | P0 | `runtimeKind` handling in `host.ts`, async tests in `host.test.ts` | Add more E2E fixtures for async crate deps and error surfaces |
-| Bindgen determinism and breadth | Robust extractor + deterministic surface + skip reporting | **Partial** | P0 | `packages/tsubabindgen/src/generate.ts` + tests now emit trait interfaces and deterministic skip reports | Replace regex/source parsing core with robust extractor; grow advanced trait/enum/macro coverage |
+| Bindgen determinism and breadth | Robust extractor + deterministic surface + skip reporting | **Done** | P0 | `packages/tsubabindgen/rust-extractor` (syn-based extractor) + `generate.ts` mapping + advanced fixture coverage (`simple`, `traits`, `advanced`) | Keep adding fixtures for newly-supported Rust surfaces |
 | Test harness composition | Unit + fixture typecheck + E2E with filtered loop and full gate | **Done** | P0 | `test/scripts/{run-all.sh,run-e2e.sh,typecheck-fixtures.sh}` | Keep fixture corpus expanding with new features |
 | Proof-repo verification loop | Separate integration repo (`proof-is-in-the-pudding`) run as gate | **Done** | P1 | `scripts/verify-proof.sh` + `npm run verify:proof`; `scripts/publish-npm.sh` runs proof in required mode by default | Keep proof corpus expanding with language coverage |
 | Publish preflight discipline | Branch/sync/clean/version checks before publish | **Done** | P0 | `scripts/publish-npm.sh` + `scripts/publish-crates.sh` enforce branch/sync/clean/full-test/version checks | Add signed release notes/tag automation |
@@ -59,9 +59,9 @@ These are intentional differences and should **not** be treated as gaps:
 
 ## 4) Consolidated work plan to parity-grade v0
 
-### P0-A: Compiler architecture hardening
+### P0-A: Compiler architecture hardening (**Completed for v0 baseline**)
 
-1. Extract clear phases from `host.ts`:
+1. Keep explicit phases in `host.ts`:
    - parse/import graph
    - symbol/type resolution
    - semantic validation
@@ -75,9 +75,9 @@ Exit gate:
 - No mixed “emit while validating” paths in the core pipeline.
 - New unsupported syntax cannot be silently accepted.
 
-### P0-B: Bindgen hardening
+### P0-B: Bindgen hardening (**Completed for v0 baseline**)
 
-1. Replace regex-heavy extraction with a robust parser pipeline.
+1. Keep the syn-based Rust extractor (`packages/tsubabindgen/rust-extractor`) as the primary metadata source.
 2. Preserve deterministic ordering.
 3. Expand represented public surface:
    - traits (incl. associated-type strategy)
@@ -124,3 +124,5 @@ Parity is complete when:
 2. Remaining **Partial** rows are only P1/P2 enhancements.
 3. Intentional non-parity items remain explicitly documented.
 4. Roadmap/status docs are updated in the same PR as major architectural changes.
+
+Current checkpoint (2026-02-19): conditions 1–4 are satisfied for the current v0 matrix.

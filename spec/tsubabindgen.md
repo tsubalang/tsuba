@@ -52,7 +52,7 @@ Current report shape:
 {
   "schema": 1,
   "skipped": [
-    { "file": "/abs/path/src/lib.rs", "kind": "type", "snippet": "...", "reason": "..." }
+    { "file": "src/lib.rs", "kind": "type", "snippet": "...", "reason": "..." }
   ]
 }
 ```
@@ -70,6 +70,8 @@ v0 bindgen supports crates whose public API uses a restricted set of types that 
 - `pub fn`
 - `pub const`
 - `pub trait` (method signatures and associated types represented as trait generic parameters)
+- inherent `impl` methods (`&self`, `&mut self`, constructors, and generic methods)
+- exported macros (`#[macro_export] macro_rules! ...`) emitted as marker-compatible callable stubs
 
 Traits may be supported if they use supported types.
 
@@ -99,19 +101,14 @@ This keeps Tsuba semantics explicit and avoids hidden allocations.
 
 ## 4. How bindgen gets metadata
 
-Tsuba has two viable approaches:
+v0 uses a dedicated Rust helper extractor:
 
-### 4.1 `rustdoc-json`
+- source: `packages/tsubabindgen/rust-extractor`
+- parser: `syn`
+- invocation: `cargo run --manifest-path packages/tsubabindgen/rust-extractor/Cargo.toml -- <crate-manifest>`
+- output: stable JSON IR consumed by `packages/tsubabindgen/src/generate.ts`
 
-- Use `rustdoc --output-format json` (may require nightly depending on Rust version).
-- Parse the JSON to discover types, functions, module paths.
-
-### 4.2 Source parsing
-
-- Parse the crate’s Rust source with a Rust parser (e.g. `syn`) inside a small Rust helper.
-- Emit a stable JSON IR for TS generation.
-
-v0 may start with `rustdoc-json` for speed, then migrate to a stable source-based extractor.
+This is the required metadata path for v0 (not `rustdoc-json`), chosen for deterministic behavior and stable coverage.
 
 ---
 
