@@ -52,9 +52,9 @@ Status values for tracking:
 ## 3) Workstream A — Compiler architecture hardening (P0)
 
 ### A.1 Pass boundaries and ownership
-- [ ] Parse/import graph/resolution/validation/IR/emission/backend remain physically separated (no new mixed paths).
+- [x] Parse/import graph/resolution/validation/IR/emission/backend remain physically separated (no new mixed paths).
 - [x] Each pass has explicit input/output contract types.
-- [ ] Cross-pass mutation is prohibited except through typed pass outputs.
+- [x] Cross-pass mutation is prohibited except through typed pass outputs.
 
 ### A.2 Deterministic lowering
 - [x] Same source + config produces byte-identical output in generated Rust/CUDA/manifests.
@@ -62,8 +62,8 @@ Status values for tracking:
 - [x] No environment-dependent paths in generated artifacts (except optional debug traces).
 
 ### A.3 Miscompile prevention gates
-- [ ] Every supported syntax shape has a dedicated lowering test.
-- [ ] Every unsupported syntax shape fails with a stable `TSBxxxx` code.
+- [x] Every supported syntax shape has a dedicated lowering test.
+- [x] Every unsupported syntax shape fails with a stable `TSBxxxx` code.
 - [x] Introduce “high-risk transform audit list” with mandatory targeted tests:
   - [x] narrowing-dependent rewrites
   - [x] borrow insertion
@@ -80,7 +80,7 @@ Status values for tracking:
 ### B.1 Function and method semantics (P0)
 - [x] Full function declaration coverage in supported subset: generics, bounds, async, explicit returns.
 - [x] Method receiver semantics (`this`/`ref`/`mutref`) are fully test-covered.
-- [ ] Closure support matrix is explicit and complete:
+- [x] Closure support matrix is explicit and complete:
   - [x] expression closures
   - [x] move closures
   - [x] block closures (either supported fully or hard-error with dedicated code)
@@ -91,8 +91,8 @@ Status values for tracking:
 - [x] Mutation and initialization rules are proven with tests on nested scopes and shadowing.
 
 ### B.3 Generics and traits (P0/P1)
-- [ ] Generic functions/classes/interfaces support documented edge cases.
-- [ ] Trait method conformance checks include:
+- [x] Generic functions/classes/interfaces support documented edge cases.
+- [x] Trait method conformance checks include:
   - [x] parameter types
   - [x] return types
   - [x] receiver mutability
@@ -124,9 +124,9 @@ Status values for tracking:
 - [x] Diagnostic domain taxonomy remains complete and enforced.
 
 ### C.2 Error precision (P1)
-- [ ] All diagnostics include actionable message + source span.
+- [x] All diagnostics include actionable message + source span.
 - [x] rustc mapping is preserved where available and tested.
-- [ ] Equivalent error shapes are normalized (same cause ⇒ same code/message family).
+- [x] Equivalent error shapes are normalized (same cause ⇒ same code/message family).
 
 ### C.3 Diagnostic regression harness (P1)
 - [x] Add fixture-based “expected diagnostics” snapshots per domain.

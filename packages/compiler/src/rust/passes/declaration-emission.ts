@@ -1,7 +1,12 @@
 import ts from "typescript";
 
 import type { RustItem } from "../ir.js";
-import type { FileLowered, ShapeStructDefLike } from "./contracts.js";
+import {
+  asReadonlyMap,
+  freezeReadonlyArray,
+  type FileLowered,
+  type ShapeStructDefLike,
+} from "./contracts.js";
 
 type DeclarationEmissionPassDeps<TCtx> = {
   readonly failAt: (node: ts.Node, code: string, message: string) => never;
@@ -44,7 +49,7 @@ export function emitModuleAndRootDeclarationsPass<TCtx>(
   for (const [fileName, modName] of moduleFiles) {
     const lowered = loweredByFile.get(fileName);
     if (!lowered) continue;
-    const fileAttrs = attrsByFile.get(fileName) ?? new Map<string, readonly string[]>();
+    const fileAttrs = attrsByFile.get(fileName) ?? asReadonlyMap(new Map<string, readonly string[]>());
     const itemGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
 
     for (const t0 of lowered.typeAliases) {
@@ -77,10 +82,14 @@ export function emitModuleAndRootDeclarationsPass<TCtx>(
     );
     const shapeItems = shapeStructs.map((d) => deps.structItemFromDef(d, []));
 
-    items.push({ kind: "mod", name: modName, items: [...usesSorted, ...shapeItems, ...declItems] });
+    items.push({
+      kind: "mod",
+      name: modName,
+      items: freezeReadonlyArray([...usesSorted, ...shapeItems, ...declItems]),
+    });
   }
 
-  const rootAttrs = attrsByFile.get(entryFileName) ?? new Map<string, readonly string[]>();
+  const rootAttrs = attrsByFile.get(entryFileName) ?? asReadonlyMap(new Map<string, readonly string[]>());
   const rootGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
   for (const t0 of rootLowered.typeAliases) {
     rootGroups.push({
@@ -107,7 +116,7 @@ export function emitModuleAndRootDeclarationsPass<TCtx>(
   items.push(...rootGroups.flatMap((g) => g.items));
 
   return {
-    items,
-    rootAttrs,
+    items: freezeReadonlyArray(items),
+    rootAttrs: asReadonlyMap(rootAttrs),
   };
 }

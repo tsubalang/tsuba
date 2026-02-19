@@ -21,10 +21,8 @@ describe("@tsuba/cli run", function () {
     writeFileSync(
       mathTs,
       [
-        "type i32 = number;",
-        "",
-        "export function add(a: i32, b: i32): i32 {",
-        "  return a + b;",
+        "export function touch(): void {",
+        "  return;",
         "}",
         "",
       ].join("\n"),
@@ -34,17 +32,11 @@ describe("@tsuba/cli run", function () {
     writeFileSync(
       mainTs,
       [
-        "type i32 = number;",
-        "",
-        "type Macro<Fn extends (...args: any[]) => unknown> = Fn & {",
-        "  readonly __tsuba_macro: unique symbol;",
-        "};",
-        "declare const println: Macro<(msg: string) => void>;",
-        "",
-        'import { add } from "./math.js";',
+        'import { touch } from "./math.js";',
+        'declare const println: ((msg: string) => void) & { readonly __tsuba_macro: unique symbol };',
         "",
         "export function main(): void {",
-        "  add(3 as i32, 4 as i32);",
+        "  touch();",
         '  println(\"hello\");',
         "}",
         "",
@@ -69,10 +61,7 @@ describe("@tsuba/cli run", function () {
     writeFileSync(
       join(projectRoot, "src", "main.ts"),
       [
-        "type Macro<Fn extends (...args: any[]) => unknown> = Fn & {",
-        "  readonly __tsuba_macro: unique symbol;",
-        "};",
-        "declare const println: Macro<(msg: string) => void>;",
+        'declare const println: ((msg: string) => void) & { readonly __tsuba_macro: unique symbol };',
         "",
         "export function main(): void {",
         '  println(\"nested-run\");',

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import ts from "typescript";
 
 import type { RustItem } from "../ir.js";
-import type { FileLowered } from "./contracts.js";
+import {
+  asReadonlyMap,
+  freezeReadonlyArray,
+  type FileLowered,
+} from "./contracts.js";
 
 type CrateDepSpec = {
   readonly name: string;
@@ -61,6 +65,14 @@ export function collectFileLoweringsPass(
   deps: FileLoweringPassDeps
 ): ReadonlyMap<string, FileLowered> {
   const loweredByFile = new Map<string, FileLowered>();
+  const freezeDeclRefs = <T extends { readonly pos: number; readonly decl: ts.Declaration }>(
+    items: readonly T[]
+  ): readonly T[] =>
+    freezeReadonlyArray(
+      items.map((item) =>
+        Object.freeze({ pos: item.pos, decl: item.decl }) as T
+      )
+    );
 
   for (const f of userSourceFiles) {
     const fileName = deps.normalizePath(f.fileName);
@@ -236,17 +248,28 @@ export function collectFileLoweringsPass(
       deps.failAt(st, "TSB3102", `Unsupported top-level statement: ${st.getText()}`);
     }
 
-    loweredByFile.set(fileName, {
+    const frozenAnnotations = freezeReadonlyArray(
+      annotations.map((a) =>
+        Object.freeze({
+          pos: a.pos,
+          node: a.node,
+          target: a.target,
+          attrs: freezeReadonlyArray(a.attrs),
+        })
+      )
+    );
+
+    loweredByFile.set(fileName, Object.freeze({
       fileName,
       sourceFile: f,
-      uses,
-      classes,
-      functions,
-      typeAliases,
-      interfaces,
-      annotations,
-    });
+      uses: freezeReadonlyArray(uses),
+      classes: freezeDeclRefs(classes),
+      functions: freezeDeclRefs(functions),
+      typeAliases: freezeDeclRefs(typeAliases),
+      interfaces: freezeDeclRefs(interfaces),
+      annotations: frozenAnnotations,
+    }));
   }
 
-  return loweredByFile;
+  return asReadonlyMap(loweredByFile);
 }

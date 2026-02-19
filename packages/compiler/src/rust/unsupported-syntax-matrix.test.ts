@@ -90,7 +90,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
     {
       name: "generic arrow functions are rejected",
       expectedCode: "TSB1100",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "export function main(): void {", "  const id = <T,>(x: T): T => x;", "  const x = id(1 as i32);", "  void x;", "}", ""].join(
+      source: ['import type { i32 } from \"@tsuba/core/types.js\";', "export function main(): void {", "  const id = <T,>(x: T): T => x;", "  const x = id(1 as i32);", "  void x;", "}", ""].join(
         "\n"
       ),
     },
@@ -98,7 +98,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "block arrow closures reject non-terminal return statements",
       expectedCode: "TSB1100",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "export function main(): void {",
         "  const f = (x: i32): i32 => {",
         "    return x;",
@@ -113,7 +113,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
     {
       name: "function destructuring params are rejected",
       expectedCode: "TSB3002",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "function f({ x }: { x: i32 }): i32 {", "  return x;", "}", "export function main(): void {", "  void f;", "}", ""].join(
+      source: ['import type { i32 } from \"@tsuba/core/types.js\";', "function f({ x }: { x: i32 }): i32 {", "  return x;", "}", "export function main(): void {", "  void f;", "}", ""].join(
         "\n"
       ),
     },
@@ -134,15 +134,85 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
     {
       name: "function optional params are rejected",
       expectedCode: "TSB3004",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "function f(x?: i32): void {", "  void x;", "}", "export function main(): void {", "  void f;", "}", ""].join(
+      source: ['import type { i32 } from \"@tsuba/core/types.js\";', "function f(x?: i32): void {", "  void x;", "}", "export function main(): void {", "  void f;", "}", ""].join(
         "\n"
       ),
+    },
+    {
+      name: "any type annotations are rejected",
+      expectedCode: "TSB1010",
+      source: [
+        "function f(x: any): void {",
+        "  void x;",
+        "}",
+        "export function main(): void {",
+        "  void f;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "conditional type aliases are rejected",
+      expectedCode: "TSB5206",
+      source: [
+        'import type { i32 } from \"@tsuba/core/types.js\";',
+        "type Lift<T> = T extends i32 ? i32 : i32;",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "mapped type aliases are rejected",
+      expectedCode: "TSB5206",
+      source: [
+        "type Copy<T> = { [P in keyof T]: T[P] };",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "infer-based type aliases are rejected",
+      expectedCode: "TSB5206",
+      source: [
+        "type Lift<T> = T extends infer R ? R : never;",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "intersection type aliases are rejected",
+      expectedCode: "TSB5206",
+      source: [
+        "type Pair = { a: number } & { b: number };",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "type alias generic defaults are rejected",
+      expectedCode: "TSB5205",
+      source: [
+        'import type { i32 } from \"@tsuba/core/types.js\";',
+        "type Box<T = i32> = T;",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
     },
     {
       name: "class extends is rejected",
       expectedCode: "TSB4002",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "class Base {",
         "  value: i32 = 0 as i32;",
         "}",
@@ -159,7 +229,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "constructor optional params are rejected",
       expectedCode: "TSB4024",
       source: [
-        'import type { String } from "@tsuba/core/types.js";',
+        'import type { String } from \"@tsuba/core/types.js\";',
         "class User {",
         "  name: String = \"\";",
         "  constructor(name?: String) {",
@@ -173,10 +243,27 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       ].join("\n"),
     },
     {
+      name: "constructor default params are rejected",
+      expectedCode: "TSB4024",
+      source: [
+        'import type { String } from \"@tsuba/core/types.js\";',
+        "class User {",
+        "  name: String = \"\";",
+        "  constructor(name: String = \"x\") {",
+        "    this.name = name;",
+        "  }",
+        "}",
+        "export function main(): void {",
+        "  void User;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
       name: "static methods are rejected",
       expectedCode: "TSB4100",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "class Counter {",
         "  value: i32 = 0 as i32;",
         "  static make(): Counter {",
@@ -193,7 +280,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "method this param type must be ref/mutref",
       expectedCode: "TSB4105",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "class Counter {",
         "  value: i32 = 0 as i32;",
         "  read(this: i32): i32 {",
@@ -210,7 +297,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "method optional params are rejected",
       expectedCode: "TSB4107",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "class Counter {",
         "  value: i32 = 0 as i32;",
         "  read(delta?: i32): i32 {",
@@ -228,7 +315,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "interface method optional params are rejected",
       expectedCode: "TSB5109",
       source: [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "interface Reader {",
         "  read(this: ref<this>, delta?: i32): i32;",
         "}",
@@ -241,7 +328,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
     {
       name: "object spread is rejected",
       expectedCode: "TSB1118",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "export function main(): void {", "  const x = { a: 1 as i32 };", "  const y = { ...x, b: 2 as i32 };", "  void y;", "}", ""].join(
+      source: ['import type { i32 } from \"@tsuba/core/types.js\";', "export function main(): void {", "  const x = { a: 1 as i32 };", "  const y = { ...x, b: 2 as i32 };", "  void y;", "}", ""].join(
         "\n"
       ),
     },
@@ -249,7 +336,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "optional chaining is rejected",
       expectedCode: "TSB1114",
       source: [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "class Box {",
         "  value: i32 = 1 as i32;",
         "}",
@@ -266,7 +353,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
     {
       name: "array spread is rejected",
       expectedCode: "TSB1111",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "export function main(): void {", "  const x = [1 as i32];", "  const y = [...x, 2 as i32];", "  void y;", "}", ""].join(
+      source: ['import type { i32 } from \"@tsuba/core/types.js\";', "export function main(): void {", "  const x = [1 as i32];", "  const y = [...x, 2 as i32];", "  void y;", "}", ""].join(
         "\n"
       ),
     },
@@ -274,7 +361,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "nullish coalescing is rejected",
       expectedCode: "TSB1201",
       source: [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "declare const maybe: unknown;",
         "export function main(): void {",
         "  const v = maybe ?? (2 as i32);",
@@ -306,7 +393,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "union switch default clauses are rejected",
       expectedCode: "TSB2203",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "type Shape =",
         '  | { kind: "circle"; radius: i32 }',
         '  | { kind: "square"; side: i32 };',
@@ -330,7 +417,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "union switch case expressions must be string literals",
       expectedCode: "TSB2204",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "type Shape =",
         '  | { kind: "circle"; radius: i32 }',
         '  | { kind: "square"; side: i32 };',
@@ -353,7 +440,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "union switch empty case fallthrough is rejected",
       expectedCode: "TSB2207",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "type Shape =",
         '  | { kind: "circle"; radius: i32 }',
         '  | { kind: "square"; side: i32 };',
@@ -374,7 +461,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "non-union switch duplicate case labels are rejected",
       expectedCode: "TSB2212",
       source: [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "function classify(x: i32): i32 {",
         "  switch (x) {",
         "    case 1:",
@@ -394,7 +481,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
     {
       name: "for-loop var declarations are rejected",
       expectedCode: "TSB2120",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "export function main(): void {", "  for (var i = 0 as i32; i < (10 as i32); i++) {", "    void i;", "  }", "}", ""].join(
+      source: ['import type { i32 } from \"@tsuba/core/types.js\";', "export function main(): void {", "  for (var i = 0 as i32; i < (10 as i32); i++) {", "    void i;", "  }", "}", ""].join(
         "\n"
       ),
     },
@@ -402,7 +489,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "for-of statements are rejected in v0",
       expectedCode: "TSB2100",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "export function main(): void {",
         "  for (const value of [1 as i32, 2 as i32]) {",
         "    void value;",
@@ -415,7 +502,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "top-level non-const variables are rejected",
       expectedCode: "TSB3100",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "let seed: i32 = 1 as i32;",
         "export function main(): void {",
         "  void seed;",
@@ -427,7 +514,7 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       name: "object literal methods are rejected",
       expectedCode: "TSB1119",
       source: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "export function main(): void {",
         "  const value = {",
         "    read(): i32 {",

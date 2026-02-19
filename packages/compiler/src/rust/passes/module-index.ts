@@ -2,57 +2,13 @@ import { dirname, resolve } from "node:path";
 
 import ts from "typescript";
 
-import type { UserModuleIndex } from "./contracts.js";
+import { asReadonlyMap, type UserModuleIndex } from "./contracts.js";
 
 type ModuleIndexPassDeps = {
   readonly normalizePath: (path: string) => string;
   readonly rustModuleNameFromFileName: (fileName: string) => string;
   readonly failAt: (node: ts.Node, code: string, message: string) => never;
 };
-
-class ReadonlyMapView<K, V> implements ReadonlyMap<K, V> {
-  readonly #inner: Map<K, V>;
-
-  constructor(inner: Map<K, V>) {
-    this.#inner = inner;
-  }
-
-  get size(): number {
-    return this.#inner.size;
-  }
-
-  get(key: K): V | undefined {
-    return this.#inner.get(key);
-  }
-
-  has(key: K): boolean {
-    return this.#inner.has(key);
-  }
-
-  forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
-    this.#inner.forEach((value, key) => callbackfn.call(thisArg, value, key, this));
-  }
-
-  entries(): MapIterator<[K, V]> {
-    return this.#inner.entries();
-  }
-
-  keys(): MapIterator<K> {
-    return this.#inner.keys();
-  }
-
-  values(): MapIterator<V> {
-    return this.#inner.values();
-  }
-
-  [Symbol.iterator](): MapIterator<[K, V]> {
-    return this.#inner[Symbol.iterator]();
-  }
-}
-
-function asReadonlyMap<K, V>(m: Map<K, V>): ReadonlyMap<K, V> {
-  return new ReadonlyMapView(m);
-}
 
 export function createUserModuleIndexPass(
   userSourceFiles: readonly ts.SourceFile[],

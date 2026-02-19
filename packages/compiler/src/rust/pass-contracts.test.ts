@@ -76,6 +76,61 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(body).to.contain("moduleNameByFile: asReadonlyMap(moduleNameByFile)");
   });
 
+  it("enforces immutable pass outputs (snapshot map/array wrappers)", () => {
+    const fileLoweringPath = join(
+      repoRoot(),
+      "packages",
+      "compiler",
+      "src",
+      "rust",
+      "passes",
+      "file-lowering.ts"
+    );
+    const fileLoweringBody = getFunctionBodyText(fileLoweringPath, "collectFileLoweringsPass");
+    expect(fileLoweringBody).to.contain("Object.freeze({");
+    expect(fileLoweringBody).to.contain("freezeReadonlyArray(uses)");
+    expect(fileLoweringBody).to.contain("return asReadonlyMap(loweredByFile);");
+
+    const annotationsPath = join(
+      repoRoot(),
+      "packages",
+      "compiler",
+      "src",
+      "rust",
+      "passes",
+      "annotations.ts"
+    );
+    const annotationsBody = getFunctionBodyText(annotationsPath, "collectAnnotationsPass");
+    expect(annotationsBody).to.contain("attrsByName.set(a.target, freezeReadonlyArray(list));");
+    expect(annotationsBody).to.contain("attrsByFile.set(fileName, asReadonlyMap(attrsByName));");
+    expect(annotationsBody).to.contain("return asReadonlyMap(attrsByFile);");
+
+    const declPath = join(
+      repoRoot(),
+      "packages",
+      "compiler",
+      "src",
+      "rust",
+      "passes",
+      "declaration-emission.ts"
+    );
+    const declBody = getFunctionBodyText(declPath, "emitModuleAndRootDeclarationsPass");
+    expect(declBody).to.contain("items: freezeReadonlyArray(items)");
+    expect(declBody).to.contain("rootAttrs: asReadonlyMap(rootAttrs)");
+
+    const mainPath = join(
+      repoRoot(),
+      "packages",
+      "compiler",
+      "src",
+      "rust",
+      "passes",
+      "main-emission.ts"
+    );
+    const mainBody = getFunctionBodyText(mainPath, "emitMainAndRootShapesPass");
+    expect(mainBody).to.contain("return freezeReadonlyArray(items);");
+  });
+
   it("reports a synthetic span when the entry file is missing", () => {
     const missingEntry = join(tmpdir(), "tsuba-pass-contracts-missing", "main.ts");
     let err: unknown;

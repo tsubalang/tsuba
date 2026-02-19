@@ -1,6 +1,10 @@
 import ts from "typescript";
 
-import type { FileLowered } from "./contracts.js";
+import {
+  asReadonlyMap,
+  freezeReadonlyArray,
+  type FileLowered,
+} from "./contracts.js";
 
 type AnnotationsPassDeps = {
   readonly failAt: (node: ts.Node, code: string, message: string) => never;
@@ -37,7 +41,7 @@ export function collectAnnotationsPass(
       declPosByName.set("main", mainFn.pos);
     }
 
-    const attrsByName = new Map<string, string[]>();
+    const attrsByName = new Map<string, readonly string[]>();
     for (const a of lowered.annotations) {
       const declPos = declPosByName.get(a.target);
       if (declPos === undefined) {
@@ -46,12 +50,11 @@ export function collectAnnotationsPass(
       if (a.pos <= declPos) {
         deps.failAt(a.node, "TSB3311", `annotate(${a.target}, ...) must appear after the declaration in v0.`);
       }
-      const list = attrsByName.get(a.target) ?? [];
-      list.push(...a.attrs);
-      attrsByName.set(a.target, list);
+      const list = [...(attrsByName.get(a.target) ?? []), ...a.attrs];
+      attrsByName.set(a.target, freezeReadonlyArray(list));
     }
-    attrsByFile.set(fileName, attrsByName);
+    attrsByFile.set(fileName, asReadonlyMap(attrsByName));
   }
 
-  return attrsByFile;
+  return asReadonlyMap(attrsByFile);
 }

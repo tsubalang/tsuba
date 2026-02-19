@@ -42,7 +42,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("inserts mutable borrows for mutref function parameters", () => {
     const rust = compileEntry(
       [
-        'import type { i32, mut, mutref } from "@tsuba/core/types.js";',
+        'import type { i32, mut, mutref } from \"@tsuba/core/types.js\";',
         "",
         "function tick(x: mutref<i32>): void {",
         "  void x;",
@@ -62,7 +62,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("inserts immutable borrows for ref function parameters", () => {
     const rust = compileEntry(
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "function read(x: ref<i32>): i32 {",
         "  return x;",
@@ -83,7 +83,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("inserts receiver borrows for method calls through ref/mutref bindings", () => {
     const rust = compileEntry(
       [
-        'import type { i32, mut, mutref, ref } from "@tsuba/core/types.js";',
+        'import type { i32, mut, mutref, ref } from \"@tsuba/core/types.js\";',
         "",
         "class Counter {",
         "  value: i32 = 0 as i32;",
@@ -126,7 +126,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("uses contextual nominal object literal lowering instead of synthesized anon structs", () => {
     const rust = compileEntry(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Pair = {",
         "  left: i32;",
@@ -152,7 +152,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("synthesizes separate anon structs for uncontextual object literals by construction span", () => {
     const rust = compileEntry(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const a = { x: 1 as i32, y: 2 as i32 };",
@@ -172,7 +172,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("rejects duplicate discriminated-union switch cases", () => {
     const err = expectCompileError(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Shape =",
         '  | { kind: "circle"; radius: i32 }',
@@ -203,7 +203,7 @@ describe("@tsuba/compiler risk regressions", () => {
     const rust = compileEntry(
       [
         'import { move } from "@tsuba/core/lang.js";',
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const f = move((x: i32): i32 => (x + (1 as i32)) as i32);",
@@ -219,7 +219,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("supports block-bodied closures and keeps non-terminal return diagnostics stable", () => {
     const rust = compileEntry(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const f = (x: i32): i32 => {",
@@ -236,7 +236,7 @@ describe("@tsuba/compiler risk regressions", () => {
 
     const err = expectCompileError(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const f = (x: i32): i32 => {",
@@ -256,7 +256,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("supports nested lexical blocks with shadowing semantics", () => {
     const rust = compileEntry(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const x = 1 as i32;",
@@ -274,10 +274,54 @@ describe("@tsuba/compiler risk regressions", () => {
     expect(rust).to.contain("let x = (2) as i32;");
   });
 
+  it("does not silently drop plain type aliases", () => {
+    const rust = compileEntry(
+      [
+        "import type { i32 } from \"@tsuba/core/types.js\";",
+        "",
+        "type UserId = i32;",
+        "type Pair<T> = [T, T];",
+        "",
+        "function id(x: UserId): UserId {",
+        "  return x;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const p: Pair<i32> = [1 as i32, 2 as i32];",
+        "  const x = id(3 as i32);",
+        "  void p;",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n")
+    );
+
+    expect(rust).to.contain("type UserId = i32;");
+    expect(rust).to.contain("type Pair<T> = (T, T);");
+    expect(rust).to.contain("fn id(x: UserId) -> UserId");
+  });
+
+  it("rejects unsupported type-level alias constructs with a stable code", () => {
+    const err = expectCompileError(
+      [
+        'import type { i32 } from \"@tsuba/core/types.js\";',
+        "",
+        "type Lift<T> = T extends i32 ? i32 : i32;",
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n")
+    );
+
+    expect(err.code).to.equal("TSB5206");
+  });
+
   it("rejects uncontextual object literals without explicit field type assertions", () => {
     const err = expectCompileError(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const value = { x: 1, y: 2 as i32 };",
@@ -293,7 +337,7 @@ describe("@tsuba/compiler risk regressions", () => {
   it("fails fast at TypeScript layer for excess contextual object literal fields", () => {
     const err = expectCompileError(
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Pair = {",
         "  left: i32;",
@@ -319,7 +363,7 @@ describe("@tsuba/compiler risk regressions", () => {
     const dir = makeRepoTempDir("compiler-risk-deterministic-");
     const entry = join(dir, "main.ts");
     const source = [
-      'import type { i32 } from "@tsuba/core/types.js";',
+      'import type { i32 } from \"@tsuba/core/types.js\";',
       "",
       "function add(a: i32, b: i32): i32 {",
       "  return (a + b) as i32;",
@@ -344,7 +388,7 @@ describe("@tsuba/compiler risk regressions", () => {
 
   it("is byte-deterministic across relocated project roots", () => {
     const source = [
-      'import type { i32 } from "@tsuba/core/types.js";',
+      'import type { i32 } from \"@tsuba/core/types.js\";',
       "",
       "type Pair = {",
       "  left: i32;",
@@ -383,7 +427,7 @@ describe("@tsuba/compiler risk regressions", () => {
 
   it("keeps kernel lowering deterministic across relocated project roots", () => {
     const source = [
-      'import type { f32, u32 } from "@tsuba/core/types.js";',
+      'import type { f32, u32 } from \"@tsuba/core/types.js\";',
       'import type { global_ptr } from "@tsuba/gpu/types.js";',
       'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
       "",

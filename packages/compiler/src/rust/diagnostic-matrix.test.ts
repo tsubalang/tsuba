@@ -59,7 +59,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB2002",
       expectedDomain: "control-flow",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  let value: i32;",
@@ -115,11 +115,31 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       ].join("\n"),
     },
     {
+      name: "constructors reject default parameters",
+      expectedCode: "TSB4024",
+      expectedDomain: "classes-and-methods",
+      entrySource: [
+        'import type { String } from \"@tsuba/core/types.js\";',
+        "",
+        "class User {",
+        "  name: String = \"\";",
+        "  constructor(name: String = \"x\") {",
+        "    this.name = name;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void User;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
       name: "traits reject optional method members",
       expectedCode: "TSB5104",
       expectedDomain: "types-and-traits",
       entrySource: [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Reader {",
         "  read?(this: ref<this>): i32;",
@@ -150,7 +170,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedDomain: "entry-and-expressions",
       entrySource: [
         'import { move } from "@tsuba/core/lang.js";',
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "function inc(x: i32): i32 {",
         "  return (x + (1 as i32)) as i32;",
@@ -168,7 +188,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB1100",
       expectedDomain: "entry-and-expressions",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const f = (x: i32): i32 => {",
@@ -200,7 +220,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB1310",
       expectedDomain: "entry-and-expressions",
       entrySource: [
-        'import type { i32, mut, mutref } from "@tsuba/core/types.js";',
+        'import type { i32, mut, mutref } from \"@tsuba/core/types.js\";',
         "",
         "function update(x: mutref<i32>): void {",
         "  void x;",
@@ -230,7 +250,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB1003",
       expectedDomain: "entry-and-expressions",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export async function main(): Promise<i32> {",
         "  return 1 as i32;",
@@ -244,7 +264,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB2203",
       expectedDomain: "control-flow",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Shape =",
         '  | { kind: "circle"; r: i32 }',
@@ -272,7 +292,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB2210",
       expectedDomain: "control-flow",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Shape =",
         '  | { kind: "circle"; r: i32 }',
@@ -297,7 +317,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB2120",
       expectedDomain: "control-flow",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  for (var i: i32 = 0 as i32; i < (2 as i32); i++) {",
@@ -312,7 +332,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB2211",
       expectedDomain: "control-flow",
       entrySource: [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "function classify(x: i32): i32 {",
         "  const one = 1 as i32;",
@@ -335,7 +355,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB1114",
       expectedDomain: "entry-and-expressions",
       entrySource: [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "class Box {",
         "  value: i32 = 1 as i32;",
         "}",
@@ -355,7 +375,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB1201",
       expectedDomain: "entry-and-expressions",
       entrySource: [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "declare const maybe: unknown;",
         "",
         "export function main(): void {",
@@ -485,7 +505,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       entrySource: [
         'import { kernel, deviceMalloc } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  out[0 as u32] = 1 as u32;",
@@ -505,7 +525,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       entrySource: [
         'import { kernel, deviceMalloc } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  out[0 as u32] = 1 as u32;",
@@ -525,7 +545,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       entrySource: [
         'import { kernel, deviceMalloc } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  out[0 as u32] = 1 as u32;",
@@ -545,7 +565,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       entrySource: [
         'import { kernel, deviceMalloc } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  out[0 as u32] = 1 as u32;",
@@ -563,7 +583,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB4029",
       expectedDomain: "classes-and-methods",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "class User {",
         "  id!: i32;",
@@ -581,7 +601,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB5009",
       expectedDomain: "types-and-traits",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Result =",
         '  | { kind: "ok"; value?: i32 }',
@@ -598,7 +618,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB5106",
       expectedDomain: "types-and-traits",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "interface Reader {",
         "  read(value: i32): i32;",
@@ -615,11 +635,41 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       expectedCode: "TSB5203",
       expectedDomain: "types-and-traits",
       entrySource: [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Point = {",
         "  x?: i32;",
         "};",
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "type aliases reject unsupported type-level constructs",
+      expectedCode: "TSB5206",
+      expectedDomain: "types-and-traits",
+      entrySource: [
+        'import type { i32 } from \"@tsuba/core/types.js\";',
+        "",
+        "type Lift<T> = T extends i32 ? i32 : i32;",
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "type aliases reject default generic type arguments",
+      expectedCode: "TSB5205",
+      expectedDomain: "types-and-traits",
+      entrySource: [
+        'import type { i32 } from \"@tsuba/core/types.js\";',
+        "",
+        "type Box<T = i32> = T;",
         "",
         "export function main(): void {",
         "  return;",
@@ -638,6 +688,28 @@ describe("@tsuba/compiler diagnostics matrix", () => {
         throw new Error(`Expected compiler diagnostic code, got ${err.code}`);
       }
       expect(compilerDiagnosticDomain(err.code)).to.equal(def.expectedDomain);
+      expect(err.span, `${def.name}: error must include source span`).to.not.equal(undefined);
+      expect(err.span?.fileName, `${def.name}: span file should map to fixture source`).to.match(/main\.ts$/);
+      expect(err.span?.end, `${def.name}: span end must be >= span start`).to.be.gte(err.span?.start ?? 0);
+
+      const normalizedMessage = err.message.toLowerCase();
+      const actionableHint = [
+        "must",
+        "requires",
+        "required",
+        "unsupported",
+        "not supported",
+        "rejected",
+        "missing",
+        "cannot",
+        "only",
+        "unknown",
+        "resolve",
+        "invalid",
+        "initialize",
+        "found",
+      ].some((needle) => normalizedMessage.includes(needle));
+      expect(actionableHint, `${def.name}: diagnostic should carry an actionable message`).to.equal(true);
     });
   }
 });

@@ -67,8 +67,9 @@ Policy:
 | Constructor optional/default params | Omitted | `TSB4024` |
 | TS `enum` declarations | Omitted (use discriminated unions for Rust enums) | `TSB3102` |
 | Interface optional members | Omitted | `TSB5104` |
-| `any` | Omitted | Spec-level policy (reject) |
-| Conditional / mapped / intersection / `infer` type-level computation | Omitted in v0 | Spec-level policy (reject) |
+| `any` | Omitted | `TSB1010` |
+| Type-alias generic defaults (`type Box<T = ...> = ...`) | Omitted in v0 | `TSB5205` |
+| Conditional / mapped / intersection / `infer` type-level computation in type aliases | Omitted in v0 | `TSB5206` |
 
 ---
 

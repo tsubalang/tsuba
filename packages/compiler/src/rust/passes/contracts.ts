@@ -4,6 +4,57 @@ import type { RustItem, RustType, Span } from "../ir.js";
 
 export type MainReturnKind = "unit" | "result";
 
+class ReadonlyMapView<K, V> implements ReadonlyMap<K, V> {
+  readonly #inner: ReadonlyMap<K, V>;
+
+  constructor(inner: ReadonlyMap<K, V>) {
+    this.#inner = inner;
+  }
+
+  get size(): number {
+    return this.#inner.size;
+  }
+
+  get(key: K): V | undefined {
+    return this.#inner.get(key);
+  }
+
+  has(key: K): boolean {
+    return this.#inner.has(key);
+  }
+
+  forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
+    this.#inner.forEach((value, key) => callbackfn.call(thisArg, value, key, this));
+  }
+
+  entries(): MapIterator<[K, V]> {
+    return this.#inner.entries();
+  }
+
+  keys(): MapIterator<K> {
+    return this.#inner.keys();
+  }
+
+  values(): MapIterator<V> {
+    return this.#inner.values();
+  }
+
+  [Symbol.iterator](): MapIterator<[K, V]> {
+    return this.#inner[Symbol.iterator]();
+  }
+}
+
+export function asReadonlyMap<K, V>(map: ReadonlyMap<K, V>): ReadonlyMap<K, V> {
+  if (map instanceof ReadonlyMapView) return map;
+  const snapshot = new Map<K, V>();
+  for (const [k, v] of map.entries()) snapshot.set(k, v);
+  return Object.freeze(new ReadonlyMapView(snapshot));
+}
+
+export function freezeReadonlyArray<T>(items: readonly T[]): readonly T[] {
+  return Object.freeze([...items]);
+}
+
 export type CompileBootstrap = {
   readonly program: ts.Program;
   readonly checker: ts.TypeChecker;

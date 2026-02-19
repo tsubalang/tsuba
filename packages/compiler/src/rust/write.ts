@@ -329,6 +329,15 @@ function emitItem(item: RustItem, indent: string): string[] {
       out.push(`${indent}}`);
       return out;
     }
+    case "type_alias": {
+      const out: string[] = [];
+      out.push(...spanLine);
+      for (const a of item.attrs) out.push(`${indent}${a}`);
+      const vis = item.vis === "pub" ? "pub " : "";
+      const typeParams = emitGenericParams(item.typeParams);
+      out.push(`${indent}${vis}type ${item.name}${typeParams} = ${emitType(item.target)};`);
+      return out;
+    }
     case "impl": {
       const out: string[] = [];
       const typeParams = emitGenericParams(item.typeParams);

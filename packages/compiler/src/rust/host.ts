@@ -3282,8 +3282,11 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     for (const p of ctor.parameters) {
       if (!ts.isIdentifier(p.name)) failAt(p.name, "TSB4022", "Destructuring ctor params are not supported in v0.");
       if (!p.type) failAt(p, "TSB4023", `Constructor param '${p.name.text}' must have a type annotation in v0.`);
-      if (p.questionToken || p.initializer) {
-        failAt(p, "TSB4024", "Optional/default ctor params are not supported in v0.");
+      if (p.questionToken) {
+        failAt(p, "TSB4024", "Optional constructor parameters are not supported in v0.");
+      }
+      if (p.initializer) {
+        failAt(p, "TSB4024", "Default constructor parameters are not supported in v0.");
       }
       ctorParams.push({ name: p.name.text, type: typeNodeToRust(p.type) });
     }
@@ -3773,6 +3776,38 @@ function structItemFromDef(def: StructDef, attrs: readonly string[]): RustItem {
   };
 }
 
+function lowerPlainTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: readonly string[]): RustItem {
+  const owner = `Type alias '${decl.name.text}'`;
+  for (const p of decl.typeParameters ?? []) {
+    if (p.default) {
+      failAt(p.default, "TSB5205", `${owner}: default generic type arguments are not supported in v0.`);
+    }
+  }
+  const typeParams = lowerTypeParameters(ctx.checker, decl, owner, decl.typeParameters, "TSB5205");
+  let target: RustType;
+  try {
+    target = typeNodeToRust(decl.type);
+  } catch (error) {
+    if (error instanceof CompileError && error.code === "TSB1010") {
+      failAt(
+        decl.type,
+        "TSB5206",
+        `${owner}: unsupported type-level construct in v0 (use nominal/struct/union-compatible forms).`
+      );
+    }
+    throw error;
+  }
+  return {
+    kind: "type_alias",
+    span: spanFromNode(decl),
+    vis: hasModifier(decl, ts.SyntaxKind.ExportKeyword) ? "pub" : "private",
+    name: decl.name.text,
+    typeParams,
+    attrs,
+    target,
+  };
+}
+
 function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: readonly string[]): readonly RustItem[] {
   const key = unionKeyFromDecl(decl);
   const unionDef = ctx.unions.get(key);
@@ -3795,7 +3830,7 @@ function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: read
   const structDef = ctx.structs.get(key);
   if (structDef) return [structItemFromDef(structDef, attrs)];
 
-  return [];
+  return [lowerPlainTypeAlias(ctx, decl, attrs)];
 }
 
 function parseInterfaceMethod(
@@ -3833,10 +3868,7 @@ function parseInterfaceMethod(
       failAt(p, "TSB5108", `${owner}: parameter '${p.name.text}' must have a type annotation in v0.`);
     }
     if (p.questionToken) {
-      failAt(p, "TSB5109", `${owner}: optional parameters are not supported in v0.`);
-    }
-    if (p.initializer) {
-      failAt(p, "TSB5109", `${owner}: default parameters are not supported in v0.`);
+      failAt(p, "TSB5109", `${owner}: optional params are not supported in v0.`);
     }
     params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
   }
