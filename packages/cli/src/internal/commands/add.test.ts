@@ -83,6 +83,56 @@ describe("@tsuba/cli add", () => {
     expect(json.deps.crates).to.deep.equal([{ id: "serde", version: "1.0.0" }]);
   });
 
+  it("targets the project root when add crate is invoked from nested subdirectories", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tsuba-add-nested-"));
+    const ws = join(root, "demo");
+    await runInit({ dir: ws });
+
+    const projectRoot = join(ws, "packages", "demo");
+    const nested = join(projectRoot, "docs", "api");
+    mkdirSync(nested, { recursive: true });
+
+    await runAdd(
+      { dir: nested, argv: ["crate", "serde_json@1.0.0"] },
+      {
+        spawnSync: (command, _args, _opts) => {
+          if (command === "cargo") {
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                packages: [
+                  {
+                    name: "serde_json",
+                    version: "1.0.0",
+                    manifest_path: "/cargo/registry/serde_json-1.0.0/Cargo.toml",
+                    targets: [{ name: "serde_json", kind: ["lib"] }],
+                  },
+                ],
+              }),
+              stderr: "",
+            } as any;
+          }
+          throw new Error(`test stub: unexpected command ${command}`);
+        },
+        generate: ({ outDir }) => {
+          emitGeneratedPackage({
+            outDir,
+            packageName: "@tsuba/serde_json",
+            manifest: {
+              schema: 1,
+              kind: "crate",
+              crate: { name: "serde_json", package: "serde_json", version: "1.0.0" },
+              modules: { "@tsuba/serde_json/index.js": "serde_json" },
+            },
+          });
+        },
+      }
+    );
+
+    const json = JSON.parse(readFileSync(join(projectRoot, "tsuba.json"), "utf-8")) as any;
+    expect(json.deps.crates).to.deep.equal([{ id: "serde_json", version: "1.0.0" }]);
+  });
+
   it("adds a path dependency to tsuba.json", async () => {
     const ws = makeRepoTempDir("cli-add-path-");
     const projectName = basename(ws);

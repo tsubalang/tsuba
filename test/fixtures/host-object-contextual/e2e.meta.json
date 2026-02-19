@@ -2,6 +2,6 @@
   "run": true,
   "test": true,
   "runStdoutContains": [
-    "host-basic 3"
+    "object-context 12"
   ]
 }

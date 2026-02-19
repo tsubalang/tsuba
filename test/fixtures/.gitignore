@@ -1,1 +1,5 @@
-host-*/generated/
+*/generated/
+*/packages/*/generated/
+**/.tsuba-e2e-build.log
+**/.tsuba-e2e-run.log
+**/.tsuba-e2e-test.log

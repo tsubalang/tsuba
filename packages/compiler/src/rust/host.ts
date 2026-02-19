@@ -1840,6 +1840,7 @@ function unwrapPromiseInnerType(
 }
 
 function lowerTypeParameter(
+  checker: ts.TypeChecker,
   ownerNode: ts.Node,
   ownerLabel: string,
   p: ts.TypeParameterDeclaration,
@@ -1856,6 +1857,19 @@ function lowerTypeParameter(
       const ty = typeNodeToRust(node);
       if (ty.kind !== "path") {
         failAt(node, code, `${ownerLabel}: generic constraint must be a nominal trait/type path in v0.`);
+      }
+      const constraintType = checker.getTypeFromTypeNode(node);
+      const symbol0 =
+        constraintType.getSymbol() ??
+        (constraintType as unknown as { readonly aliasSymbol?: ts.Symbol }).aliasSymbol;
+      if (!symbol0) {
+        failAt(node, code, `${ownerLabel}: generic constraint must resolve to a trait interface in v0.`);
+      }
+      const symbol =
+        (symbol0.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol0) : symbol0;
+      const isInterface = (symbol.declarations ?? []).some((d) => ts.isInterfaceDeclaration(d));
+      if (!isInterface) {
+        failAt(node, code, `${ownerLabel}: generic constraint must resolve to a trait interface in v0.`);
       }
       bounds.push(ty);
     };
@@ -1874,13 +1888,14 @@ function lowerTypeParameter(
 }
 
 function lowerTypeParameters(
+  checker: ts.TypeChecker,
   ownerNode: ts.Node,
   ownerLabel: string,
   params: readonly ts.TypeParameterDeclaration[] | undefined,
   code: string
 ): readonly RustGenericParam[] {
   if (!params || params.length === 0) return [];
-  return params.map((p) => lowerTypeParameter(ownerNode, ownerLabel, p, code));
+  return params.map((p) => lowerTypeParameter(checker, ownerNode, ownerLabel, p, code));
 }
 
 function rustTypeEq(a: RustType, b: RustType): boolean {
@@ -2858,7 +2873,13 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
   const hasExport = fnDecl.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
   const isAsync = hasModifier(fnDecl, ts.SyntaxKind.AsyncKeyword);
   const vis = hasExport ? "pub" : "private";
-  const typeParams = lowerTypeParameters(fnDecl, `Function '${fnDecl.name.text}'`, fnDecl.typeParameters, "TSB3005");
+  const typeParams = lowerTypeParameters(
+    ctx.checker,
+    fnDecl,
+    `Function '${fnDecl.name.text}'`,
+    fnDecl.typeParameters,
+    "TSB3005"
+  );
 
   const params: RustParam[] = [];
   for (const p of fnDecl.parameters) {
@@ -2919,7 +2940,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
 
   const className = cls.name.text;
   const classSpan = spanFromNode(cls);
-  const classTypeParams = lowerTypeParameters(cls, `Class '${className}'`, cls.typeParameters, "TSB4001");
+  const classTypeParams = lowerTypeParameters(ctx.checker, cls, `Class '${className}'`, cls.typeParameters, "TSB4001");
   const classTypeArgs = classTypeParams.map((tp) => pathType([tp.name]));
   const classTypePath = pathType([className], classTypeArgs);
 
@@ -3098,7 +3119,13 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     if (!ts.isIdentifier(m.name)) failAt(m.name, "TSB4101", "Only identifier-named methods are supported in v0.");
     if (!m.body) failAt(m, "TSB4102", "Method must have a body in v0.");
     const isAsync = hasModifier(m, ts.SyntaxKind.AsyncKeyword);
-    const methodTypeParams = lowerTypeParameters(m, `Method '${m.name.text}'`, m.typeParameters, "TSB4103");
+    const methodTypeParams = lowerTypeParameters(
+      ctx.checker,
+      m,
+      `Method '${m.name.text}'`,
+      m.typeParameters,
+      "TSB4103"
+    );
 
     const isPrivate =
       m.modifiers?.some((x) => x.kind === ts.SyntaxKind.PrivateKeyword || x.kind === ts.SyntaxKind.ProtectedKeyword) ??
@@ -3453,6 +3480,7 @@ function lowerTypeAlias(ctx: EmitCtx, decl: ts.TypeAliasDeclaration, attrs: read
 }
 
 function parseInterfaceMethod(
+  checker: ts.TypeChecker,
   decl: ts.InterfaceDeclaration,
   member: ts.TypeElement
 ): TraitMethodDef {
@@ -3466,7 +3494,7 @@ function parseInterfaceMethod(
     failAt(member, "TSB5104", `Optional interface methods are not supported in v0: ${decl.name.text}.${member.name.text}.`);
   }
   const owner = `Interface '${decl.name.text}' method '${member.name.text}'`;
-  const typeParams = lowerTypeParameters(member, owner, member.typeParameters, "TSB5105");
+  const typeParams = lowerTypeParameters(checker, member, owner, member.typeParameters, "TSB5105");
 
   const [first, ...rest] = member.parameters;
   if (!first || !ts.isIdentifier(first.name) || first.name.text !== "this") {
@@ -3505,10 +3533,16 @@ function parseInterfaceMethod(
   };
 }
 
-function parseTraitDef(decl: ts.InterfaceDeclaration): TraitDef {
+function parseTraitDef(checker: ts.TypeChecker, decl: ts.InterfaceDeclaration): TraitDef {
   const key = traitKeyFromDecl(decl);
   const vis: "pub" | "private" = hasModifier(decl, ts.SyntaxKind.ExportKeyword) ? "pub" : "private";
-  const typeParams = lowerTypeParameters(decl, `Interface '${decl.name.text}'`, decl.typeParameters, "TSB5100");
+  const typeParams = lowerTypeParameters(
+    checker,
+    decl,
+    `Interface '${decl.name.text}'`,
+    decl.typeParameters,
+    "TSB5100"
+  );
 
   const superTraits: RustType[] = [];
   for (const h of decl.heritageClauses ?? []) {
@@ -3523,7 +3557,7 @@ function parseTraitDef(decl: ts.InterfaceDeclaration): TraitDef {
     }
   }
 
-  const methods = decl.members.map((m) => parseInterfaceMethod(decl, m));
+  const methods = decl.members.map((m) => parseInterfaceMethod(checker, decl, m));
   return { key, name: decl.name.text, span: spanFromNode(decl), vis, typeParams, superTraits, methods };
 }
 
@@ -3551,7 +3585,7 @@ function lowerTraitDef(def: TraitDef): RustItem {
 }
 
 function lowerInterface(ctx: EmitCtx, decl: ts.InterfaceDeclaration): readonly RustItem[] {
-  const def = ctx.traitsByKey.get(traitKeyFromDecl(decl)) ?? parseTraitDef(decl);
+  const def = ctx.traitsByKey.get(traitKeyFromDecl(decl)) ?? parseTraitDef(ctx.checker, decl);
   return [lowerTraitDef(def)];
 }
 
@@ -3799,7 +3833,7 @@ export function compileHostToRust(opts: CompileHostOptions): CompileHostOutput {
       if (structDef) ctx.structs.set(structDef.key, structDef);
     }
     for (const i0 of lowered.interfaces) {
-      const traitDef = parseTraitDef(i0.decl);
+      const traitDef = parseTraitDef(checker, i0.decl);
       ctx.traitsByKey.set(traitDef.key, traitDef);
       const existing = ctx.traitsByName.get(traitDef.name) ?? [];
       existing.push(traitDef);

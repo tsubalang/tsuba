@@ -348,7 +348,7 @@ function parseType(raw: string, file: string, issues: SkipIssue[]): RustType {
     return `${normalizeIdentifier(baseText)}<${mappedArgs.join(", ")}>`;
   }
 
-  if (text.startsWith("&'") && close > open) {
+  if (/^&\s*'/.test(text)) {
     const m = /^&\s*'([A-Za-z_][A-Za-z0-9_]*)\s+mut\s+(.+)$/s.exec(text);
     if (m?.[1] && m[2]) return `mutrefLt<"${m[1]}", ${parseType(m[2], file, issues)}>`;
     const n = /^&\s*'([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$/s.exec(text);
@@ -364,10 +364,21 @@ function parseType(raw: string, file: string, issues: SkipIssue[]): RustType {
     if (semi !== -1) {
       const item = inner.slice(0, semi).trim();
       const len = inner.slice(semi + 1).trim();
-      if (len.length > 0) return `ArrayN<${parseType(item, file, issues)}, ${len}>`;
+      if (len.length > 0) {
+        if (/^[0-9]+$/u.test(len)) return `ArrayN<${parseType(item, file, issues)}, ${len}>`;
+        issues.push({
+          file,
+          kind: "type",
+          snippet: text,
+          reason:
+            "Array length uses a const expression/generic that is not representable in TS facades; using number.",
+        });
+        return `ArrayN<${parseType(item, file, issues)}, number>`;
+      }
       return "void";
     }
   }
+  if (text === "str") return "Str";
   if (text.includes("::")) {
     const parts = text.split("::").filter((s) => s.length > 0);
     return normalizeIdentifier(parts[parts.length - 1] ?? "void");

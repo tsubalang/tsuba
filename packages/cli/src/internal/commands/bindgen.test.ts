@@ -47,4 +47,32 @@ describe("@tsuba/cli bindgen", () => {
       "missing required --out"
     );
   });
+
+  it("resolves --manifest-path and --out relative to the invocation directory", async () => {
+    const calls: {
+      manifestPath: string;
+      outDir: string;
+      packageName?: string;
+      bundleCrate: boolean;
+    }[] = [];
+    await runBindgen(
+      {
+        dir: "/repo/packages/app/docs",
+        argv: ["--manifest-path", "../../crate/Cargo.toml", "--out", "../../generated/bindings"],
+      },
+      {
+        generate: (opts) => {
+          calls.push(opts);
+        },
+      }
+    );
+
+    expect(calls).to.have.length(1);
+    expect(calls[0]).to.deep.equal({
+      manifestPath: "/repo/packages/crate/Cargo.toml",
+      outDir: "/repo/packages/generated/bindings",
+      packageName: undefined,
+      bundleCrate: false,
+    });
+  });
 });
