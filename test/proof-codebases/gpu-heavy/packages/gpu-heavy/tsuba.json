@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "gpu-heavy",
+  "kind": "bin",
+  "entry": "src/main.ts",
+  "gpu": {
+    "enabled": true
+  },
+  "crate": {
+    "name": "gpu_heavy"
+  }
+}

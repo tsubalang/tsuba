@@ -17,6 +17,11 @@ From `main`, clean tree, synced with `origin/main`:
 1. `npm run run-all`
 2. proof verification (included by publish scripts unless `--no-proof`)
 3. external proof matrix verification (`npm run verify:external-proof -- --require`)
+   - required internal substantial checks:
+     - `scripts/proof/verify-host-service.mjs`
+     - `scripts/proof/verify-gpu-heavy.mjs`
+     - `scripts/proof/verify-bindgen-heavy.mjs`
+   - optional external checks from sibling `proof-is-in-the-pudding` (if present)
 4. signed-tag check (`npm run release:signed-tag`)
 5. confirm version bumps are intentional and monotonic
 6. capture a release traceability snapshot (`npm run release:traceability`)

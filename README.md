@@ -40,7 +40,15 @@ npm run run-all
 - Rust golden snapshot checks (`golden/main.rs` via fixture metadata)
 - clean temp-dir CLI smoke workflow (`init/build/run/test/add/bindgen`)
 - diagnostic quality baseline check (`scripts/check-diagnostic-quality.mjs`)
-- external proof matrix verification (`scripts/verify-external-proof.mjs`, best-effort unless required)
+- external proof matrix verification (`scripts/verify-external-proof.mjs --require`)
+
+Required proof categories are now satisfied by in-repo substantial checks:
+
+- `scripts/proof/verify-host-service.mjs`
+- `scripts/proof/verify-gpu-heavy.mjs`
+- `scripts/proof/verify-bindgen-heavy.mjs`
+
+Sibling `../proof-is-in-the-pudding` checks remain optional signals in the matrix.
 
 ## Release preflight (npm)
 

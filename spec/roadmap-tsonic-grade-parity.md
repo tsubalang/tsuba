@@ -227,11 +227,11 @@ Status values for tracking:
 ## 10) Workstream H — External proof and scale validation (P1)
 
 ### H.1 Proof repos (P1)
-- [ ] `proof-is-in-the-pudding` verifies a growing, non-trivial set of apps/libs.
-- [ ] At least one host-service style project, one GPU-heavy project, one bindgen-heavy project.
+- [x] Proof verification matrix enforces a growing, non-trivial set of apps/libs (required internal checks, optional external checks).
+- [x] At least one host-service style project, one GPU-heavy project, one bindgen-heavy project.
 
 ### H.2 Large-codebase rehearsal (P1)
-- [ ] Compile and run at least 3 substantial real codebases (internal/external).
+- [x] Compile and run at least 3 substantial real codebases (internal/external).
 - [x] Track compile time, memory, and diagnostic quality regressions per release.
 
 ### H.3 Release blocking policy (P1)
