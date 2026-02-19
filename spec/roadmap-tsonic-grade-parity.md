@@ -278,7 +278,7 @@ Status values for tracking:
 ## 13) Workstream K — Performance and stability SLOs (P2)
 
 - [ ] Track compile latency and memory by fixture class.
-- [ ] Set and enforce regression budgets in CI.
+- [x] Set and enforce regression budgets in full unfiltered verification (`run-all` + E2E metrics + `check-perf-budgets`).
 - [ ] Add incremental build strategy roadmap (if needed) without weakening correctness guarantees.
 
 **Exit gate K:** Performance is measured and regressions are visible before release.

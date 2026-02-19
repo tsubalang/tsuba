@@ -144,6 +144,14 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
+function syntheticSpanForFile(fileName: string): Span {
+  return {
+    fileName: mapSpanFileName(fileName),
+    start: 0,
+    end: 0,
+  };
+}
+
 function createSpanFileNameMapper(entryFile: string): (raw: string) => string {
   const entryDir = normalizePath(resolve(dirname(entryFile)));
   return (raw: string): string => {
@@ -170,6 +178,50 @@ function withSpanFileNameMapper<T>(mapper: (raw: string) => string, fn: () => T)
 function mapSpanFileName(raw: string): string {
   const normalized = normalizePath(raw);
   return activeSpanFileNameMapper ? activeSpanFileNameMapper(normalized) : normalized;
+}
+
+class ReadonlyMapView<K, V> implements ReadonlyMap<K, V> {
+  readonly #inner: Map<K, V>;
+
+  constructor(inner: Map<K, V>) {
+    this.#inner = inner;
+  }
+
+  get size(): number {
+    return this.#inner.size;
+  }
+
+  get(key: K): V | undefined {
+    return this.#inner.get(key);
+  }
+
+  has(key: K): boolean {
+    return this.#inner.has(key);
+  }
+
+  forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
+    this.#inner.forEach((value, key) => callbackfn.call(thisArg, value, key, this));
+  }
+
+  entries(): MapIterator<[K, V]> {
+    return this.#inner.entries();
+  }
+
+  keys(): MapIterator<K> {
+    return this.#inner.keys();
+  }
+
+  values(): MapIterator<V> {
+    return this.#inner.values();
+  }
+
+  [Symbol.iterator](): MapIterator<[K, V]> {
+    return this.#inner[Symbol.iterator]();
+  }
+}
+
+function asReadonlyMap<K, V>(m: Map<K, V>): ReadonlyMap<K, V> {
+  return new ReadonlyMapView(m);
 }
 
 function rustIdentFromStem(stem: string): string {
@@ -1492,7 +1544,7 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
     .filter((d) => d.category === ts.DiagnosticCategory.Error);
   if (diagnostics.length > 0) {
     const d = diagnostics.at(0);
-    if (!d) fail("TSB0002", "Compilation failed with diagnostics.");
+    if (!d) fail("TSB0002", "Compilation failed with diagnostics.", syntheticSpanForFile(opts.entryFile));
     const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n");
     if (d.file && d.start !== undefined) {
       const pos = d.file.getLineAndCharacterOfPosition(d.start);
@@ -1506,12 +1558,12 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
         }
       );
     }
-    fail("TSB0002", msg);
+    fail("TSB0002", msg, syntheticSpanForFile(opts.entryFile));
   }
   const checker = program.getTypeChecker();
 
   const entrySourceFile = program.getSourceFile(opts.entryFile);
-  if (!entrySourceFile) fail("TSB0001", `Could not read entry file: ${opts.entryFile}`);
+  if (!entrySourceFile) fail("TSB0001", `Could not read entry file: ${opts.entryFile}`, syntheticSpanForFile(opts.entryFile));
 
   const mainFn = getExportedMain(entrySourceFile);
   const runtimeKind = opts.runtimeKind ?? "none";
@@ -1567,7 +1619,7 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
     .getSourceFiles()
     .filter((f) => !f.isDeclarationFile && !isInNodeModules(f.fileName));
 
-  return {
+  return Object.freeze({
     program,
     checker,
     entrySourceFile,
@@ -1576,8 +1628,8 @@ function bootstrapCompileHost(opts: CompileHostOptions): CompileBootstrap {
     mainIsAsync,
     returnKind,
     rustReturnType,
-    userSourceFiles,
-  };
+    userSourceFiles: Object.freeze([...userSourceFiles]),
+  });
 }
 
 function createEmitCtx(checker: ts.TypeChecker): EmitCtx {
@@ -1689,7 +1741,10 @@ function createUserModuleIndex(
     moduleNameByFile.set(fileName, modName);
   }
 
-  return { userFilesByName, moduleNameByFile };
+  return Object.freeze({
+    userFilesByName: asReadonlyMap(userFilesByName),
+    moduleNameByFile: asReadonlyMap(moduleNameByFile),
+  });
 }
 
 function resolveRelativeImport(
