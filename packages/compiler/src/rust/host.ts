@@ -21,6 +21,8 @@ import { createUserModuleIndexPass, resolveRelativeImportPass } from "./passes/m
 import { collectFileLoweringsPass } from "./passes/file-lowering.js";
 import { collectTypeModelsPass } from "./passes/type-models.js";
 import { collectAnnotationsPass } from "./passes/annotations.js";
+import { emitModuleAndRootDeclarationsPass } from "./passes/declaration-emission.js";
+import { emitMainAndRootShapesPass } from "./passes/main-emission.js";
 import { writeRustProgram } from "./write.js";
 
 export type CompileIssue = {
@@ -3784,103 +3786,50 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
     hasStructDef: (key) => ctx.structs.has(key),
   });
 
-  // Phase 7: emit module + root items into Rust IR in deterministic order.
-  // Root (entry file) uses
-  const rootLowered = loweredByFile.get(entryFileName);
-  if (!rootLowered) failAt(sf, "TSB0001", "Internal error: entry file missing from lowered set.");
-  items.push(...sortUseItems(rootLowered.uses));
-
-  // Modules (non-entry files)
-  const moduleFiles = [...moduleNameByFile.entries()].sort((a, b) => compareText(a[0], b[0]));
-  for (const [fileName, modName] of moduleFiles) {
-    const lowered = loweredByFile.get(fileName);
-    if (!lowered) continue;
-    const fileAttrs = attrsByFile.get(fileName) ?? new Map<string, readonly string[]>();
-    const itemGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
-    for (const t0 of lowered.typeAliases) {
-      itemGroups.push({
-        pos: t0.pos,
-        items: lowerTypeAlias(ctx, t0.decl, fileAttrs.get(t0.decl.name.text) ?? []),
-      });
+  // Phase 7: emit module + root declarations into Rust IR in deterministic order.
+  const declarationPhase = emitModuleAndRootDeclarationsPass(
+    ctx,
+    sf,
+    entryFileName,
+    loweredByFile,
+    moduleNameByFile,
+    attrsByFile,
+    {
+      failAt,
+      compareText,
+      sortUseItems,
+      lowerTypeAlias,
+      lowerInterface,
+      lowerClass,
+      lowerFunction,
+      getShapeStructsByFile: (fileName) => ctx.shapeStructsByFile.get(fileName) ?? [],
+      structItemFromDef,
     }
-    for (const i0 of lowered.interfaces) itemGroups.push({ pos: i0.pos, items: lowerInterface(ctx, i0.decl) });
-    for (const c of lowered.classes) {
-      itemGroups.push({
-        pos: c.pos,
-        items: lowerClass(ctx, c.decl, fileAttrs.get(c.decl.name?.text ?? "") ?? []),
-      });
-    }
-    for (const f0 of lowered.functions) {
-      itemGroups.push({
-        pos: f0.pos,
-        items: [lowerFunction(ctx, f0.decl, fileAttrs.get(f0.decl.name?.text ?? "") ?? [])],
-      });
-    }
-    itemGroups.sort((a, b) => a.pos - b.pos);
-    const declItems = itemGroups.flatMap((g) => g.items);
-
-    const usesSorted = sortUseItems(lowered.uses);
-    const shapeStructs = [...(ctx.shapeStructsByFile.get(fileName) ?? [])].sort(
-      (a, b) => a.span.start - b.span.start || compareText(a.key, b.key)
-    );
-    const shapeItems = shapeStructs.map((d) => structItemFromDef(d, []));
-
-    const modItems: RustItem[] = [...usesSorted, ...shapeItems, ...declItems];
-    items.push({ kind: "mod", name: modName, items: modItems });
-  }
-
-  // Root declarations (entry file only, excluding main)
-  const rootGroups: { readonly pos: number; readonly items: readonly RustItem[] }[] = [];
-  const rootAttrs = attrsByFile.get(entryFileName) ?? new Map<string, readonly string[]>();
-  for (const t0 of rootLowered.typeAliases) {
-    rootGroups.push({
-      pos: t0.pos,
-      items: lowerTypeAlias(ctx, t0.decl, rootAttrs.get(t0.decl.name.text) ?? []),
-    });
-  }
-  for (const i0 of rootLowered.interfaces) rootGroups.push({ pos: i0.pos, items: lowerInterface(ctx, i0.decl) });
-  for (const c of rootLowered.classes) {
-    rootGroups.push({
-      pos: c.pos,
-      items: lowerClass(ctx, c.decl, rootAttrs.get(c.decl.name?.text ?? "") ?? []),
-    });
-  }
-  for (const f0 of rootLowered.functions) {
-    rootGroups.push({
-      pos: f0.pos,
-      items: [lowerFunction(ctx, f0.decl, rootAttrs.get(f0.decl.name?.text ?? "") ?? [])],
-    });
-  }
-  rootGroups.sort((a, b) => a.pos - b.pos);
-  items.push(...rootGroups.flatMap((g) => g.items));
-
-  // Phase 8: lower entry main body and finalize Rust program text.
-  const mainBody: RustStmt[] = [];
-  const mainCtx: EmitCtx = { ...ctx, inAsync: mainIsAsync };
-  for (const st of mainFn.body!.statements) mainBody.push(...lowerStmt(mainCtx, st));
-
-  const rootShapeStructs = [...(ctx.shapeStructsByFile.get(entryFileName) ?? [])].sort(
-    (a, b) => a.span.start - b.span.start || compareText(a.key, b.key)
   );
-  for (const d of rootShapeStructs) items.push(structItemFromDef(d, []));
+  items.push(...declarationPhase.items);
 
-  const mainItem: RustItem = {
-    kind: "fn",
-    span: spanFromNode(mainFn),
-    vis: "private",
-    async: mainIsAsync,
-    typeParams: [],
-    receiver: { kind: "none" },
-    name: "main",
-    params: [],
-    ret: returnKind === "unit" ? unitType() : (rustReturnType ?? unitType()),
-    attrs: [
-      ...(mainIsAsync && runtimeKind === "tokio" ? ["#[tokio::main]"] : []),
-      ...(rootAttrs.get("main") ?? []),
-    ],
-    body: mainBody,
-  };
-  items.push(mainItem);
+  // Phase 8: lower entry main body + root shape structs and finalize Rust program text.
+  const mainItems = emitMainAndRootShapesPass(
+    {
+      ctx,
+      mainFn,
+      mainIsAsync,
+      runtimeKind,
+      returnKind,
+      rustReturnType,
+      rootAttrs: declarationPhase.rootAttrs,
+      entryFileName,
+    },
+    {
+      compareText,
+      lowerStmt,
+      getShapeStructsByFile: (fileName) => ctx.shapeStructsByFile.get(fileName) ?? [],
+      structItemFromDef,
+      spanFromNode,
+      unitType,
+    }
+  );
+  items.push(...mainItems);
 
   const rustProgram: RustProgram = { kind: "program", items };
   let mainRs = writeRustProgram(rustProgram, { header: ["// Generated by @tsuba/compiler (v0)"] });

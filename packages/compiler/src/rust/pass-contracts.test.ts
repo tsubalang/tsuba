@@ -49,12 +49,16 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(body).to.contain("const loweredByFile = collectFileLoweringsPass(");
     expect(body).to.contain("collectTypeModelsPass(loweredByFile, {");
     expect(body).to.contain("const attrsByFile = collectAnnotationsPass(loweredByFile, entryFileName, mainFn, {");
+    expect(body).to.contain("const declarationPhase = emitModuleAndRootDeclarationsPass(");
+    expect(body).to.contain("const mainItems = emitMainAndRootShapesPass(");
 
     expect(body).to.not.contain("ts.createProgram(");
     expect(body).to.not.contain("ts.getPreEmitDiagnostics(");
     expect(body).to.not.contain("ts.createCompilerHost(");
     expect(body).to.not.contain("ts.isImportDeclaration(");
     expect(body).to.not.contain("const ann = ");
+    expect(body).to.not.contain("const rootGroups");
+    expect(body).to.not.contain("const moduleFiles");
   });
 
   it("keeps bootstrap TS-program wiring isolated in bootstrap pass", () => {

@@ -8,13 +8,13 @@ This is a structural parity audit to guide the next mega PR waves.
 
 - Tracked files: `221 / 1419` (**15.6%**)
 - Compiler source files:
-  - Tsuba `packages/compiler/src`: `21`
+  - Tsuba `packages/compiler/src`: `23`
   - Tsonic `packages/frontend/src + packages/emitter/src`: `336`
-  - Ratio: `21 / 336` (**6.3%**)
+  - Ratio: `23 / 336` (**6.8%**)
 - Compiler TypeScript LOC:
-  - Tsuba compiler: `9838`
+  - Tsuba compiler: `10069`
   - Tsonic frontend+emitter: `84772`
-  - Ratio: `9838 / 84772` (**11.6%**)
+  - Ratio: `10069 / 84772` (**11.9%**)
 - Compiler test case count (`it(...)`):
   - Tsuba: `111`
   - Tsonic frontend+emitter: `699`
@@ -44,6 +44,8 @@ Tsuba now has foundational pass separation in compiler:
 - `passes/file-lowering.ts`
 - `passes/type-models.ts`
 - `passes/annotations.ts`
+- `passes/declaration-emission.ts`
+- `passes/main-emission.ts`
 
 Remaining architecture gap:
 

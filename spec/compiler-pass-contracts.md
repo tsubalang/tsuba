@@ -30,39 +30,52 @@ Airplane-grade rule:
      - deterministic source-file → Rust-module mapping
      - collision diagnostics for module names
      - strict relative import target resolution
-3. **Semantic harvest pass**
-   - Input: `CompileBootstrap`
-   - Output:
-     - union/type definitions
-     - struct/type-alias definitions
-     - trait/interface definitions
-     - marker annotations
-   - Source: `packages/compiler/src/rust/host.ts` (`collect*`, `parseTraitDef`, `parseStructDef`, etc.)
+3. **File lowering pass**
+   - Input: user source file set + module index + import metadata
+   - Output: `Map<fileName, FileLowered>`
+   - Source: `packages/compiler/src/rust/passes/file-lowering.ts`
    - Responsibilities:
-     - gather nominal semantic entities before statement lowering
-     - precompute conformance metadata
-
-4. **Lowering pass**
-   - Input: TS AST + harvested semantic context
-   - Output: Rust IR (`RustProgram`)
-   - Source:
-     - `packages/compiler/src/rust/host.ts`
-     - IR types: `packages/compiler/src/rust/ir.ts`
+     - top-level declaration bucketing (classes/functions/types/interfaces)
+     - import lowering (`use` synthesis)
+     - annotate marker harvesting
+     - package bindings manifest resolution (`tsuba.bindings.json`)
+4. **Type-model collection pass**
+   - Input: lowered files
+   - Output: populated semantic model maps (unions/struct aliases/traits)
+   - Source: `packages/compiler/src/rust/passes/type-models.ts` + host callbacks
    - Responsibilities:
-     - deterministic TS→Rust lowering
-     - borrow insertion rules
-     - class/interface/trait lowering
-     - discriminated union lowering
-     - kernel extraction + launch lowering
+     - collect semantic definitions before statement lowering
+     - preserve deterministic declaration traversal
+5. **Annotation validation pass**
+   - Input: lowered files + semantic model presence + entry metadata
+   - Output: `Map<fileName, Map<target, attrs[]>>`
+   - Source: `packages/compiler/src/rust/passes/annotations.ts`
+   - Responsibilities:
+     - enforce declaration-after-annotate ordering
+     - ensure annotate targets exist and are representable
+6. **Declaration emission pass**
+   - Input: lowered files + module index + attrs map + semantic context
+   - Output: deterministic Rust IR declaration items + root attrs
+   - Source: `packages/compiler/src/rust/passes/declaration-emission.ts`
+   - Responsibilities:
+     - emit module/root uses and declaration groups in source order
+     - emit deterministic synthesized shape structs per file
+7. **Main emission pass**
+   - Input: entry `main`, runtime policy, root attrs, semantic context
+   - Output: entry-root shape structs + `main` Rust item
+   - Source: `packages/compiler/src/rust/passes/main-emission.ts`
+   - Responsibilities:
+     - lower entry body statements with async policy
+     - emit deterministic root shape structs and `main` attributes
 
-5. **Emission pass**
+8. **Writer emission pass**
    - Input: Rust IR
    - Output: `mainRs` text (deterministic)
    - Source:
      - writer: `packages/compiler/src/rust/write.ts`
      - entry: `writeRustProgram(...)`
 
-6. **CLI build orchestration pass**
+9. **CLI build orchestration pass**
    - Input: compiler output + workspace/project config
    - Output:
      - generated crate (`Cargo.toml`, `src/main.rs`)
@@ -74,7 +87,8 @@ Airplane-grade rule:
 ## 2) Contract types (authoritative)
 
 - `CompileHostOptions` / `CompileHostOutput`: `packages/compiler/src/rust/host.ts`
-- bootstrap/module-index contracts: `packages/compiler/src/rust/passes/contracts.ts`
+- pass contracts (`CompileBootstrap`, `UserModuleIndex`, `FileLowered`, etc.):
+  - `packages/compiler/src/rust/passes/contracts.ts`
 - Rust IR:
   - `RustType`, `RustExpr`, `RustStmt`, `RustItem`, `RustProgram`
   - file: `packages/compiler/src/rust/ir.ts`
