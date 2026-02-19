@@ -46,10 +46,18 @@ Tsuba now has foundational pass separation in compiler:
 - `passes/annotations.ts`
 - `passes/declaration-emission.ts`
 - `passes/main-emission.ts`
+- GPU kernel dialect extraction:
+  - `rust/kernel-dialect.ts` (kernel parse/lowering isolated from host orchestration)
+- Bindgen staged pipeline decomposition:
+  - `tsubabindgen/pipeline/common.ts`
+  - `tsubabindgen/pipeline/extract.ts`
+  - `tsubabindgen/pipeline/resolve.ts`
+  - `tsubabindgen/pipeline/emit.ts`
 
 Remaining architecture gap:
 
-- statement/expression lowering is still concentrated in `rust/host.ts`.
+- non-kernel statement/expression lowering is still concentrated in `rust/host.ts`.
+- bindgen extract stage is still dense (`pipeline/extract.ts`) and can be split further.
 - dedicated validation passes are still mostly embedded in lowering path.
 
 ## 3) Roadmap status percentages

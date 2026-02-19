@@ -26,6 +26,7 @@ Specs:
 - `parity-scope-audit-2026-02-19.md` — structural scope audit vs Tsonic (files/LOC/tests/fixtures and gap priorities).
 - `architecture-cleanliness-audit-2026-02-19-wave17.md` — latest architecture cleanliness + operational hardening audit.
 - `architecture-cleanliness-audit-2026-02-19-wave18.md` — wave18 architecture cleanup + substantial proof-matrix hardening audit.
+- `architecture-cleanliness-audit-2026-02-19-wave19.md` — wave19 architecture decomposition audit (kernel dialect extraction + bindgen staged pipeline).
 - `tsonic-tsbindgen-feature-coverage-audit-2026-02-19.md` — doc-driven feature/omission audit against Tsonic + tsbindgen surfaces.
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
