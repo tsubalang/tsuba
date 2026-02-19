@@ -82,6 +82,19 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(runtimeSource).to.contain("mod __tsuba_cuda {");
   });
 
+  it("keeps rust source-map generation isolated from host lowering", () => {
+    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
+    const hostSource = readFileSync(hostPath, "utf-8");
+    expect(hostSource).to.contain('from "./source-map.js";');
+    expect(hostSource).to.contain("const sourceMap = buildRustSourceMap(mainRs);");
+    expect(hostSource).to.contain("return { mainRs, kernels, crates, sourceMap };");
+
+    const sourceMapPath = join(repoRoot(), "packages", "compiler", "src", "rust", "source-map.ts");
+    const sourceMapSource = readFileSync(sourceMapPath, "utf-8");
+    expect(sourceMapSource).to.contain("export function buildRustSourceMap(");
+    expect(sourceMapSource).to.contain("export function mapRustLineToTs(");
+  });
+
   it("keeps kernel dialect lowering isolated from host orchestration", () => {
     const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
     const hostSource = readFileSync(hostPath, "utf-8");

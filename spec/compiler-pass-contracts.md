@@ -39,28 +39,44 @@ Airplane-grade rule:
      - import lowering (`use` synthesis)
      - annotate marker harvesting
      - package bindings manifest resolution (`tsuba.bindings.json`)
-4. **Type-model collection pass**
+4. **HIR normalization pass**
+   - Input: `Map<fileName, FileLowered>`
+   - Output: `Map<fileName, HirModule>`
+   - Source: `packages/compiler/src/rust/passes/hir.ts`
+   - Responsibilities:
+     - normalize declaration ordering per module
+     - preserve immutable module snapshots for downstream passes
+
+5. **Type-model collection pass**
    - Input: lowered files
    - Output: populated semantic model maps (unions/struct aliases/traits)
    - Source: `packages/compiler/src/rust/passes/type-models.ts` + host callbacks
    - Responsibilities:
      - collect semantic definitions before statement lowering
      - preserve deterministic declaration traversal
-5. **Annotation validation pass**
+6. **Annotation validation pass**
    - Input: lowered files + semantic model presence + entry metadata
    - Output: `Map<fileName, Map<target, attrs[]>>`
    - Source: `packages/compiler/src/rust/passes/annotations.ts`
    - Responsibilities:
      - enforce declaration-after-annotate ordering
      - ensure annotate targets exist and are representable
-6. **Declaration emission pass**
+7. **Declaration emission pass**
    - Input: lowered files + module index + attrs map + semantic context
    - Output: deterministic Rust IR declaration items + root attrs
    - Source: `packages/compiler/src/rust/passes/declaration-emission.ts`
    - Responsibilities:
      - emit module/root uses and declaration groups in source order
      - emit deterministic synthesized shape structs per file
-7. **Main emission pass**
+8. **MIR body pass**
+   - Input: lowered Rust statement lists for function/method/main bodies
+   - Output: `MirBody` CFG snapshots + normalized Rust statement replay
+   - Source: `packages/compiler/src/rust/passes/mir.ts`
+   - Responsibilities:
+     - create explicit body control-flow snapshots
+     - preserve deterministic body normalization before emit
+
+9. **Main emission pass**
    - Input: entry `main`, runtime policy, root attrs, semantic context
    - Output: entry-root shape structs + `main` Rust item
    - Source: `packages/compiler/src/rust/passes/main-emission.ts`
@@ -68,17 +84,23 @@ Airplane-grade rule:
      - lower entry body statements with async policy
      - emit deterministic root shape structs and `main` attributes
 
-8. **Writer emission pass**
+10. **Writer emission pass**
    - Input: Rust IR
    - Output: `mainRs` text (deterministic)
    - Source:
      - writer: `packages/compiler/src/rust/write.ts`
      - entry: `writeRustProgram(...)`
 
-9. **CLI build orchestration pass**
+11. **Rust source-map pass**
+   - Input: generated `mainRs` text
+   - Output: `RustSourceMap` (`main.rs` line → TS span)
+   - Source: `packages/compiler/src/rust/source-map.ts`
+
+12. **CLI build orchestration pass**
    - Input: compiler output + workspace/project config
    - Output:
      - generated crate (`Cargo.toml`, `src/main.rs`)
+     - generated source-map artifact (`src/main.rs.map.json`)
      - optional CUDA/PTX artifacts
    - Source: `packages/cli/src/internal/commands/build.ts`
 
@@ -88,10 +110,14 @@ Airplane-grade rule:
 
 - `CompileHostOptions` / `CompileHostOutput`: `packages/compiler/src/rust/host.ts`
 - pass contracts (`CompileBootstrap`, `UserModuleIndex`, `FileLowered`, etc.):
+  - includes `HirDecl`, `HirModule`
   - `packages/compiler/src/rust/passes/contracts.ts`
 - Rust IR:
   - `RustType`, `RustExpr`, `RustStmt`, `RustItem`, `RustProgram`
   - file: `packages/compiler/src/rust/ir.ts`
+- MIR:
+  - `MirBody`, `MirBlock`, `MirTerminator`
+  - file: `packages/compiler/src/rust/passes/mir.ts`
 - Diagnostics registry:
   - `COMPILER_DIAGNOSTIC_CODES`
   - file: `packages/compiler/src/rust/diagnostics.ts`
