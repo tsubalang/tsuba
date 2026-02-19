@@ -92,6 +92,11 @@ describe("@tsuba/compiler diagnostic fixtures", () => {
       expect(isCompilerDiagnosticCode(err.code), `Fixture ${c.id} must produce a registered diagnostic code.`).to.equal(
         true
       );
+      expect(err.message.length).to.be.greaterThan(0);
+      expect(err.span, `Fixture ${c.id} must carry a source span.`).to.not.equal(undefined);
+      expect(err.span?.fileName, `Fixture ${c.id} should map to fixture source.`).to.match(/main\.ts$/);
+      expect(err.span?.start, `Fixture ${c.id} span start must be non-negative.`).to.be.gte(0);
+      expect(err.span?.end, `Fixture ${c.id} span end must be >= start.`).to.be.gte(err.span?.start ?? 0);
       assertCompilerDiagnosticCode(err.code);
       const domain = compilerDiagnosticDomain(err.code);
       expect(domain).to.equal(c.expected.domain);

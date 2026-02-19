@@ -1186,6 +1186,71 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("Shape::Circle");
   });
 
+  it("lowers discriminated union object literals for payload and unit variants", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-union-literals-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "type Msg =",
+        '  | { kind: "text"; value: i32 }',
+        '  | { kind: "none" };',
+        "",
+        "export function main(): void {",
+        '  const a: Msg = { kind: "text", value: 9 as i32 };',
+        '  const b: Msg = { kind: "none" };',
+        "  void a;",
+        "  void b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("enum Msg {");
+    expect(out.mainRs).to.contain("Text { value: i32 }");
+    expect(out.mainRs).to.contain("None");
+    expect(out.mainRs).to.contain("let a: Msg = Msg::Text { value: (9) as i32 };");
+    expect(out.mainRs).to.contain("let b: Msg = Msg::None;");
+  });
+
+  it("rejects non-switch union field access to prevent narrowing miscompile", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-union-if-access-"));
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        "",
+        "type Shape =",
+        '  | { kind: "circle"; radius: i32 }',
+        '  | { kind: "square"; side: i32 };',
+        "",
+        "export function main(): void {",
+        '  const s: Shape = { kind: "circle", radius: 3 as i32 };',
+        '  if (s.kind === "circle") {',
+        "    void s.radius;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1116");
+    expect((err as CompileError).message).to.contain("switch-based variant narrowing");
+  });
+
   it("lowers empty interfaces to marker traits and supports `implements` on classes", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-trait-"));
     const entry = join(dir, "main.ts");
@@ -1676,6 +1741,40 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("#[inline(always)]");
     expect(out.mainRs).to.contain("pub struct User {");
     expect(out.mainRs).to.contain("fn main()");
+  });
+
+  it("supports annotate(...) derive markers and AttrMacro calls", () => {
+    const dir = makeRepoTempDir("compiler-annotate-derive-attrmacro-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { annotate, attr, tokens } from "@tsuba/core/lang.js";',
+        'import type { i32, Attr, AttrMacro, DeriveMacro, Tokens } from "@tsuba/core/types.js";',
+        "",
+        "declare const Serialize: DeriveMacro;",
+        "declare const Deserialize: DeriveMacro;",
+        "declare const inlineAttr: AttrMacro<(value: Tokens) => Attr>;",
+        "",
+        "export class User {",
+        "  id: i32 = 0 as i32;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void User;",
+        "}",
+        "",
+        'annotate(User, attr("repr", tokens`C`), Serialize, Deserialize);',
+        "annotate(main, inlineAttr(tokens`always`));",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("#[repr(C)]");
+    expect(out.mainRs).to.contain("#[derive(Serialize, Deserialize)]");
+    expect(out.mainRs).to.contain("#[inlineAttr(always)]");
   });
 
   it("lowers kernel declarations to CUDA C source (compile-only v0)", () => {

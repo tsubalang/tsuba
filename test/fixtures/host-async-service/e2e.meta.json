@@ -1,0 +1,6 @@
+{
+  "run": true,
+  "runStdoutContains": [
+    "service 42"
+  ]
+}

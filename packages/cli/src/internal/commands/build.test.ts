@@ -502,6 +502,48 @@ describe("@tsuba/cli build", function () {
     expect(String(err)).to.contain("cargo build failed");
   });
 
+  it("maps rustc errors from imported modules using relative span comments", async () => {
+    const root = makeRepoTempDir("cli-build-rustc-map-import-");
+    const projectName = basename(root);
+
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", projectName);
+
+    writeFileSync(
+      join(projectRoot, "src", "math.ts"),
+      [
+        "export function bad(): void {",
+        '  const s = "x" + "y";',
+        "  void s;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      [
+        'import { bad } from "./math.js";',
+        "",
+        "export function main(): void {",
+        "  bad();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err)).to.contain("src/math.ts");
+    expect(String(err)).to.contain("cargo build failed");
+  });
+
   it("compiles kernels when gpu.backend is cuda and the project enables gpu", async () => {
     const root = makeRepoTempDir("cli-build-cuda-");
     const projectName = basename(root);

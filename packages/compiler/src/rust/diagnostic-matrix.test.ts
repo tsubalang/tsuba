@@ -412,6 +412,23 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       },
     },
     {
+      name: "annotation markers reject unsupported item kinds",
+      expectedCode: "TSB3304",
+      expectedDomain: "functions-imports-and-annotations",
+      entrySource: [
+        'import { annotate } from "@tsuba/core/lang.js";',
+        "",
+        "declare const bad: number;",
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+        "annotate(main, bad as unknown as never);",
+        "",
+      ].join("\n"),
+    },
+    {
       name: "entry expressions validate kernel launch config shape",
       expectedCode: "TSB1473",
       expectedDomain: "entry-and-expressions",

@@ -39,6 +39,7 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | `TSB1306` | Promise `.then(...)` chains are rejected |
 | `TSB1308` | `await` used outside async function |
 | `TSB1310` | mutable borrow marker used on non-place expression |
+| `TSB1116` | union-variant field accessed without switch-based narrowing |
 
 ### control-flow
 
@@ -56,6 +57,7 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | --- | --- |
 | `TSB3206` | side-effect-only imports are rejected |
 | `TSB3225` | malformed or inconsistent `tsuba.bindings.json` module mapping |
+| `TSB3304` | `annotate(...)` item is not `attr(...)`, `AttrMacro(...)`, or `DeriveMacro` |
 | `TSB3311` | `annotate(...)` used before declaration |
 
 ### classes-and-methods

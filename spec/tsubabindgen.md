@@ -66,13 +66,13 @@ v0 bindgen supports crates whose public API uses a restricted set of types that 
 ### 3.1 Supported items
 
 - `pub struct`
-- `pub enum`
+- `pub enum` (unit, tuple-payload, and named-payload variants)
 - `pub fn`
 - `pub const`
 - `pub trait` (method signatures and associated types represented as trait generic parameters)
-- inherent `impl` methods (`&self`, `&mut self`, constructors, and generic methods)
+- inherent/trait `impl` methods (`&self`, `&mut self`, constructors, and generic methods)
 - explicit `pub use` re-exports (`name`, `rename`, grouped items)
-- exported macros (`#[macro_export] macro_rules! ...`) emitted as marker-compatible callable stubs
+- exported function-like/attribute/derive proc-macros emitted as marker-compatible TS values
 
 Traits may be supported if they use supported types.
 
@@ -198,7 +198,7 @@ Tsuba lowers to:
 println!("hi");
 ```
 
-If bindgen cannot infer a typed argument model, it must fall back to `Tokens` arguments, or error.
+If bindgen cannot infer a typed argument model, it must fall back to `Tokens` arguments.
 
 ### 7.2 Attribute macros
 
