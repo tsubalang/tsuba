@@ -67,6 +67,7 @@ fi
 UNIT_STATUS="skipped"
 TSC_STATUS="skipped"
 E2E_STATUS="skipped"
+SMOKE_STATUS="skipped"
 
 if [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
   echo "NOTE: FILTERED mode (${FILTER_PATTERNS[*]}). Not for final verification."
@@ -120,11 +121,26 @@ else
   fi
 fi
 
+# ------------------------------------------------------------
+# 4) Clean temp-dir CLI smoke workflow
+# ------------------------------------------------------------
+if [ "$QUICK_MODE" = true ] || [ "$SKIP_UNIT" = true ] || [ ${#FILTER_PATTERNS[@]} -gt 0 ]; then
+  echo "Skipping CLI smoke workflow (requires full, unfiltered run)."
+else
+  echo "==> CLI smoke workflow (init/build/run/test/add/bindgen)"
+  if bash "$SCRIPT_DIR/smoke-cli.sh"; then
+    SMOKE_STATUS="passed"
+  else
+    SMOKE_STATUS="failed"
+  fi
+fi
+
 echo
 echo "=== Summary ==="
 echo "Unit + golden tests: $UNIT_STATUS"
 echo "Typecheck fixtures: $TSC_STATUS"
 echo "E2E fixtures: $E2E_STATUS"
+echo "CLI smoke workflow: $SMOKE_STATUS"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   END_GIT_STATUS="$(git status --porcelain --untracked-files=all || true)"
@@ -159,6 +175,9 @@ if [ "$TSC_STATUS" != "passed" ] && [ "$TSC_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$E2E_STATUS" != "passed" ] && [ "$E2E_STATUS" != "skipped" ]; then
+  exit 1
+fi
+if [ "$SMOKE_STATUS" != "passed" ] && [ "$SMOKE_STATUS" != "skipped" ]; then
   exit 1
 fi
 if [ "$TREE_STATUS" = "failed" ]; then

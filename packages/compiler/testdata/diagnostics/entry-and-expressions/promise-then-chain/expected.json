@@ -1,0 +1,5 @@
+{
+  "code": "TSB1306",
+  "domain": "entry-and-expressions",
+  "messageIncludes": [".then(...)"]
+}

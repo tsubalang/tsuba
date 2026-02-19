@@ -4,11 +4,11 @@
 # Current behavior:
 # - discovers workspace-style fixtures under test/fixtures
 # - verifies they support `tsuba build` in place
-# - optional per-fixture `e2e.meta.json` controls `run` / `test` steps and
-#   expected run-output substrings
+# - optional per-fixture `e2e.meta.json` controls `run` / `test` steps,
+#   expected run-output substrings, and Rust golden snapshot checks
 #
-# This script is intentionally minimal while the E2E corpus is small.
-# Future phases can expand it with runtime execution checks and artifact validation.
+# This script intentionally stays explicit and deterministic:
+# build, run/test, and golden checks all happen from fixture metadata.
 
 set -euo pipefail
 
@@ -128,6 +128,59 @@ try {
 ' "$file" "$key"
 }
 
+json_get_string() {
+  local file="$1"
+  local key="$2"
+  local default_value="$3"
+  if [ ! -f "$file" ]; then
+    printf "%s" "$default_value"
+    return 0
+  fi
+  node -e '
+const fs = require("node:fs");
+const [file, key, dflt] = process.argv.slice(1);
+try {
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  const value = parsed?.[key];
+  if (typeof value === "string") {
+    process.stdout.write(value);
+  } else {
+    process.stdout.write(dflt);
+  }
+} catch {
+  process.stdout.write(dflt);
+}
+' "$file" "$key" "$default_value"
+}
+
+json_get_object_value() {
+  local file="$1"
+  local object_key="$2"
+  local prop_key="$3"
+  if [ ! -f "$file" ]; then
+    return 0
+  fi
+  node -e '
+const fs = require("node:fs");
+const [file, objectKey, propKey] = process.argv.slice(1);
+try {
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  const obj = parsed?.[objectKey];
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) process.exit(0);
+  const value = obj[propKey];
+  if (typeof value === "string") process.stdout.write(value);
+} catch {
+  process.exit(0);
+}
+' "$file" "$object_key" "$prop_key"
+}
+
+normalize_main_rs_for_golden() {
+  local input_file="$1"
+  local output_file="$2"
+  sed -E 's#(// tsuba-span: ).*:([0-9]+):([0-9]+)$#\1<SOURCE>:\2:\3#' "$input_file" >"$output_file"
+}
+
 if [ ! -d "$FIXTURES_DIR" ]; then
   echo "No fixture directory found at $FIXTURES_DIR. Nothing to run."
   exit 0
@@ -166,7 +219,9 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
   fi
   fixture_run="$(json_get_bool "$meta_file" "run" "false")"
   fixture_test="$(json_get_bool "$meta_file" "test" "false")"
+  fixture_golden_main_rs="$(json_get_string "$meta_file" "goldenMainRs" "")"
   mapfile -t run_stdout_contains < <(json_get_string_array_lines "$meta_file" "runStdoutContains")
+  generated_dir_name="$(json_get_string "$fixture_dir/tsuba.workspace.json" "generatedDirName" "generated")"
 
   if [ ! -f "$fixture_dir/tsuba.workspace.json" ]; then
     echo "  $fixture_name: SKIP (missing tsuba.workspace.json)"
@@ -242,6 +297,48 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
         echo "  $fixture_name/$project_name: FAIL (test)"
         sed -n '1,200p' "$project_dir/.tsuba-e2e-test.log"
         break
+      fi
+    fi
+
+    fixture_project_golden_main_rs="$(json_get_object_value "$meta_file" "goldenMainRsByProject" "$project_name")"
+    golden_main_rs_path="$fixture_project_golden_main_rs"
+    if [ -z "$golden_main_rs_path" ]; then
+      golden_main_rs_path="$fixture_golden_main_rs"
+    fi
+    if [ -n "$golden_main_rs_path" ]; then
+      expected_main_rs="$fixture_dir/$golden_main_rs_path"
+      generated_main_rs="$project_dir/$generated_dir_name/src/main.rs"
+      echo "  $fixture_name/$project_name: GOLDEN"
+      if [ ! -f "$expected_main_rs" ]; then
+        fixture_failed=true
+        failed=$((failed + 1))
+        echo "  $fixture_name/$project_name: FAIL (missing golden)"
+        echo "    expected golden path: $expected_main_rs"
+        break
+      fi
+      if [ ! -f "$generated_main_rs" ]; then
+        fixture_failed=true
+        failed=$((failed + 1))
+        echo "  $fixture_name/$project_name: FAIL (missing generated main.rs)"
+        echo "    generated path: $generated_main_rs"
+        break
+      fi
+      if diff -u "$expected_main_rs" "$generated_main_rs" >"$project_dir/.tsuba-e2e-golden.diff"; then
+        :
+      else
+        normalized_expected="$project_dir/.tsuba-e2e-golden.expected.norm"
+        normalized_generated="$project_dir/.tsuba-e2e-golden.generated.norm"
+        normalize_main_rs_for_golden "$expected_main_rs" "$normalized_expected"
+        normalize_main_rs_for_golden "$generated_main_rs" "$normalized_generated"
+        if diff -u "$normalized_expected" "$normalized_generated" >"$project_dir/.tsuba-e2e-golden.diff"; then
+          :
+        else
+          fixture_failed=true
+          failed=$((failed + 1))
+          echo "  $fixture_name/$project_name: FAIL (golden mismatch)"
+          sed -n '1,200p' "$project_dir/.tsuba-e2e-golden.diff"
+          break
+        fi
       fi
     fi
   done

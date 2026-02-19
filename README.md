@@ -16,6 +16,30 @@ npm install
 npm run run-all
 ```
 
+## Testing workflow
+
+Fast iteration (focused):
+
+```bash
+npm run test:cli -- --grep "<pattern>"
+npm run test:compiler -- --grep "<pattern>"
+bash test/scripts/run-all.sh --no-unit --filter <fixture>
+```
+
+Final verification (required before merge/publish):
+
+```bash
+npm run run-all
+```
+
+`run-all` runs:
+
+- unit + compiler suites
+- fixture TypeScript typecheck
+- fixture E2E (build/run/test)
+- Rust golden snapshot checks (`golden/main.rs` via fixture metadata)
+- clean temp-dir CLI smoke workflow (`init/build/run/test/add/bindgen`)
+
 ## Release preflight (npm)
 
 Use the publish script for invariant checks + publish flow:

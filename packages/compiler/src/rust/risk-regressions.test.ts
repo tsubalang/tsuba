@@ -211,4 +211,72 @@ describe("@tsuba/compiler risk regressions", () => {
     expect(rust).to.contain("let x = (1) as i32;");
     expect(rust).to.contain("let x = (2) as i32;");
   });
+
+  it("rejects uncontextual object literals without explicit field type assertions", () => {
+    const err = expectCompileError(
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const value = { x: 1, y: 2 as i32 };",
+        "  void value;",
+        "}",
+        "",
+      ].join("\n")
+    );
+
+    expect(err.code).to.equal("TSB1131");
+  });
+
+  it("fails fast at TypeScript layer for excess contextual object literal fields", () => {
+    const err = expectCompileError(
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "type Pair = {",
+        "  left: i32;",
+        "  right: i32;",
+        "};",
+        "",
+        "function sum(pair: Pair): i32 {",
+        "  return (pair.left + pair.right) as i32;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const value = sum({ left: 1 as i32, right: 2 as i32, extra: 3 as i32 });",
+        "  void value;",
+        "}",
+        "",
+      ].join("\n")
+    );
+
+    expect(err.code).to.equal("TSB0002");
+  });
+
+  it("is byte-deterministic for repeated compiles with identical source and config", () => {
+    const dir = makeRepoTempDir("compiler-risk-deterministic-");
+    const entry = join(dir, "main.ts");
+    const source = [
+      'import type { i32 } from "@tsuba/core/types.js";',
+      "",
+      "function add(a: i32, b: i32): i32 {",
+      "  return (a + b) as i32;",
+      "}",
+      "",
+      "export function main(): void {",
+      "  const value = add(3 as i32, 4 as i32);",
+      "  if (value === (7 as i32)) {",
+      "    void value;",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+    writeFileSync(entry, source, "utf-8");
+
+    const a = compileHostToRust({ entryFile: entry });
+    const b = compileHostToRust({ entryFile: entry });
+    expect(b.mainRs).to.equal(a.mainRs);
+    expect(b.crates).to.deep.equal(a.crates);
+    expect(b.kernels).to.deep.equal(a.kernels);
+  });
 });

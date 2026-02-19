@@ -1,6 +1,7 @@
 {
   "run": true,
   "test": true,
+  "goldenMainRs": "golden/main.rs",
   "runStdoutContains": [
     "host-basic 3"
   ]

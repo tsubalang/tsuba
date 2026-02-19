@@ -1,6 +1,7 @@
 {
   "run": true,
   "test": true,
+  "goldenMainRs": "golden/main.rs",
   "runStdoutContains": [
     "workspace-basic 11"
   ]

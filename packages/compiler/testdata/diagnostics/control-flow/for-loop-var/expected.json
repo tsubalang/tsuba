@@ -1,0 +1,5 @@
+{
+  "code": "TSB2120",
+  "domain": "control-flow",
+  "messageIncludes": ["for-loop", "var"]
+}

@@ -1,0 +1,5 @@
+{
+  "code": "TSB5104",
+  "domain": "types-and-traits",
+  "messageIncludes": ["Optional interface methods"]
+}

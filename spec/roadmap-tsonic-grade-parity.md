@@ -64,7 +64,7 @@ Status values for tracking:
 ### A.3 Miscompile prevention gates
 - [ ] Every supported syntax shape has a dedicated lowering test.
 - [ ] Every unsupported syntax shape fails with a stable `TSBxxxx` code.
-- [ ] Introduce “high-risk transform audit list” with mandatory targeted tests:
+- [x] Introduce “high-risk transform audit list” with mandatory targeted tests:
   - [x] narrowing-dependent rewrites
   - [x] borrow insertion
   - [x] object-literal contextual lowering
@@ -93,19 +93,19 @@ Status values for tracking:
 ### B.3 Generics and traits (P0/P1)
 - [ ] Generic functions/classes/interfaces support documented edge cases.
 - [ ] Trait method conformance checks include:
-  - [ ] parameter types
-  - [ ] return types
-  - [ ] receiver mutability
+  - [x] parameter types
+  - [x] return types
+  - [x] receiver mutability
   - [ ] generic parameter/bound compatibility
 - [ ] Supertrait and multi-trait implementation matrix covered with runnable fixtures.
 
 ### B.4 Objects/classes/unions (P0)
 - [ ] Object-literal lowering matrix is explicit:
-  - [ ] contextual nominal target
+  - [x] contextual nominal target
   - [ ] enum variant payload construction
-  - [ ] synthesized shape structs (scoped, deterministic)
-  - [ ] hard-error non-representable escape paths
-- [ ] Class-to-struct lowering has constructor/field/method correctness coverage.
+  - [x] synthesized shape structs (scoped, deterministic)
+  - [x] hard-error non-representable escape paths
+- [x] Class-to-struct lowering has constructor/field/method correctness coverage.
 
 ### B.5 Async model (P1)
 - [ ] Runtime policy (`none`/`tokio`) is fully validated at compile time.
@@ -129,7 +129,7 @@ Status values for tracking:
 - [ ] Equivalent error shapes are normalized (same cause ⇒ same code/message family).
 
 ### C.3 Diagnostic regression harness (P1)
-- [ ] Add fixture-based “expected diagnostics” snapshots per domain.
+- [x] Add fixture-based “expected diagnostics” snapshots per domain.
 - [ ] Add negative tests for each newly added feature before merge.
 
 **Exit gate C:** 100% diagnostic-path coverage for supported/unsupported syntax classes.
@@ -160,7 +160,6 @@ Status values for tracking:
 ## 7) Workstream E — CLI/workspace and dependency UX parity (P0/P1)
 
 ### E.1 Workspace behavior (P0)
-- [ ] Commands from any subdirectory correctly target project/workspace root.
 - [x] Commands from any subdirectory correctly target project/workspace root.
 - [ ] Deterministic resolution between workspace and project config.
 - [ ] Strict schema checks with stable diagnostics.
@@ -171,8 +170,8 @@ Status values for tracking:
 - [x] Cargo.toml rendering is stable and idempotent.
 
 ### E.3 End-user smoke (P1)
-- [ ] Clean temp-dir smoke scripts for init/build/run/test/add/bindgen.
-- [ ] README examples are executable as written.
+- [x] Clean temp-dir smoke scripts for init/build/run/test/add/bindgen.
+- [x] README examples are executable as written.
 
 **Exit gate E:** No manual patching needed for documented workflows.
 
@@ -201,7 +200,7 @@ Status values for tracking:
 ## 9) Workstream G — Test corpus scale-up (P0/P1)
 
 ### G.1 Fixture expansion (P0)
-- [ ] Expand host fixture families beyond minimal samples:
+- [x] Expand host fixture families beyond minimal samples:
   - [x] generics+traits
   - [x] async runtime
   - [x] union/exhaustiveness
@@ -210,12 +209,12 @@ Status values for tracking:
 - [x] Every fixture has explicit metadata for expected behavior (`run`, `test`, `expectFailure`).
 
 ### G.2 Golden and e2e rigor (P1)
-- [ ] Golden snapshots for deterministic Rust emit in representative programs.
+- [x] Golden snapshots for deterministic Rust emit in representative programs.
 - [x] E2E includes build+run and optional `cargo test` based on fixture metadata.
 - [x] Repo dirtiness gate remains mandatory.
 
 ### G.3 Risk-driven regression suites (P1)
-- [ ] Add dedicated suites for historically risky classes:
+- [x] Add dedicated suites for historically risky classes:
   - [x] contextual typing loss
   - [x] narrowing regressions
   - [x] borrow insertion mis-lowering
@@ -262,14 +261,14 @@ Status values for tracking:
 ## 12) Workstream J — Documentation parity (P1)
 
 ### J.1 User docs
-- [ ] “Getting started” docs verified in clean temp dirs.
+- [x] “Getting started” docs verified in clean temp dirs.
 - [ ] Full feature matrix: supported / rejected / planned.
 - [ ] Error catalog for high-frequency diagnostics.
 
 ### J.2 Engineer docs
 - [ ] Compiler pass contracts documented in one architecture spec.
 - [ ] Bindgen representability and skip-report semantics documented.
-- [ ] Testing workflow and gates documented with fast-path + final-path commands.
+- [x] Testing workflow and gates documented with fast-path + final-path commands.
 
 **Exit gate J:** No undocumented behavior for public user-facing features.
 

@@ -1,0 +1,5 @@
+{
+  "code": "TSB3206",
+  "domain": "functions-imports-and-annotations",
+  "messageIncludes": ["Side-effect-only imports"]
+}

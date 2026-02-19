@@ -1,0 +1,5 @@
+{
+  "code": "TSB5106",
+  "domain": "types-and-traits",
+  "messageIncludes": ["first parameter must be 'this"]
+}

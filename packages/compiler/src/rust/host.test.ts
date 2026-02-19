@@ -1288,6 +1288,80 @@ describe("@tsuba/compiler host emitter", () => {
     expect((err as CompileError).code).to.equal("TSB4007");
   });
 
+  it("errors when trait method parameter types do not match exactly", () => {
+    const dir = makeRepoTempDir("compiler-trait-param-mismatch-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, u32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface TakesI32 {",
+        "  set(this: ref<this>, value: i32): void;",
+        "}",
+        "",
+        "class Item implements TakesI32 {",
+        "  set(this: ref<Item>, value: u32): void {",
+        "    void value;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void Item;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB4007");
+    expect((err as CompileError).message).to.contain("parameter mismatch");
+  });
+
+  it("errors when trait method return types do not match exactly", () => {
+    const dir = makeRepoTempDir("compiler-trait-return-mismatch-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, u32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface ReadsI32 {",
+        "  get(this: ref<this>): i32;",
+        "}",
+        "",
+        "class Item implements ReadsI32 {",
+        "  get(this: ref<Item>): u32 {",
+        "    return 1 as u32;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void Item;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB4007");
+    expect((err as CompileError).message).to.contain("return type mismatch");
+  });
+
   it("applies annotate(attr(...)) markers as Rust attributes on items", () => {
     const dir = makeRepoTempDir("compiler-attrs-");
     const entry = join(dir, "main.ts");
