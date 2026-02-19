@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+
+import { runGenerate } from "@tsuba/tsubabindgen";
 
 export type BindgenArgs = {
   readonly dir: string;
@@ -13,11 +14,12 @@ export type BindgenParsed = {
   readonly bundleCrate: boolean;
 };
 
-export type BindgenSpawn = (
-  command: string,
-  args: readonly string[],
-  opts: { readonly stdio: "inherit"; readonly encoding: "utf-8" }
-) => { readonly status: number | null };
+export type BindgenGenerate = (opts: {
+  readonly manifestPath: string;
+  readonly outDir: string;
+  readonly packageName?: string;
+  readonly bundleCrate: boolean;
+}) => void;
 
 export function parseBindgenArgs(args: BindgenArgs): BindgenParsed {
   let manifestPath: string | undefined;
@@ -74,22 +76,14 @@ export function parseBindgenArgs(args: BindgenArgs): BindgenParsed {
 
 export async function runBindgen(
   args: BindgenArgs,
-  deps?: { readonly spawn?: BindgenSpawn }
+  deps?: { readonly generate?: BindgenGenerate }
 ): Promise<void> {
   const parsed = parseBindgenArgs(args);
-  const spawn = deps?.spawn ?? (spawnSync as unknown as BindgenSpawn);
-
-  const cmdArgs = [
-    "--manifest-path",
-    parsed.manifestPath,
-    "--out",
-    parsed.outDir,
-    ...(parsed.packageName ? ["--package", parsed.packageName] : []),
-    ...(parsed.bundleCrate ? ["--bundle-crate"] : []),
-  ];
-
-  const res = spawn("tsubabindgen", cmdArgs, { stdio: "inherit", encoding: "utf-8" });
-  if (res.status !== 0) {
-    throw new Error("tsubabindgen failed.");
-  }
+  const generate = deps?.generate ?? runGenerate;
+  generate({
+    manifestPath: parsed.manifestPath,
+    outDir: parsed.outDir,
+    packageName: parsed.packageName,
+    bundleCrate: parsed.bundleCrate,
+  });
 }

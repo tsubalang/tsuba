@@ -24,11 +24,11 @@
     "test": "mocha --parallel 'dist/**/*.test.js'"
   },
   "dependencies": {
-    "@tsuba/compiler": "0.0.1"
+    "@tsuba/compiler": "0.0.1",
+    "@tsuba/tsubabindgen": "0.0.1"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "license": "MIT"
 }
-

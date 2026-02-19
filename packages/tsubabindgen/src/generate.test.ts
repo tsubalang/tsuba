@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,14 +15,22 @@ describe("@tsuba/tsubabindgen", () => {
 
   function runTempFixture(options: { readonly packageName?: string; readonly bundleCrate?: boolean }): string {
     const root = repoRoot();
-    const fixtureManifest = join(root, "test", "fixtures", "bindgen", "@tsuba", "simple", "crate", "Cargo.toml");
-    const out = mkdtempSync(join(tmpdir(), "tsubabindgen-fixture-"));
+    const fixtureCrateDir = join(root, "test", "fixtures", "bindgen", "@tsuba", "simple", "crate");
+    const fixtureManifest = join(fixtureCrateDir, "Cargo.toml");
+    const tmpRoot = mkdtempSync(join(tmpdir(), "tsubabindgen-fixture-"));
+    const copiedCrateDir = join(tmpRoot, "crate-src");
+    const copiedManifest = join(copiedCrateDir, "Cargo.toml");
+    const out = join(tmpRoot, "out");
+    cpSync(fixtureCrateDir, copiedCrateDir, { recursive: true });
+    mkdirSync(out, { recursive: true });
     runGenerate({
-      manifestPath: fixtureManifest,
+      manifestPath: copiedManifest,
       outDir: out,
       packageName: options.packageName,
       bundleCrate: options.bundleCrate ?? false,
     });
+    expect(existsSync(join(fixtureCrateDir, "Cargo.lock"))).to.equal(false);
+    expect(fixtureManifest).to.equal(join(fixtureCrateDir, "Cargo.toml"));
     return out;
   }
 
