@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "rustEdition": "2021",
+  "packagesDir": "packages",
+  "generatedDirName": "generated",
+  "cargoTargetDir": ".tsuba/target",
+  "gpu": {
+    "backend": "none"
+  },
+  "runtime": {
+    "kind": "tokio"
+  }
+}

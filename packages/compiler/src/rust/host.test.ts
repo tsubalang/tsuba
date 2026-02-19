@@ -72,6 +72,106 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("return Ok(())");
   });
 
+  it("lowers bottom markers (panic/todo/unreachable) to Rust macros", () => {
+    const dir = makeRepoTempDir("compiler-bottom-macros-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { panic, todo, unreachable } from "@tsuba/core/lang.js";',
+        "",
+        "export function main(): void {",
+        '  panic("boom {}", 1);',
+        '  todo("todo {}", 2);',
+        '  unreachable("never {}", 3);',
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain('panic!("boom {}", 1);');
+    expect(out.mainRs).to.contain('todo!("todo {}", 2);');
+    expect(out.mainRs).to.contain('unreachable!("never {}", 3);');
+  });
+
+  it("lowers std prelude bottom helpers to Rust macros", () => {
+    const dir = makeRepoTempDir("compiler-bottom-macros-std-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { panic, todo, unreachable } from "@tsuba/std/prelude.js";',
+        "",
+        "export function main(): void {",
+        '  panic("boom");',
+        "  todo();",
+        "  unreachable();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain('panic!("boom");');
+    expect(out.mainRs).to.contain("todo!();");
+    expect(out.mainRs).to.contain("unreachable!();");
+  });
+
+  it("lowers arrow callbacks and move(...) closures", () => {
+    const dir = makeRepoTempDir("compiler-move-closure-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import { move } from "@tsuba/core/lang.js";',
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const a = (x: i32): i32 => (x + (1 as i32)) as i32;",
+        "  const b = move((x: i32): i32 => (x + (2 as i32)) as i32);",
+        "  void a;",
+        "  void b;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let a = |x: i32|");
+    expect(out.mainRs).to.contain("let b = move |x: i32|");
+  });
+
+  it("rejects block-bodied arrow callbacks in v0", () => {
+    const dir = makeRepoTempDir("compiler-arrow-block-body-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const a = (x: i32): i32 => { return x; };",
+        "  void a;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB1100");
+  });
+
   it("emits Rust associated function calls for static class methods", () => {
     const dir = makeRepoTempDir("compiler-");
     const entry = join(dir, "main.ts");

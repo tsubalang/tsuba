@@ -337,6 +337,10 @@ function isFromTsubaStdPrelude(ctx: EmitCtx, ident: ts.Identifier): boolean {
   return false;
 }
 
+function isBottomMacroMarker(name: string): name is "panic" | "todo" | "unreachable" {
+  return name === "panic" || name === "todo" || name === "unreachable";
+}
+
 function isFromTsubaGpuLang(ctx: EmitCtx, ident: ts.Identifier): boolean {
   const sym0 = ctx.checker.getSymbolAtLocation(ident);
   const sym =
@@ -1966,6 +1970,43 @@ function isArrayNType(ty: ts.Type | undefined): boolean {
   return false;
 }
 
+function lowerArrowToClosure(
+  ctx: EmitCtx,
+  fn: ts.ArrowFunction,
+  moveCapture: boolean
+): RustExpr {
+  if ((fn.typeParameters?.length ?? 0) > 0) {
+    failAt(fn, "TSB1100", "Generic arrow functions are not supported in v0.");
+  }
+
+  const params = fn.parameters.map((p) => {
+    if (!ts.isIdentifier(p.name)) {
+      failAt(p.name, "TSB1100", "Arrow function parameters must be identifiers in v0.");
+    }
+    if (p.name.text === "this") {
+      failAt(p.name, "TSB1100", "Arrow functions cannot declare a `this` parameter in v0.");
+    }
+    if (!p.type) {
+      failAt(p, "TSB1100", `Arrow function parameter '${p.name.text}' must have a type annotation in v0.`);
+    }
+    if (p.questionToken || p.initializer) {
+      failAt(p, "TSB1100", "Arrow functions do not support optional/default parameters in v0.");
+    }
+    return { name: p.name.text, type: typeNodeToRust(p.type) };
+  });
+
+  if (ts.isBlock(fn.body)) {
+    failAt(fn.body, "TSB1100", "Arrow functions with block bodies are not supported in v0.");
+  }
+
+  return {
+    kind: "closure",
+    move: moveCapture,
+    params,
+    body: lowerExpr(ctx, fn.body),
+  };
+}
+
 function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isParenthesizedExpression(expr)) return { kind: "paren", expr: lowerExpr(ctx, expr.expression) };
 
@@ -1981,6 +2022,10 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
       failAt(expr, "TSB1112", "`this` is only supported inside methods/constructors in v0.");
     }
     return identExpr(ctx.thisName);
+  }
+
+  if (ts.isArrowFunction(expr)) {
+    return lowerArrowToClosure(ctx, expr, false);
   }
 
   if (ts.isIdentifier(expr)) {
@@ -2405,10 +2450,28 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
           return { kind: "call", callee: identExpr("Ok"), args: [unitExpr()] };
         }
       }
+
+      if (isBottomMacroMarker(expr.expression.text)) {
+        return {
+          kind: "macro_call",
+          name: expr.expression.text,
+          args: expr.arguments.map((a) => lowerExpr(ctx, a)),
+        };
+      }
     }
 
     // Core markers (compile-time only)
     if (ts.isIdentifier(expr.expression) && isFromTsubaCoreLang(ctx, expr.expression)) {
+      if (expr.expression.text === "move") {
+        if (expr.arguments.length !== 1) {
+          failAt(expr, "TSB1302", "move(...) must have exactly one argument.");
+        }
+        const [arg] = expr.arguments;
+        if (!arg || !ts.isArrowFunction(arg)) {
+          failAt(expr, "TSB1303", "move(...) requires an arrow function argument in v0.");
+        }
+        return lowerArrowToClosure(ctx, arg, true);
+      }
       if (expr.expression.text === "q") {
         if (expr.arguments.length !== 1) failAt(expr, "TSB1300", "q(...) must have exactly one argument.");
         const inner = lowerExpr(ctx, expr.arguments[0]!);
@@ -2431,6 +2494,14 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
         }
         const inner = lowerExpr(ctx, arg.body);
         return { kind: "unsafe", expr: inner };
+      }
+
+      if (isBottomMacroMarker(expr.expression.text)) {
+        return {
+          kind: "macro_call",
+          name: expr.expression.text,
+          args: expr.arguments.map((a) => lowerExpr(ctx, a)),
+        };
       }
     }
 

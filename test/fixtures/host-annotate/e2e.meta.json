@@ -1,0 +1,6 @@
+{
+  "run": true,
+  "runStdoutContains": [
+    "annotate ok"
+  ]
+}

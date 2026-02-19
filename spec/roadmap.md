@@ -29,6 +29,8 @@ The repo now has a working v0 baseline:
 - `@tsuba/core/@tsuba/std/@tsuba/gpu` exist as marker/facade packages.
 - GPU kernels are compiled to deterministic CUDA C + PTX (via `nvcc`), and host code can launch kernels via a CUDA driver runtime module (`__tsuba_cuda`).
 - CLI invokes `@tsuba/tsubabindgen` as a library (no external bindgen binary dependency).
+- Fixture gates now include runnable host E2E fixtures with metadata-driven `run` checks (`e2e.meta.json`),
+  plus strict TS fixture typecheck (`strict: true`, `noImplicitAny: true`).
 
 This roadmap is the plan to take that v0 scaffold to a “real language” implementation.
 

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "host-union-switch",
+  "kind": "bin",
+  "entry": "src/index.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "host_union_switch"
+  }
+}

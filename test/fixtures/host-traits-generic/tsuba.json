@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "host-traits-generic",
+  "kind": "bin",
+  "entry": "src/index.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "host_traits_generic"
+  }
+}
