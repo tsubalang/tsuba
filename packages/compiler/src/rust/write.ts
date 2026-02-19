@@ -101,6 +101,11 @@ function emitExpr(expr: RustExpr): string {
       return `(${emitExpr(expr.left)} ${expr.op} ${emitExpr(expr.right)})`;
     case "call":
       return `${emitExpr(expr.callee)}(${expr.args.map(emitExpr).join(", ")})`;
+    case "closure": {
+      const mv = expr.move ? "move " : "";
+      const params = expr.params.map((p) => `${p.name}: ${emitType(p.type)}`).join(", ");
+      return `${mv}|${params}| ${emitExpr(expr.body)}`;
+    }
     case "macro_call":
       return `${expr.name}!(${expr.args.map(emitExpr).join(", ")})`;
     case "assoc_call": {

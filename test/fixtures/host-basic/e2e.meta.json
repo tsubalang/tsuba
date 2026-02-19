@@ -1,0 +1,6 @@
+{
+  "run": true,
+  "runStdoutContains": [
+    "host-basic 3"
+  ]
+}

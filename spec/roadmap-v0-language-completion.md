@@ -82,8 +82,8 @@ Implemented today:
 
 Still incomplete for parity-grade v0:
 
-- Compiler architecture is still too concentrated in `packages/compiler/src/rust/host.ts` (needs cleaner pass boundaries).
-- `tsubabindgen` is still MVP-grade and source/regex-heavy (needs robust extraction path and broader coverage).
+- Compiler pass extraction can continue, but baseline phase boundaries are now explicit in `compileHostToRust`.
+- `tsubabindgen` now uses a dedicated Rust/syn extractor (`packages/tsubabindgen/rust-extractor`) with deterministic skip reporting and expanded fixture coverage.
 - Release-note/tag automation is still missing (publish preflight scripts are implemented).
 - External proof verification is wired into publish preflight (`scripts/publish-npm.sh` runs `scripts/verify-proof.sh --require` by default).
 
@@ -495,24 +495,22 @@ Merge gate:
 
 ## 9. Workstream G: Bindgen hardening (`tsubabindgen`)
 
-Status (current): **Partial** (determinism basics are in place; extractor depth is not yet airplane-grade).
+Status (current): **Done for v0 baseline**, with surface expansion remaining.
 
 Current state:
 
-- Trait facades are now emitted (`pub trait` → TS `interface`).
-- Associated types are represented as extra trait generic parameters.
+- Source extraction is handled by a dedicated Rust helper (`packages/tsubabindgen/rust-extractor`) using `syn`.
+- Trait facades are emitted (`pub trait` → TS `interface`) with associated types represented as extra trait generic parameters.
+- Generic struct/function surfaces are emitted, and macro exports are represented through marker-compatible callable stubs.
 - Skip reporting is deterministic (`tsubabindgen.report.json` with stable ordering + explicit reasons).
-
-The MVP exists; it must become deterministic and scalable.
 
 ### G1. Source of truth
 
-Pick a deterministic extractor:
+Adopted for v0:
 
-1. `rustdoc-json` (nightly) may be acceptable in v0 if we version-pin toolchain
-2. a small Rust helper using `syn` + `cargo metadata` (preferred long-term for determinism and stability)
+- a small Rust helper using `syn` + `cargo metadata`.
 
-Document the choice and enforce it in tests.
+This is now the required extractor path and is enforced by bindgen tests.
 
 ### G2. Surface coverage (minimum)
 

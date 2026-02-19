@@ -106,19 +106,15 @@ Rust:
 pub fn first<'a, T>(xs: &'a Vec<T>) -> &'a T { /* ... */ }
 ```
 
-### 1.3 Mutability marker (TBD)
+### 1.3 Mutability marker (implemented)
 
-Rust requires `mut` bindings to mutate locals.
-
-Tsuba may infer `mut` bindings by dataflow (assignment after initialization).
-
-If an explicit marker is needed, v0 reserves:
+Rust requires `mut` bindings to mutate locals. v0 supports an explicit marker:
 
 ```ts
 export type mut<T> = T;
 ```
 
-Meaning: `mut<T>` requests a `let mut` binding when used in a `let` declaration.
+Meaning: `mut<T>` lowers to `let mut` when used in a local declaration.
 
 ---
 
@@ -127,7 +123,7 @@ Meaning: `mut<T>` requests a `let mut` binding when used in a `let` declaration.
 ### 2.1 `move`
 
 ```ts
-export declare function move<T extends Function>(f: T): T;
+export declare function move<T extends (...args: any[]) => any>(f: T): T;
 ```
 
 Meaning: forces Rust `move` closure capture.
@@ -148,6 +144,12 @@ Rust:
 ```rs
 spawn(move || { println!("hi"); });
 ```
+
+v0 restriction:
+
+- `move(...)` must receive exactly one **expression-bodied** arrow function.
+- Arrow parameters must be identifier parameters with explicit type annotations.
+- Block-bodied arrows in closure position are rejected (hard error).
 
 ### 2.2 `unsafe`
 

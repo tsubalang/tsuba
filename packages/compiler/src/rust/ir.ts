@@ -62,6 +62,12 @@ export type RustExpr =
   | (NodeBase & { readonly kind: "index"; readonly expr: RustExpr; readonly index: RustExpr })
   | (NodeBase & { readonly kind: "binary"; readonly op: string; readonly left: RustExpr; readonly right: RustExpr })
   | (NodeBase & { readonly kind: "call"; readonly callee: RustExpr; readonly args: readonly RustExpr[] })
+  | (NodeBase & {
+      readonly kind: "closure";
+      readonly move: boolean;
+      readonly params: readonly { readonly name: string; readonly type: RustType }[];
+      readonly body: RustExpr;
+    })
   | (NodeBase & { readonly kind: "macro_call"; readonly name: string; readonly args: readonly RustExpr[] })
   | (NodeBase & { readonly kind: "assoc_call"; readonly typePath: RustPath; readonly typeArgs: readonly RustType[]; readonly member: string; readonly args: readonly RustExpr[] })
   | (NodeBase & {

@@ -227,6 +227,7 @@ Additional v0 constraints:
 ## 11. Unsafe and FFI
 
 - `unsafe(() => ...)` lowers to `unsafe { ... }`.
+- `move((...) => expr)` lowers to a Rust `move` closure.
 - v0 FFI is minimal; advanced attribute support is planned.
 
 ---

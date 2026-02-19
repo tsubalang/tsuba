@@ -14,7 +14,7 @@ describe("@tsuba/tsubabindgen", () => {
   }
 
   function runTempFixture(options: {
-    readonly fixture: "simple" | "traits";
+    readonly fixture: "simple" | "traits" | "advanced";
     readonly packageName?: string;
     readonly bundleCrate?: boolean;
   }): string {
@@ -40,6 +40,25 @@ describe("@tsuba/tsubabindgen", () => {
 
   function read(fileName: string): string {
     return readFileSync(fileName, "utf-8");
+  }
+
+  function snapshotDir(root: string): Readonly<Record<string, string>> {
+    const out: Record<string, string> = {};
+    const visit = (dir: string, relPrefix: string): void => {
+      const entries = readdirSync(dir, { withFileTypes: true })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const abs = join(dir, entry.name);
+        const rel = relPrefix.length === 0 ? entry.name : `${relPrefix}/${entry.name}`;
+        if (entry.isDirectory()) {
+          visit(abs, rel);
+          continue;
+        }
+        out[rel] = read(abs);
+      }
+    };
+    visit(root, "");
+    return out;
   }
 
   afterEach(() => {
@@ -108,6 +127,12 @@ describe("@tsuba/tsubabindgen", () => {
     expect(existsSync(join(out, "crate", "src", "lib.rs"))).to.equal(true);
   });
 
+  it("is deterministic across repeated generations", () => {
+    const outA = runTempFixture({ fixture: "advanced", packageName: "@tsuba/advanced", bundleCrate: false });
+    const outB = runTempFixture({ fixture: "advanced", packageName: "@tsuba/advanced", bundleCrate: false });
+    expect(snapshotDir(outA)).to.deep.equal(snapshotDir(outB));
+  });
+
   it("generates trait facades (including associated types as generics) and reports skipped unsupported types", () => {
     const out = runTempFixture({ fixture: "traits", packageName: "@tsuba/traits", bundleCrate: false });
     const rootDts = read(join(out, "index.d.ts"));
@@ -124,5 +149,35 @@ describe("@tsuba/tsubabindgen", () => {
     };
     expect(report.schema).to.equal(1);
     expect(report.skipped.some((entry) => entry.kind === "type")).to.equal(true);
+  });
+
+  it("generates advanced facades with generic methods, macros, and enum payload reporting", () => {
+    const out = runTempFixture({ fixture: "advanced", packageName: "@tsuba/advanced", bundleCrate: false });
+    const rootDts = read(join(out, "index.d.ts"));
+    const nestedDts = read(join(out, "nested.d.ts"));
+
+    expect(rootDts).to.include("export declare class Wrapper<T> {");
+    expect(rootDts).to.include("constructor(value: T);");
+    expect(rootDts).to.include("map<U>(value: U): U;");
+    expect(rootDts).to.include("export declare class Payload<T> {");
+    expect(rootDts).to.include("static readonly One: Payload<T>;");
+    expect(rootDts).to.include("export interface Service<T, Output> extends Clone {");
+    expect(rootDts).to.include("run(this: ref<this>, input: T): Output;");
+    expect(rootDts).to.include("export function fold_pair<T>(left: T, _right: T): T;");
+    expect(rootDts).to.include("export function make_pair(tokens: Tokens): Tokens;");
+
+    expect(nestedDts).to.include("export const NESTED_ANSWER: i32;");
+    expect(nestedDts).to.include("export function nested_mul<T>(value: T): T;");
+
+    const report = JSON.parse(read(join(out, "tsubabindgen.report.json"))) as {
+      schema: number;
+      skipped: Array<{ kind: string; reason: string }>;
+    };
+    expect(report.schema).to.equal(1);
+    expect(
+      report.skipped.some(
+        (entry) => entry.kind === "enum" && entry.reason.includes("payload")
+      )
+    ).to.equal(true);
   });
 });

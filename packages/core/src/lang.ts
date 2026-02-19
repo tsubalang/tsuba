@@ -17,6 +17,24 @@ export function unsafe<T>(_f: () => T): T {
   return marker("unsafe");
 }
 
+// Rust `move` closure capture
+export function move<T extends (...args: any[]) => any>(_f: T): T {
+  return marker("move");
+}
+
+// Rust bottom macros (compile-time only)
+export function panic(_msg?: string, ..._args: readonly unknown[]): never {
+  return marker("panic");
+}
+
+export function todo(_msg?: string, ..._args: readonly unknown[]): never {
+  return marker("todo");
+}
+
+export function unreachable(_msg?: string, ..._args: readonly unknown[]): never {
+  return marker("unreachable");
+}
+
 // Build a Rust token tree (compile-time only)
 // Generic attribute constructor (compile-time only)
 export function attr(_name: string, ..._args: readonly Tokens[]): Attr {

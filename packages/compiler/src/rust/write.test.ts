@@ -197,6 +197,53 @@ describe("@tsuba/compiler rust writer", () => {
     expect(rust).to.contain("f(&(x), &mut (y));");
   });
 
+  it("writes closures (including move closures) deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "fn",
+          vis: "private",
+          async: false,
+          typeParams: [],
+          receiver: { kind: "none" },
+          name: "main",
+          params: [],
+          ret: unitType(),
+          attrs: [],
+          body: [
+            {
+              kind: "let",
+              pattern: { kind: "ident", name: "a" },
+              mut: false,
+              init: {
+                kind: "closure",
+                move: false,
+                params: [{ name: "x", type: pathType(["i32"]) }],
+                body: { kind: "binary", op: "+", left: identExpr("x"), right: { kind: "number", text: "1" } },
+              },
+            },
+            {
+              kind: "let",
+              pattern: { kind: "ident", name: "b" },
+              mut: false,
+              init: {
+                kind: "closure",
+                move: true,
+                params: [{ name: "x", type: pathType(["i32"]) }],
+                body: { kind: "binary", op: "+", left: identExpr("x"), right: { kind: "number", text: "2" } },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("let a = |x: i32| (x + 1);");
+    expect(rust).to.contain("let b = move |x: i32| (x + 2);");
+  });
+
   it("writes turbofish path calls deterministically", () => {
     const program: RustProgram = {
       kind: "program",

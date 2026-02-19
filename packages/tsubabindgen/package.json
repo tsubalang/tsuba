@@ -9,7 +9,8 @@
     "tsubabindgen": "./dist/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "rust-extractor"
   ],
   "scripts": {
     "build": "tsc -b",

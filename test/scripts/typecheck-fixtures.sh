@@ -144,7 +144,7 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
 {
   "compilerOptions": {
     "noEmit": true,
-    "strict": false,
+    "strict": true,
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "ES2022",
@@ -153,7 +153,7 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
     "forceConsistentCasingInFileNames": true,
     "allowJs": false,
     "checkJs": false,
-    "noImplicitAny": false,
+    "noImplicitAny": true,
     "allowImportingTsExtensions": true,
     "baseUrl": "$ROOT_DIR",
     "paths": {
