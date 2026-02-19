@@ -20,7 +20,7 @@ For the explicit TS omission catalog (user-facing), see:
 | --- | --- | --- | --- |
 | Entry contract | `export function main()`; `void` and `Result<void, E>` returns; async `main` only with `runtime.kind=tokio` | missing/non-export `main`; invalid main return shapes | broader runtime strategies |
 | String expressions | string literals and template literals lower deterministically (`format!` for interpolated templates) | optional chaining / nullish in expressions | richer string helpers |
-| Closures | expression-bodied arrow closures; `move(...)` arrow closures | block-bodied arrow closures; `move(...)` non-arrow arguments | block-closure lowering |
+| Closures | expression-bodied + block-bodied arrow closures; `move(...)` arrow closures | generic arrow closures; non-terminal `return` in block closures; `move(...)` non-arrow arguments | broader closure syntax/forms |
 | Async expressions | `await` in async functions; async lowering to Rust async/await | Promise `.then(...)` chains | additional async combinators |
 | Marker calls | `q(...)`, `unsafe(...)`, macro markers, annotate markers (`attr(...)`, `AttrMacro`, `DeriveMacro`) | marker misuse (wrong arity/callee/form) | richer marker libraries |
 
@@ -36,7 +36,7 @@ Primary evidence:
 
 | Area | Supported (v0) | Rejected (v0) | Planned |
 | --- | --- | --- | --- |
-| Functions | typed params/returns, generics, generic bounds, deterministic call lowering | optional/default params in unsupported contexts | wider TS function syntax |
+| Functions | typed params/returns, generics, generic bounds, deterministic call lowering, default-parameter lowering (`Option<T>` + `Some`/`None`) | optional params (`x?: T`), constructor optional/default params, optional interface members/params | wider TS function syntax |
 | Classes | class → struct+impl lowering, constructors, fields/methods with explicit typing | unsupported class syntax forms | inheritance/extends (deferred) |
 | Traits/interfaces | interface → trait, supertraits (`extends`), generic traits, multi-trait impls, trait method conformance checks | optional interface methods; unsupported interface member forms | trait objects / existential strategy |
 | Trait method contracts | receiver mutability checks, generic arity/bounds checks, param/return exact-type checks | mismatched method signatures/receivers | relaxed variance rules (if ever) |

@@ -145,7 +145,7 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("let b = move |x: i32|");
   });
 
-  it("rejects block-bodied arrow callbacks in v0", () => {
+  it("lowers block-bodied arrow callbacks in v0", () => {
     const dir = makeRepoTempDir("compiler-arrow-block-body-");
     const entry = join(dir, "main.ts");
     writeFileSync(
@@ -154,22 +154,75 @@ describe("@tsuba/compiler host emitter", () => {
         'import type { i32 } from "@tsuba/core/types.js";',
         "",
         "export function main(): void {",
-        "  const a = (x: i32): i32 => { return x; };",
+        "  const a = (x: i32): i32 => {",
+        "    const y = (x + (1 as i32)) as i32;",
+        "    return y;",
+        "  };",
+        "  const b = (x: i32): void => {",
+        "    const y = (x + (2 as i32)) as i32;",
+        "    void y;",
+        "  };",
         "  void a;",
+        "  void b;",
         "}",
         "",
       ].join("\n"),
       "utf-8"
     );
 
-    let err: unknown;
-    try {
-      compileHostToRust({ entryFile: entry });
-    } catch (e) {
-      err = e;
-    }
-    expect(err).to.be.instanceOf(CompileError);
-    expect((err as CompileError).code).to.equal("TSB1100");
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let a = |x: i32| {");
+    expect(out.mainRs).to.match(/let y = .*as i32;/);
+    expect(out.mainRs).to.contain("y };");
+    expect(out.mainRs).to.contain("let b = |x: i32| {");
+    expect(out.mainRs).to.match(/let y = .*as i32;/);
+    expect(out.mainRs).to.contain("() };");
+  });
+
+  it("lowers default parameters in functions and methods with deterministic None/Some call lowering", () => {
+    const dir = makeRepoTempDir("compiler-default-params-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "function add(x: i32 = 5 as i32): i32 {",
+        "  return x;",
+        "}",
+        "",
+        "class Counter {",
+        "  value: i32 = 0 as i32;",
+        "  read(this: ref<Counter>, delta: i32 = 1 as i32): i32 {",
+        "    return (this.value + delta) as i32;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const c = new Counter();",
+        "  const a = add();",
+        "  const b = add(2 as i32);",
+        "  const x = c.read();",
+        "  const y = c.read(3 as i32);",
+        "  void a;",
+        "  void b;",
+        "  void x;",
+        "  void y;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("fn add(x: Option<i32>) -> i32");
+    expect(out.mainRs).to.contain("let x: i32 = x.unwrap_or((5) as i32);");
+    expect(out.mainRs).to.contain("fn read(&self, delta: Option<i32>) -> i32");
+    expect(out.mainRs).to.contain("let delta: i32 = delta.unwrap_or((1) as i32);");
+    expect(out.mainRs).to.contain("let a = add(None);");
+    expect(out.mainRs).to.contain("let b = add(Some((2) as i32));");
+    expect(out.mainRs).to.contain("let x = c.read(None);");
+    expect(out.mainRs).to.contain("let y = c.read(Some((3) as i32));");
   });
 
   it("emits Rust associated function calls for static class methods", () => {

@@ -78,8 +78,8 @@ Status values for tracking:
 ## 4) Workstream B — Type system and semantic coverage (P0/P1)
 
 ### B.1 Function and method semantics (P0)
-- [ ] Full function declaration coverage in supported subset: generics, bounds, async, explicit returns.
-- [ ] Method receiver semantics (`this`/`ref`/`mutref`) are fully test-covered.
+- [x] Full function declaration coverage in supported subset: generics, bounds, async, explicit returns.
+- [x] Method receiver semantics (`this`/`ref`/`mutref`) are fully test-covered.
 - [ ] Closure support matrix is explicit and complete:
   - [x] expression closures
   - [x] move closures
@@ -100,7 +100,7 @@ Status values for tracking:
 - [x] Supertrait and multi-trait implementation matrix covered with runnable fixtures.
 
 ### B.4 Objects/classes/unions (P0)
-- [ ] Object-literal lowering matrix is explicit:
+- [x] Object-literal lowering matrix is explicit:
   - [x] contextual nominal target
   - [x] enum variant payload construction
   - [x] synthesized shape structs (scoped, deterministic)

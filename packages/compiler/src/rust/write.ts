@@ -2,6 +2,7 @@ import type {
   RustExpr,
   RustGenericParam,
   RustItem,
+  RustMatchPattern,
   RustParam,
   RustPattern,
   RustProgram,
@@ -56,6 +57,21 @@ function emitPattern(p: RustPattern): string {
       return "_";
     case "ident":
       return p.name;
+  }
+}
+
+function emitMatchPattern(pat: RustMatchPattern): string {
+  switch (pat.kind) {
+    case "wild":
+      return "_";
+    case "enum_struct": {
+      const base = emitPath(pat.path.segments);
+      if (pat.fields.length === 0) return base;
+      const fields = pat.fields
+        .map((f) => `${f.name}: ${emitPattern(f.bind)}`)
+        .join(", ");
+      return `${base} { ${fields} }`;
+    }
   }
 }
 
@@ -144,7 +160,7 @@ function emitStmtInline(st: RustStmt): string {
       return `let ${mut}${emitPattern(st.pattern)}${ty} = ${emitExpr(st.init)};`;
     }
     case "block":
-      return "__tsuba_unreachable_inline_block__;";
+      return `{ ${st.body.map((s) => emitStmtInline(s)).join(" ")} }`;
     case "assign":
       return `${emitExpr(st.target)} = ${emitExpr(st.expr)};`;
     case "expr":
@@ -154,14 +170,21 @@ function emitStmtInline(st: RustStmt): string {
     case "continue":
       return "continue;";
     case "while":
-      return "__tsuba_unreachable_inline_while__;";
-    case "match":
-      return "__tsuba_unreachable_inline_match__;";
+      return `while ${emitExpr(st.cond)} { ${st.body.map((s) => emitStmtInline(s)).join(" ")} }`;
+    case "match": {
+      const arms = st.arms
+        .map((arm) => `${emitMatchPattern(arm.pattern)} => { ${arm.body.map((s) => emitStmtInline(s)).join(" ")} },`)
+        .join(" ");
+      return `match ${emitExpr(st.expr)} { ${arms} }`;
+    }
     case "return":
       return st.expr ? `return ${emitExpr(st.expr)};` : "return;";
-    case "if":
-      // Inline-if is never used inside expression blocks in v0.
-      return "__tsuba_unreachable_inline_if__;";
+    case "if": {
+      const thenPart = `{ ${st.then.map((s) => emitStmtInline(s)).join(" ")} }`;
+      if (!st.else) return `if ${emitExpr(st.cond)} ${thenPart}`;
+      const elsePart = `{ ${st.else.map((s) => emitStmtInline(s)).join(" ")} }`;
+      return `if ${emitExpr(st.cond)} ${thenPart} else ${elsePart}`;
+    }
   }
 }
 
@@ -218,20 +241,7 @@ function emitStmtLines(st: RustStmt, indent: string): string[] {
       const armIndent = `${indent}  `;
       const bodyIndent = `${indent}    `;
       for (const arm of st.arms) {
-        const pat = (() => {
-          switch (arm.pattern.kind) {
-            case "wild":
-              return "_";
-            case "enum_struct": {
-              const base = emitPath(arm.pattern.path.segments);
-              if (arm.pattern.fields.length === 0) return base;
-              const fields = arm.pattern.fields
-                .map((f) => `${f.name}: ${emitPattern(f.bind)}`)
-                .join(", ");
-              return `${base} { ${fields} }`;
-            }
-          }
-        })();
+        const pat = emitMatchPattern(arm.pattern);
         out.push(`${armIndent}${pat} => {`);
         for (const s of arm.body) out.push(...emitStmtLines(s, bodyIndent));
         out.push(`${armIndent}},`);

@@ -230,6 +230,7 @@ Host code may be a bit more permissive than kernels, but must remain determinist
 Keep v0 strictness:
 
 - no optional parameters (`x?: T`) in Tsuba source; use `Option<T>`
+- default parameters are allowed and lowered deterministically via `Option<T>` + `unwrap_or(...)`
 - no `undefined`; use `Option` or unit `()`
 - no `null`
 

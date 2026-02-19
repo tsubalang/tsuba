@@ -26,7 +26,7 @@ Status legend:
 | --- | --- | --- | --- | --- |
 | Entry points | `main`, async main runtime policy, library output | **Covered** | n/a | In `spec/feature-matrix.md`, `spec/language.md` |
 | Functions (typed) | typed params/returns, generics, async | **Covered** | n/a | Supported subset is explicit |
-| Optional/default params | `x?: T`, defaults | **Missing (documented)** | **Yes** | Rejected (`TSB3004`), documented in `spec/language.md` and matrix |
+| Optional/default params | `x?: T`, defaults | **Partial** | **Yes** | Defaults supported via deterministic `Option<T>` lowering; optional params (`x?: T`) remain rejected (`TSB3004`/`TSB4107`) |
 | Classes | class lowering with methods/constructors | **Covered** | n/a | class → struct+impl path is covered |
 | Class inheritance | `extends` | **Missing (documented)** | **Yes** | Explicitly deferred in `spec/language.md` / `spec/tsuba-v0.md` |
 | Interfaces | interface contracts | **Partial** | **Yes** | Trait-like subset only (methods + explicit receiver) |
