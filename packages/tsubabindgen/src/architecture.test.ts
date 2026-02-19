@@ -28,6 +28,10 @@ describe("@tsuba/tsubabindgen architecture", () => {
       join(repoRoot(), "packages", "tsubabindgen", "src", "pipeline", "extract.ts"),
       "utf-8"
     );
+    const parserSource = readFileSync(
+      join(repoRoot(), "packages", "tsubabindgen", "src", "pipeline", "extract-parsers.ts"),
+      "utf-8"
+    );
     const resolveSource = readFileSync(
       join(repoRoot(), "packages", "tsubabindgen", "src", "pipeline", "resolve.ts"),
       "utf-8"
@@ -38,9 +42,14 @@ describe("@tsuba/tsubabindgen architecture", () => {
     );
 
     expect(extractSource).to.contain("export function collectModules(");
-    expect(extractSource).to.contain("function parseFunctions(");
-    expect(extractSource).to.contain("function parseStructs(");
-    expect(extractSource).to.contain("function parseTraits(");
+    expect(extractSource).to.not.contain("function parseFunctions(");
+    expect(extractSource).to.not.contain("function parseStructs(");
+    expect(extractSource).to.not.contain("function parseTraits(");
+
+    expect(parserSource).to.contain("function parseFunctions(");
+    expect(parserSource).to.contain("function parseStructs(");
+    expect(parserSource).to.contain("function parseTraits(");
+    expect(parserSource).to.contain("export function parseModuleDeclarations(");
 
     expect(resolveSource).to.contain("export function attachMethods(");
     expect(resolveSource).to.contain("export function applyReexports(");

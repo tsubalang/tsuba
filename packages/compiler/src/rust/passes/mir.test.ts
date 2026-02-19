@@ -49,4 +49,24 @@ describe("@tsuba/compiler MIR pass", () => {
     const roundtrip = emitMirBodyToRustStmtsPass(mir);
     expect(roundtrip).to.deep.equal(body);
   });
+
+  it("backfills missing statement spans from fallback source", () => {
+    const span = { fileName: "index.ts", start: 10, end: 20 } as const;
+    const source: readonly RustStmt[] = [{ kind: "return", span, expr: { kind: "number", text: "1" } }];
+    const emittedWithoutSpan = emitMirBodyToRustStmtsPass({
+      entry: 0,
+      blocks: [{ id: 0, stmts: [], terminator: { kind: "return", expr: { kind: "number", text: "1" } } }],
+    });
+    expect(emittedWithoutSpan[0]).to.deep.equal({ kind: "return", expr: { kind: "number", text: "1" } });
+
+    const emittedWithBackfill = emitMirBodyToRustStmtsPass(
+      {
+        entry: 0,
+        blocks: [{ id: 0, stmts: [], terminator: { kind: "return", expr: { kind: "number", text: "1" } } }],
+      },
+      { fallbackSpanSource: source }
+    );
+
+    expect(emittedWithBackfill[0]).to.deep.equal(source[0]);
+  });
 });

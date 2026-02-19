@@ -48,7 +48,9 @@ export function emitMainAndRootShapesPass<TCtx extends { readonly inAsync?: bool
   for (const st of mainFn.body!.statements) {
     mainBodyRaw.push(...deps.lowerStmt(mainCtx, st));
   }
-  const mainBody = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(mainBodyRaw));
+  const mainBody = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(mainBodyRaw), {
+    fallbackSpanSource: mainBodyRaw,
+  });
 
   const items: RustItem[] = [];
   const rootShapeStructs = [...deps.getShapeStructsByFile(entryFileName)].sort(
