@@ -109,12 +109,13 @@ Lowers to:
 
 ### 5.2 `this` receiver
 
-Tsuba infers receiver mutability:
+Tsuba uses an explicit receiver convention:
 
-- If method body mutates fields → `&mut self`
-- Else → `&self`
+- If first parameter is `this: mutref<...>` (or `mutrefLt<...>`) → `&mut self`
+- If first parameter is `this: ref<...>` (or `refLt<...>`) → `&self`
+- If no explicit `this` parameter is provided, receiver defaults to `&self`
 
-If Tsuba cannot infer safely, user can be required to add an explicit marker (TBD).
+This keeps lowering deterministic and avoids hidden mutability inference.
 
 ### 5.3 Constructors
 
@@ -131,7 +132,13 @@ TS `interface` lowers to Rust `trait`, but Tsuba treats interfaces as **nominal*
 - Implementations require `implements`.
 - Structural “duck typing” assignment is rejected.
 
-Generics and `extends` constraints map to Rust trait bounds.
+v0 interface rules:
+
+- Members must be method signatures only.
+- Method signatures require explicit receiver as first parameter:
+  - `this: ref<this>` or `this: mutref<this>`
+- `interface A extends B, C` lowers to Rust supertraits (`trait A: B + C`).
+- Interface generics and `extends` constraints map to Rust trait bounds.
 
 Trait objects (`dyn Trait`) are v0 optional; if supported, they require an explicit marker type (TBD).
 
@@ -209,6 +216,11 @@ Use:
 - `await` lowers to `.await`.
 
 Tsuba rejects `.then(...)` chaining in Tsuba code.
+
+Additional v0 constraints:
+
+- Async functions must declare an explicit `Promise<T>` return type.
+- `export async function main` requires `runtime.kind = "tokio"` in `tsuba.workspace.json`.
 
 ---
 

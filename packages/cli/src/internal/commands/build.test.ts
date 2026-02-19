@@ -33,6 +33,33 @@ describe("@tsuba/cli build", () => {
     expect(mainRs).to.contain("fn main()");
   });
 
+  it("rejects async main unless workspace runtime.kind is tokio", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-build-async-main-"));
+    const root = join(dir, "demo");
+
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", "demo");
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      [
+        "export async function main(): Promise<void> {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err)).to.contain("runtime.kind='tokio'");
+  });
+
   it("rejects unsupported tsuba.workspace.json schema", async () => {
     const root = mkdtempSync(join(tmpdir(), "tsuba-build-invalid-ws-"));
     const projectName = basename(root);

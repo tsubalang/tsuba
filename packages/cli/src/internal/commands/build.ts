@@ -35,6 +35,9 @@ type WorkspaceConfig = {
       readonly sm: number;
     };
   };
+  readonly runtime?: {
+    readonly kind: "none" | "tokio";
+  };
 };
 
 type ProjectConfig = {
@@ -239,7 +242,10 @@ export async function runBuild(args: BuildArgs): Promise<void> {
   if (project.kind !== "bin") throw new Error("Only kind=bin is supported in v0.");
 
   const entryFile = resolve(projectRoot, project.entry);
-  const out = compileHostToRust({ entryFile });
+  const out = compileHostToRust({
+    entryFile,
+    runtimeKind: workspace.runtime?.kind ?? "none",
+  });
 
   if (out.kernels.length > 0) {
     if (!project.gpu?.enabled) {

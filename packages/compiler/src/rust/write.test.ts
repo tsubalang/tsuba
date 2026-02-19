@@ -12,6 +12,8 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          async: false,
+          typeParams: [],
           receiver: { kind: "none" },
           name: "main",
           params: [],
@@ -70,6 +72,8 @@ describe("@tsuba/compiler rust writer", () => {
             {
               kind: "fn",
               vis: "pub",
+              async: false,
+              typeParams: [],
               receiver: { kind: "none" },
               name: "add",
               params: [{ name: "a", type: pathType(["i32"]) }],
@@ -97,6 +101,8 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          async: false,
+          typeParams: [],
           receiver: { kind: "none" },
           name: "f",
           params: [
@@ -122,6 +128,8 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          async: false,
+          typeParams: [],
           receiver: { kind: "none" },
           name: "main",
           params: [],
@@ -161,6 +169,8 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          async: false,
+          typeParams: [],
           receiver: { kind: "none" },
           name: "main",
           params: [],
@@ -194,6 +204,8 @@ describe("@tsuba/compiler rust writer", () => {
         {
           kind: "fn",
           vis: "private",
+          async: false,
+          typeParams: [],
           receiver: { kind: "none" },
           name: "main",
           params: [],
@@ -216,5 +228,79 @@ describe("@tsuba/compiler rust writer", () => {
 
     const rust = writeRustProgram(program);
     expect(rust).to.contain("foo::bar::<u32, f32>(x);");
+  });
+
+  it("writes async fns and await expressions deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "fn",
+          vis: "private",
+          async: true,
+          typeParams: [],
+          receiver: { kind: "none" },
+          name: "main",
+          params: [],
+          ret: unitType(),
+          attrs: [],
+          body: [
+            {
+              kind: "let",
+              pattern: { kind: "ident", name: "x" },
+              mut: false,
+              init: {
+                kind: "await",
+                expr: { kind: "call", callee: identExpr("work"), args: [] },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("async fn main()");
+    expect(rust).to.contain("let x = (work()).await;");
+  });
+
+  it("writes generic traits/impls and trait method signatures deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "trait",
+          vis: "pub",
+          name: "BoxLike",
+          typeParams: [{ name: "T", bounds: [] }],
+          superTraits: [pathType(["Clone"])],
+          items: [
+            {
+              kind: "fn",
+              vis: "private",
+              async: false,
+              typeParams: [{ name: "U", bounds: [pathType(["Copy"])] }],
+              receiver: { kind: "ref_self", mut: false },
+              name: "get",
+              params: [{ name: "seed", type: pathType(["U"]) }],
+              ret: pathType(["T"]),
+              attrs: [],
+            },
+          ],
+        },
+        {
+          kind: "impl",
+          typeParams: [{ name: "T", bounds: [] }],
+          traitPath: pathType(["BoxLike"], [pathType(["T"])]),
+          typePath: pathType(["Box"], [pathType(["T"])]),
+          items: [],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("pub trait BoxLike<T>: Clone {");
+    expect(rust).to.contain("fn get<U: Copy>(&self, seed: U) -> T;");
+    expect(rust).to.contain("impl<T> BoxLike<T> for Box<T> {");
   });
 });

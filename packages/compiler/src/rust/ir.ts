@@ -14,6 +14,11 @@ export type RustPath = {
 
 export type RustVisibility = "private" | "pub";
 
+export type RustGenericParam = NodeBase & {
+  readonly name: string;
+  readonly bounds: readonly RustType[];
+};
+
 export type RustReceiver =
   | { readonly kind: "none" }
   | { readonly kind: "ref_self"; readonly mut: boolean; readonly lifetime?: string };
@@ -65,6 +70,7 @@ export type RustExpr =
       readonly fields: readonly { readonly name: string; readonly expr: RustExpr }[];
     })
   | (NodeBase & { readonly kind: "try"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "await"; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "unsafe"; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "block"; readonly stmts: readonly RustStmt[]; readonly tail: RustExpr });
 
@@ -136,6 +142,8 @@ export type RustItem =
       readonly kind: "trait";
       readonly vis: RustVisibility;
       readonly name: string;
+      readonly typeParams: readonly RustGenericParam[];
+      readonly superTraits: readonly RustType[];
       readonly items: readonly RustItem[];
     })
   | (NodeBase & {
@@ -149,24 +157,28 @@ export type RustItem =
       readonly kind: "struct";
       readonly vis: RustVisibility;
       readonly name: string;
+      readonly typeParams: readonly RustGenericParam[];
       readonly attrs: readonly string[];
       readonly fields: readonly RustStructField[];
     })
   | (NodeBase & {
       readonly kind: "impl";
-      readonly traitPath?: RustPath;
-      readonly typePath: RustPath;
+      readonly typeParams: readonly RustGenericParam[];
+      readonly traitPath?: RustType;
+      readonly typePath: RustType;
       readonly items: readonly RustItem[];
     })
   | (NodeBase & {
       readonly kind: "fn";
       readonly vis: RustVisibility;
+      readonly async: boolean;
+      readonly typeParams: readonly RustGenericParam[];
       readonly receiver: RustReceiver;
       readonly name: string;
       readonly params: readonly RustParam[];
       readonly ret: RustType;
       readonly attrs: readonly string[];
-      readonly body: readonly RustStmt[];
+      readonly body?: readonly RustStmt[];
     });
 
 export type RustProgram = NodeBase & {
