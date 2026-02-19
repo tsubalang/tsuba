@@ -25,6 +25,18 @@ The repo already has a working v0 scaffold:
 
 This roadmap is the plan to take that v0 scaffold to a “real language” implementation.
 
+### Tsonic transfer merge status
+
+- ✅ Checkpoint artifacts are in place:
+  - `carryover-from-tsonic.md`
+  - `checkpoint-tsonic-2026-02-19.md`
+  - `test/scripts/{run-all.sh,run-e2e.sh,typecheck-fixtures.sh}`
+- ✅ Merge-gate style test script is adopted with optional fast modes (`--quick`, `--filter`, `--no-unit`) and full-pass gate still required.
+- 🔶 Remaining transfer work is concentrated in:
+  - `Phase 1.5` (typed IR + deterministic diagnostics + non-silent unsupported-feature reporting),
+  - `Phase 3` (bindgen determinism + skip/error reporting),
+  - `Phase 8` (publish preflight discipline).
+
 ---
 
 ## Phase 0 — Lock v0 semantics (spec → checklists) (IN PROGRESS)
@@ -43,6 +55,25 @@ Deliverables:
 Merge gate:
 
 - Spec review complete and frozen for v0.1; all items above are explicit checklists.
+
+---
+
+## Phase 0.5 — Tsonic checkpoint adoption (DONE)
+
+Deliverables:
+
+- Added `checkpoint-tsonic-2026-02-19.md` as a checkpoint reference.
+- Enforced phase discipline from Tsonic:
+  - parse/resolve/validate/IR/emission/backend boundaries.
+  - explicit command/config split in CLI and build orchestration.
+- Established checkpoint-required non-code process gates:
+  - test/run scripts with filtered iteration + full verification.
+  - publish pre-flight pattern (branch sync/version checks/package consistency).
+
+Carryover checks:
+
+- Every non-trivial feature change is mapped to a checkpoint item in `carryover-from-tsonic.md`.
+- Any divergence from checkpoint must be explicit and justified in roadmap/spec.
 
 ---
 
@@ -68,6 +99,11 @@ Merge gate:
 - `tsuba init` creates a deterministic workspace.
 - `tsuba build` produces Rust for a trivial project and can `cargo build`.
 - Unit tests + one tiny E2E fixture pass.
+
+Phase 1 additions from checkpoint:
+
+- CLI command structure should follow command/parser/test partitioning used in Tsonic.
+- Keep command behavior deterministic even when fixtures are added/removed.
 
 ---
 
@@ -97,6 +133,29 @@ Merge gate:
 
 - Golden tests assert IR→Rust is deterministic.
 - E2E tests still run real `cargo` builds.
+
+Checkpoint additions:
+
+- Keep unsupported constructs as hard errors with stable codes.
+- Add explicit diagnostic tests for representative unsupported cases, matching Tsonic’s
+  “fail loudly, never hide behavior” principle.
+
+### 1.5a — Tsonic transfer integration checkpoint
+
+Deliverables:
+
+- Add a command-level acceptance matrix:
+  - each `tsuba` command has at least one parser test and one behavior test before merge.
+- Enforce manifest invariants across CLI + compiler:
+  - `tsuba.workspace.json`, `tsuba.json`, `tsuba.bindings.json` roundtrip validation tests.
+- Add deterministic output-path tests:
+  - same input source and config must produce identical output structure and symbol emission.
+- Add explicit skip/error report checks for unsupported constructs instead of implicit approximation.
+
+Merge gate:
+
+- `test/scripts/run-all.sh --no-unit` is used for quick iteration, but no merge is allowed without unfiltered `test/scripts/run-all.sh` pass.
+- A new fixture-type diagnostic suite is mandatory for all new unsupported constructs.
 
 ---
 

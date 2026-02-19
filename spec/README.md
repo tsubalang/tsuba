@@ -19,6 +19,7 @@ Specs:
 - `macros.md` — macro + attribute model (no blessed macro list).
 - `carryover-from-tsonic.md` — what we reuse from the Tsonic ecosystem.
 - `roadmap.md` — phased build plan and merge gates.
+- `checkpoint-tsonic-2026-02-19.md` — transfer matrix from Tsonic (no-drift checkpoint).
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
 - `tsubabindgen.md` — bindgen design and v0 constraints.

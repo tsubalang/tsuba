@@ -4,6 +4,42 @@ This document summarizes what we should carry over from the existing **Tsonic** 
 
 Tsuba is not “Tsonic with a different backend” — it is GPU-first and Rust-first — but many *process* and *tooling* decisions in Tsonic are directly reusable and are already proven to prevent drift and miscompile risk.
 
+## 0) Checkpoint policy
+
+- We track a pinned checkpoint in:
+  - `checkpoint-tsonic-2026-02-19.md`
+- Scope rule:
+  - carry over structure/process/quality patterns from Tsonic,
+  - do not copy semantic assumptions that are C#/.NET-specific.
+- The default for divergence is: implement in a Tsuba-faithful way and document the intentional difference.
+
+## 0.1) 2026-02-19 audit baseline
+
+I performed a full-source inventory of Tsonic and found:
+
+- `packages/` directory has **2195 files** with strong compiler ownership in:
+  - `packages/frontend/src` (**182 files**),
+  - `packages/emitter/src` (**154 files**),
+  - `packages/cli/src` (**38 files**),
+  - `packages/backend/src` (**9 files**).
+- `docs/` has **33 files** (architecture + language + command docs + caveats).
+- `test/fixtures` plus generated outputs is very large (~53k files), so the carryover analysis focuses on source/test harness boundaries.
+- `scripts/` has **7 files** including publish and invariant enforcement.
+- `test/scripts/` has **3 files** (`run-all`, `run-e2e`, fixture typecheck flow).
+
+This matters because most Tsonic transfer value is in **architecture + validation discipline** (not raw file parity).
+
+## 0.2) How this transfer is merged
+
+- `carryover-from-tsonic.md` gives what to carry.
+- `spec/roadmap.md` carries execution status in phases.
+- `spec/checkpoint-tsonic-2026-02-19.md` is the immutable snapshot used when a phase diverges.
+- `test/scripts/*` (in this repo) holds the same layered verification pattern:
+  - unit/golden-style tests,
+  - tsc typecheck gate,
+  - E2E build gate,
+  - final full-filterless run-all before release.
+
 ---
 
 ## 1) Repo + package layout (monorepo compiler)
@@ -232,3 +268,23 @@ Rationale:
 - C#-specific features like extension-method lowering, `out/ref` C# mechanics, etc.
 - Any “special casing” for specific libraries (Tsonic explicitly removed this; Tsuba should start without it).
 
+## 10) Tsonic → Tsuba transfer matrix (roadmap-facing)
+
+| Tsonic area | Source artifacts | Why it matters | Tsuba adoption |
+|---|---|---|---|
+| CLI topology | `packages/cli/src`, `packages/cli/src/commands` | Deterministic command boundaries and testable command handlers | Keep command-per-feature structure in `packages/cli/src/internal/commands` and expand tests before merging each command |
+| Compiler layering | `packages/frontend/src`, `packages/emitter/src`, `packages/backend/src` | Keeps backend concerns isolated from parsing/type system/diagnostics | Keep parser/IR/typecheck in `packages/frontend`, Rust codegen in `packages/compiler`, orchestration in `packages/backend` |
+| Workspace model | `packages/cli/src/commands/init.ts`, docs | Removes ambiguity in multi-project imports/output locations | Keep mandatory `tsuba.workspace.json` + per-project `tsuba.json`, deterministic generated/output paths |
+| Typed manifests | `tsonic.workspace.json`, `tsonic.json`, `tsonic.bindings.json` docs | Enables reproducible dependency and output behavior | Use `tsuba.workspace.json`, `tsuba.json`, `tsuba.bindings.json` with no hidden path inference |
+| Diagnostics policy | `packages/frontend/src/validator*`, `packages/frontend/src/validation*` | Airplane-grade safety requires explicit failures | Preserve explicit `TSBxxxx` diagnostics for unsupported features/unsupported emit paths |
+| Test strategy | `test/scripts/run-all.sh`, `test/scripts/run-e2e.sh`, `test/scripts/typecheck-fixtures.sh` | Keeps feature growth tied to compile and fixture verification | Keep single `run-all` as merge gate; allow filtered fast iterations only |
+| Publish preflight | `scripts/publish-npm.sh`, `scripts/verify-invariants.sh` | Prevents drift between repo state and published artifacts | Port equivalent preflight checks in Tsuba publish script set |
+| Documentation discipline | `docs/cli.md`, architecture docs, diagnostics/reference docs | Prevents operator drift once features become complex | Add architecture-style docs for every major compiler subsystem as coverage expands |
+| Reproducibility | workspace scripts + output layout checks | Enables clean bisects and stable CI behavior | Bake deterministic output layout + deterministic binding cache keys |
+
+### Tsuba implementation order (as merged into roadmap)
+
+1. Keep v0 behavior stable (`Phase 0` → `Phase 1`).
+2. Complete `Phase 1.5` no-silent-omission gate across frontend/validator surfaces.
+3. Harden `Phase 3` bindgen determinism and skip reporting before broad crate expansion.
+4. Keep `run-all` full-gate required before any release/roadmap milestone.
