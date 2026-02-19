@@ -22,6 +22,7 @@ Specs:
 - `roadmap.md` — phased build plan and merge gates.
 - `roadmap-parity-with-tsonic.md` — parity matrix and remaining transfer work from Tsonic quality gates.
 - `checkpoint-tsonic-2026-02-19.md` — transfer matrix from Tsonic (no-drift checkpoint).
+- `parity-scope-audit-2026-02-19.md` — structural scope audit vs Tsonic (files/LOC/tests/fixtures and gap priorities).
 - `stdlib.md` — proposed `@tsuba/std` facades (plus tokio/serde/web expectations).
 - `config.md` — `tsuba.workspace.json`, `tsuba.json`, and `tsuba.bindings.json`.
 - `tsubabindgen.md` — bindgen design and v0 constraints.
