@@ -1,0 +1,7 @@
+{
+  "run": true,
+  "test": true,
+  "runStdoutContains": [
+    "borrow 2"
+  ]
+}

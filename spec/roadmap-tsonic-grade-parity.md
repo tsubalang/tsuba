@@ -65,11 +65,11 @@ Status values for tracking:
 - [ ] Every supported syntax shape has a dedicated lowering test.
 - [ ] Every unsupported syntax shape fails with a stable `TSBxxxx` code.
 - [ ] Introduce “high-risk transform audit list” with mandatory targeted tests:
-  - [ ] narrowing-dependent rewrites
-  - [ ] borrow insertion
-  - [ ] object-literal contextual lowering
-  - [ ] union switch/match lowering
-  - [ ] closure lowering and capture mode
+  - [x] narrowing-dependent rewrites
+  - [x] borrow insertion
+  - [x] object-literal contextual lowering
+  - [x] union switch/match lowering
+  - [x] closure lowering and capture mode
 
 **Exit gate A:** No mixed-pass code paths and no unclassified unsupported constructs.
 
@@ -87,8 +87,8 @@ Status values for tracking:
 
 ### B.2 Control-flow and narrowing (P0)
 - [ ] Narrowing rules are explicit and deterministic (no best-effort branching).
-- [ ] Exhaustive discriminated union handling (`switch`→`match`) has negative tests for non-exhaustive cases.
-- [ ] Mutation and initialization rules are proven with tests on nested scopes and shadowing.
+- [x] Exhaustive discriminated union handling (`switch`→`match`) has negative tests for non-exhaustive cases.
+- [x] Mutation and initialization rules are proven with tests on nested scopes and shadowing.
 
 ### B.3 Generics and traits (P0/P1)
 - [ ] Generic functions/classes/interfaces support documented edge cases.
@@ -161,13 +161,14 @@ Status values for tracking:
 
 ### E.1 Workspace behavior (P0)
 - [ ] Commands from any subdirectory correctly target project/workspace root.
+- [x] Commands from any subdirectory correctly target project/workspace root.
 - [ ] Deterministic resolution between workspace and project config.
 - [ ] Strict schema checks with stable diagnostics.
 
 ### E.2 Dependency operations (P1)
-- [ ] `add crate`, `add path`, `bindgen` flows fully tested, including package renames.
-- [ ] Conflict and merge behavior for crate deps/features is deterministic.
-- [ ] Cargo.toml rendering is stable and idempotent.
+- [x] `add crate`, `add path`, `bindgen` flows fully tested, including package renames.
+- [x] Conflict and merge behavior for crate deps/features is deterministic.
+- [x] Cargo.toml rendering is stable and idempotent.
 
 ### E.3 End-user smoke (P1)
 - [ ] Clean temp-dir smoke scripts for init/build/run/test/add/bindgen.
@@ -201,24 +202,24 @@ Status values for tracking:
 
 ### G.1 Fixture expansion (P0)
 - [ ] Expand host fixture families beyond minimal samples:
-  - [ ] generics+traits
-  - [ ] async runtime
-  - [ ] union/exhaustiveness
-  - [ ] object literal edge cases
-  - [ ] macro/annotate flows
-- [ ] Every fixture has explicit metadata for expected behavior (`run`, `test`, `expectFailure`).
+  - [x] generics+traits
+  - [x] async runtime
+  - [x] union/exhaustiveness
+  - [x] object literal edge cases
+  - [x] macro/annotate flows
+- [x] Every fixture has explicit metadata for expected behavior (`run`, `test`, `expectFailure`).
 
 ### G.2 Golden and e2e rigor (P1)
 - [ ] Golden snapshots for deterministic Rust emit in representative programs.
-- [ ] E2E includes build+run and optional `cargo test` based on fixture metadata.
-- [ ] Repo dirtiness gate remains mandatory.
+- [x] E2E includes build+run and optional `cargo test` based on fixture metadata.
+- [x] Repo dirtiness gate remains mandatory.
 
 ### G.3 Risk-driven regression suites (P1)
 - [ ] Add dedicated suites for historically risky classes:
-  - [ ] contextual typing loss
-  - [ ] narrowing regressions
-  - [ ] borrow insertion mis-lowering
-  - [ ] closure capture/typing regressions
+  - [x] contextual typing loss
+  - [x] narrowing regressions
+  - [x] borrow insertion mis-lowering
+  - [x] closure capture/typing regressions
 
 **Exit gate G:** Coverage matrix maintained in docs and mapped to tests.
 

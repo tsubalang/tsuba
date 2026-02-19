@@ -575,6 +575,33 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("i = (i + 1);");
   });
 
+  it("supports free block statements and lexical shadowing", () => {
+    const dir = makeRepoTempDir("compiler-shadowing-block-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const x = 1 as i32;",
+        "  {",
+        "    const x = 2 as i32;",
+        "    void x;",
+        "  }",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let x = (1) as i32;");
+    expect(out.mainRs).to.contain("let x = (2) as i32;");
+    expect(out.mainRs).to.contain("{");
+  });
+
   it("maps ref/mutref marker types to Rust references (&T / &mut T / &'a T)", () => {
     const dir = makeRepoTempDir("compiler-");
     const entry = join(dir, "main.ts");

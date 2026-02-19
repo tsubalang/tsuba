@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "host-borrow-insertion",
+  "kind": "bin",
+  "entry": "src/index.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "host_borrow_insertion"
+  }
+}
