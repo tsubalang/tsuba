@@ -240,6 +240,8 @@ const compilerDiagnosticCodes = [
   "TSB5202",
   "TSB5203",
   "TSB5204",
+  "TSB5205",
+  "TSB5206",
 ] as const;
 
 export type CompilerDiagnosticCode = (typeof compilerDiagnosticCodes)[number];

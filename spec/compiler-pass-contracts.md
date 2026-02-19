@@ -105,6 +105,10 @@ Airplane-grade rule:
   - explicit context maps built in harvesting/lowering (e.g. trait/union maps),
   - deterministic append-only collection inside a pass.
 - No hidden global state between compile invocations.
+- Snapshot wrappers are mandatory at pass boundaries:
+  - map outputs use `asReadonlyMap(...)` (copy-on-return + no mutators),
+  - collection outputs use `freezeReadonlyArray(...)`,
+  - per-file lowered records are `Object.freeze(...)`-wrapped.
 
 ---
 

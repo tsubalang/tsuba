@@ -40,7 +40,7 @@ describe("@tsuba/cli test", function () {
     writeFileSync(
       join(projectRoot, "src", "main.ts"),
       [
-        "type i32 = number;",
+        'import type { i32 } from "@tsuba/core/types.js";',
         "",
         "function add(a: i32, b: i32): i32 {",
         "  return (a + b) as i32;",

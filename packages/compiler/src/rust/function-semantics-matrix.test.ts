@@ -161,4 +161,68 @@ describe("@tsuba/compiler function semantics matrix", () => {
     expect(out.mainRs).to.contain("let three = c(None);");
     expect(out.mainRs).to.contain("let four = c(Some((4) as i32));");
   });
+
+  it("covers generic class/interface edge cases with nested bounds and concrete impl args", () => {
+    const dir = makeRepoTempDir("compiler-fn-matrix-generic-edges-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Comparable<T> {",
+        "  compare(this: ref<this>, other: T): i32;",
+        "}",
+        "",
+        "interface Ranking<T extends Comparable<T>> {",
+        "  best(this: ref<this>, left: T, right: T): T;",
+        "}",
+        "",
+        "class Score implements Comparable<Score> {",
+        "  value: i32 = 0 as i32;",
+        "  constructor(value: i32) {",
+        "    this.value = value;",
+        "  }",
+        "  compare(this: ref<Score>, other: Score): i32 {",
+        "    return (this.value - other.value) as i32;",
+        "  }",
+        "}",
+        "",
+        "class ScoreBoard implements Ranking<Score> {",
+        "  best(this: ref<ScoreBoard>, left: Score, right: Score): Score {",
+        "    if (left.compare(right) >= (0 as i32)) {",
+        "      return left;",
+        "    }",
+        "    return right;",
+        "  }",
+        "}",
+        "",
+        "function winner<T extends Comparable<T>>(left: T, right: T): T {",
+        "  if (left.compare(right) >= (0 as i32)) {",
+        "    return left;",
+        "  }",
+        "  return right;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const board = new ScoreBoard();",
+        "  const a = new Score(3 as i32);",
+        "  const b = new Score(5 as i32);",
+        "  const x = board.best(a, b);",
+        "  const y = winner(a, b);",
+        "  void x;",
+        "  void y;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait Comparable<T>");
+    expect(out.mainRs).to.contain("trait Ranking<T: Comparable<T>>");
+    expect(out.mainRs).to.contain("impl Comparable<Score> for Score");
+    expect(out.mainRs).to.contain("impl Ranking<Score> for ScoreBoard");
+    expect(out.mainRs).to.contain("fn winner<T: Comparable<T>>(left: T, right: T) -> T");
+  });
 });

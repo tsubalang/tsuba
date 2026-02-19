@@ -196,7 +196,7 @@ describe("@tsuba/cli build", function () {
     writeFileSync(
       join(projectRoot, "src", "main.ts"),
       [
-        "type i32 = number;",
+        'import type { i32 } from "@tsuba/core/types.js";',
         "",
         "export function main(): void {",
         "  const x = 1 as i32;",

@@ -168,6 +168,14 @@ export type RustItem =
       readonly fields: readonly RustStructField[];
     })
   | (NodeBase & {
+      readonly kind: "type_alias";
+      readonly vis: RustVisibility;
+      readonly name: string;
+      readonly typeParams: readonly RustGenericParam[];
+      readonly attrs: readonly string[];
+      readonly target: RustType;
+    })
+  | (NodeBase & {
       readonly kind: "impl";
       readonly typeParams: readonly RustGenericParam[];
       readonly traitPath?: RustType;

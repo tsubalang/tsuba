@@ -70,13 +70,16 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | --- | --- |
 | `TSB4007` | trait method conformance mismatch (receiver/generics/params/return) |
 | `TSB4013` | class field missing explicit type annotation |
+| `TSB4024` | optional/default constructor parameters are rejected |
 
 ### types-and-traits
 
 | Code | Meaning |
 | --- | --- |
 | `TSB5104` | optional interface method members are rejected |
-| `TSB5106` | interface method missing explicit return type |
+| `TSB5110` | interface methods must declare explicit return types |
+| `TSB5205` | type alias generic defaults are rejected |
+| `TSB5206` | unsupported type-level constructs in type aliases are rejected |
 
 ---
 

@@ -70,6 +70,7 @@ Primary evidence:
 | Area | Supported (v0) | Rejected (v0) | Planned |
 | --- | --- | --- | --- |
 | Primitive/marker types | Rust scalar aliases, `ref`/`mutref`, slices, fixed-size arrays | unsupported/ambiguous type forms | broader marker/type surface |
+| Type aliases | deterministic Rust `type` emission for plain aliases (including generic aliases) | unsupported type-level alias constructs (`conditional`/`mapped`/`intersection`/`infer`), alias generic defaults | broader TS type-level features |
 | Object literals | contextual nominal lowering; deterministic synthesized shape structs when allowed | non-contextual object literals without explicit type assertions | more inference-friendly object rules |
 | Structural typing | explicit nominal-style contracts | structural duck typing as semantic source of truth | none (intentional rejection) |
 

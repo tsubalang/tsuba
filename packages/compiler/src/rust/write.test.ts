@@ -94,6 +94,31 @@ describe("@tsuba/compiler rust writer", () => {
     expect(rust).to.contain("    return a;");
   });
 
+  it("writes type aliases deterministically", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "type_alias",
+          vis: "pub",
+          name: "Pair",
+          typeParams: [{ name: "T", bounds: [] }],
+          attrs: ["#[allow(non_camel_case_types)]"],
+          target: { kind: "tuple", elems: [pathType(["T"]), pathType(["T"])] },
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.equal(
+      [
+        "#[allow(non_camel_case_types)]",
+        "pub type Pair<T> = (T, T);",
+        "",
+      ].join("\n")
+    );
+  });
+
   it("writes reference types (&T / &mut T / &'a T) deterministically", () => {
     const program: RustProgram = {
       kind: "program",

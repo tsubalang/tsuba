@@ -1,7 +1,11 @@
 import ts from "typescript";
 
 import type { RustItem, RustStmt, RustType } from "../ir.js";
-import type { MainReturnKind, ShapeStructDefLike } from "./contracts.js";
+import {
+  freezeReadonlyArray,
+  type MainReturnKind,
+  type ShapeStructDefLike,
+} from "./contracts.js";
 
 type MainEmissionPassInput<TCtx extends { readonly inAsync?: boolean }> = {
   readonly ctx: TCtx;
@@ -69,5 +73,5 @@ export function emitMainAndRootShapesPass<TCtx extends { readonly inAsync?: bool
     body: mainBody,
   });
 
-  return items;
+  return freezeReadonlyArray(items);
 }

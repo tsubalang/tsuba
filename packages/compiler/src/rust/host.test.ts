@@ -1,6 +1,5 @@
 import { expect } from "chai";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,15 +19,13 @@ describe("@tsuba/compiler host emitter", () => {
   }
 
   it("emits a minimal Rust main() from an exported TS main()", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type Macro<Fn extends (...args: any[]) => unknown> = Fn & {",
-        "  readonly __tsuba_macro: unique symbol;",
-        "};",
-        "declare const println: Macro<(msg: string) => void>;",
+        'import type { Macro, String } from "@tsuba/core/types.js";',
+        "declare const println: Macro<(msg: String) => void>;",
         "",
         "export function main(): void {",
         '  println("hello");',
@@ -51,7 +48,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { q, unsafe } from "@tsuba/core/lang.js";',
         'import { Ok } from "@tsuba/std/prelude.js";',
-        'import type { Result, i32 } from "@tsuba/core/types.js";',
+        'import type { Result, i32 } from \"@tsuba/core/types.js\";',
         "",
         "declare function mayFail(): Result<i32, i32>;",
         "",
@@ -127,7 +124,7 @@ describe("@tsuba/compiler host emitter", () => {
       entry,
       [
         'import { move } from "@tsuba/core/lang.js";',
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const a = (x: i32): i32 => (x + (1 as i32)) as i32;",
@@ -151,7 +148,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const a = (x: i32): i32 => {",
@@ -185,7 +182,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "function add(x: i32 = 5 as i32): i32 {",
         "  return x;",
@@ -232,7 +229,7 @@ describe("@tsuba/compiler host emitter", () => {
       entry,
       [
         'import { HashMap, Vec } from "@tsuba/std/prelude.js";',
-        'import type { i32, String } from "@tsuba/core/types.js";',
+        'import type { i32, String } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const v = Vec.new<i32>();",
@@ -249,12 +246,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("emits helper functions declared in the entry file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "function add(a: i32, b: i32): i32 {",
         "  return a + b;",
@@ -279,7 +276,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "async function addAsync(a: i32, b: i32): Promise<i32> {",
         "  return (a + b) as i32;",
@@ -303,7 +300,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "async function bad() {",
         "  return 1 as i32;",
@@ -412,7 +409,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, u64, u128 } from "@tsuba/core/types.js";',
+        'import type { i32, u64, u128 } from \"@tsuba/core/types.js\";',
         "",
         "declare function f(n: u128): [u128, u64];",
         "",
@@ -439,12 +436,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("supports the TS void operator as a discard expression", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "function f(): i32 {",
         "  return 1 as i32;",
@@ -463,14 +460,14 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("emits helper functions from imported project modules", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     const math = join(dir, "math.ts");
 
     writeFileSync(
       math,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function add(a: i32, b: i32): i32 {",
         "  return a + b;",
@@ -483,7 +480,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         'import { add } from "./math.js";',
         "",
         "export function main(): void {",
@@ -499,14 +496,14 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("emits imported project modules as Rust `mod` blocks and wires named imports via `use`", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     const math = join(dir, "math.ts");
 
     writeFileSync(
       math,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function add(a: i32, b: i32): i32 {",
         "  return a + b;",
@@ -518,7 +515,7 @@ describe("@tsuba/compiler host emitter", () => {
 
     writeFileSync(
       entry,
-      ["type i32 = number;", 'import { add } from "./math.js";', "", "export function main(): void {", "  add(1 as i32, 2 as i32);", "}", ""].join(
+      ["import type { i32 } from \"@tsuba/core/types.js\";", 'import { add } from "./math.js";', "", "export function main(): void {", "  add(1 as i32, 2 as i32);", "}", ""].join(
         "\n"
       ),
       "utf-8"
@@ -531,7 +528,7 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("sorts emitted Rust `use` items deterministically independent of TS import order", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     const a = join(dir, "alpha.ts");
     const b = join(dir, "beta.ts");
@@ -539,7 +536,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       a,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function a1(): i32 {",
         "  return 1 as i32;",
@@ -552,7 +549,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       b,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function b1(): i32 {",
         "  return 2 as i32;",
@@ -565,7 +562,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         'import { b1 as z } from "./beta.js";',
         'import { a1 } from "./alpha.js";',
         "",
@@ -587,7 +584,7 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("sorts emitted module blocks deterministically independent of file traversal order", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     const z = join(dir, "zeta.ts");
     const a = join(dir, "alpha.ts");
@@ -595,7 +592,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       z,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "export function zed(): i32 {",
         "  return 26 as i32;",
         "}",
@@ -607,7 +604,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       a,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "export function alpha(): i32 {",
         "  return 1 as i32;",
         "}",
@@ -619,7 +616,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         'import { zed } from "./zeta.js";',
         'import { alpha } from "./alpha.js";',
         "",
@@ -641,13 +638,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers array literals to vec!(...) and supports element access", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
-        "type usize = number;",
+        "import type { i32, usize } from \"@tsuba/core/types.js\";",
         "",
         "export function main(): void {",
         "  const v = [1 as i32, 2 as i32];",
@@ -670,7 +666,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { ArrayN, i32, usize } from "@tsuba/core/types.js";',
+        'import type { ArrayN, i32, usize } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const a: ArrayN<i32, 3> = [1 as i32, 2 as i32, 3 as i32];",
@@ -688,12 +684,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("supports while loops and assignment statements (requires mut<T> marker)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "type mut<T> = T;",
         "",
         "export function main(): void {",
@@ -714,12 +710,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("supports for loops (lowered to a scoped block + while) and ++/-- in statement position", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "type mut<T> = T;",
         "",
         "export function main(): void {",
@@ -744,7 +740,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const x = 1 as i32;",
@@ -771,7 +767,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref, mutref, refLt } from "@tsuba/core/types.js";',
+        'import type { i32, ref, mutref, refLt } from \"@tsuba/core/types.js\";',
         "",
         "function f(x: ref<i32>, y: mutref<i32>, z: refLt<\"a\", i32>): void {",
         "  void x;",
@@ -797,7 +793,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, Slice, ref, mutref } from "@tsuba/core/types.js";',
+        'import type { i32, Slice, ref, mutref } from \"@tsuba/core/types.js\";',
         "",
         "function f(xs: ref<Slice<i32>>, ys: mutref<Slice<i32>>): void {",
         "  void xs;",
@@ -822,7 +818,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref, mut, mutref } from "@tsuba/core/types.js";',
+        'import type { i32, ref, mut, mutref } from \"@tsuba/core/types.js\";',
         "",
         "function f(x: ref<i32>, y: mutref<i32>): void {",
         "  void x;",
@@ -849,9 +845,9 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
-        'import type { ref } from "@tsuba/core/types.js";',
+        'import type { ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Show {",
         "  show(this: ref<this>): i32;",
@@ -884,7 +880,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "type Pair = {",
         "  left: i32;",
@@ -916,12 +912,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("emits turbofish calls for explicit type arguments on declared functions (v0)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-turbofish-"));
+    const dir = makeRepoTempDir("tsuba-turbofish-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "declare function id<T>(x: T): T;",
         "",
@@ -939,12 +935,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers a minimal class to a Rust struct + impl with constructor and methods", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const dir = makeRepoTempDir("tsuba-compiler-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "type mut<T> = T;",
         "type mutref<T> = T;",
         "",
@@ -1117,13 +1113,73 @@ describe("@tsuba/compiler host emitter", () => {
     expect((err as CompileError).code).to.equal("TSB3224");
   });
 
-  it("lowers object type aliases to Rust structs and supports struct literals", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-struct-alias-"));
+  it("lowers plain type aliases (including generics) instead of silently dropping them", () => {
+    const dir = makeRepoTempDir("tsuba-type-alias-plain-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
+        "",
+        "type UserId = i32;",
+        "type Pair<T> = [T, T];",
+        "",
+        "function id(x: UserId): UserId {",
+        "  return x;",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const p: Pair<i32> = [1 as i32, 2 as i32];",
+        "  const x = id(3 as i32);",
+        "  void p;",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("type UserId = i32;");
+    expect(out.mainRs).to.contain("type Pair<T> = (T, T);");
+    expect(out.mainRs).to.contain("fn id(x: UserId) -> UserId");
+  });
+
+  it("rejects unsupported type-level aliases instead of emitting unresolved Rust types", () => {
+    const dir = makeRepoTempDir("tsuba-type-alias-unsupported-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "import type { i32 } from \"@tsuba/core/types.js\";",
+        "",
+        "type Lift<T> = T extends i32 ? i32 : i32;",
+        "",
+        "export function main(): void {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB5206");
+  });
+
+  it("lowers object type aliases to Rust structs and supports struct literals", () => {
+    const dir = makeRepoTempDir("tsuba-struct-alias-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export type Point = {",
         "  x: i32;",
@@ -1147,12 +1203,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("generates private shape structs for untyped object literals with explicit field casts", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-shape-struct-"));
+    const dir = makeRepoTempDir("tsuba-shape-struct-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function main(): void {",
         "  const p = { x: 1 as i32, y: 2 as i32 };",
@@ -1172,12 +1228,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("errors on untyped shape object literals without explicit field casts (airplane-grade)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-shape-err-"));
+    const dir = makeRepoTempDir("tsuba-shape-err-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function main(): void {",
         "  const p = { x: 1 };",
@@ -1199,12 +1255,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers discriminated union type aliases to Rust enums and switches to match", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-union-"));
+    const dir = makeRepoTempDir("tsuba-union-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type f64 = number;",
+        "import type { f64 } from \"@tsuba/core/types.js\";",
         "",
         "export type Shape =",
         '  | { kind: "circle"; r: f64 }',
@@ -1240,12 +1296,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers non-union scalar switch statements into deterministic if/else chains", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-switch-scalar-"));
+    const dir = makeRepoTempDir("tsuba-switch-scalar-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "function classify(x: i32): i32 {",
         "  let out: i32 = 0 as i32;",
@@ -1279,12 +1335,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers template literals to Rust format! calls with escaped brace segments", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-template-"));
+    const dir = makeRepoTempDir("tsuba-template-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "export function main(): void {",
         "  const a = `a${1 as i32}b`;",
@@ -1303,12 +1359,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers discriminated union object literals for payload and unit variants", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-union-literals-"));
+    const dir = makeRepoTempDir("tsuba-union-literals-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "type Msg =",
         '  | { kind: "text"; value: i32 }',
@@ -1334,12 +1390,12 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("rejects non-switch union field access to prevent narrowing miscompile", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-union-if-access-"));
+    const dir = makeRepoTempDir("tsuba-union-if-access-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
       [
-        "type i32 = number;",
+        "import type { i32 } from \"@tsuba/core/types.js\";",
         "",
         "type Shape =",
         '  | { kind: "circle"; radius: i32 }',
@@ -1368,7 +1424,7 @@ describe("@tsuba/compiler host emitter", () => {
   });
 
   it("lowers empty interfaces to marker traits and supports `implements` on classes", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tsuba-trait-"));
+    const dir = makeRepoTempDir("tsuba-trait-");
     const entry = join(dir, "main.ts");
     writeFileSync(
       entry,
@@ -1400,7 +1456,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref, mutref } from "@tsuba/core/types.js";',
+        'import type { i32, ref, mutref } from \"@tsuba/core/types.js\";',
         "",
         "interface CounterLike {",
         "  inc(this: mutref<this>): void;",
@@ -1444,7 +1500,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Readable {",
         "  read(this: ref<this>): i32;",
@@ -1480,7 +1536,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface BoxLike<T> {",
         "  get(this: ref<this>): T;",
@@ -1519,7 +1575,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Left {",
         "  left(this: ref<this>): i32;",
@@ -1559,7 +1615,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Ordered {",
         "  rank(this: ref<this>): i32;",
@@ -1599,7 +1655,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Named {",
         "  name(this: ref<this>): i32;",
@@ -1642,7 +1698,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface Ordered {",
         "  rank(this: ref<this>): i32;",
@@ -1690,7 +1746,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { ref } from "@tsuba/core/types.js";',
+        'import type { ref } from \"@tsuba/core/types.js\";',
         "",
         "interface NeedsRun {",
         "  run(this: ref<this>): void;",
@@ -1793,7 +1849,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { ref, mutref } from "@tsuba/core/types.js";',
+        'import type { ref, mutref } from \"@tsuba/core/types.js\";',
         "",
         "interface Mutates {",
         "  update(this: mutref<this>): void;",
@@ -1827,7 +1883,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, u32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, u32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface TakesI32 {",
         "  set(this: ref<this>, value: i32): void;",
@@ -1864,7 +1920,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { i32, u32, ref } from "@tsuba/core/types.js";',
+        'import type { i32, u32, ref } from \"@tsuba/core/types.js\";',
         "",
         "interface ReadsI32 {",
         "  get(this: ref<this>): i32;",
@@ -1902,7 +1958,7 @@ describe("@tsuba/compiler host emitter", () => {
       entry,
       [
         'import { annotate, attr, tokens } from "@tsuba/core/lang.js";',
-        'import type { i32 } from "@tsuba/core/types.js";',
+        'import type { i32 } from \"@tsuba/core/types.js\";',
         "",
         "export class User {",
         "  id: i32 = 0 as i32;",
@@ -1937,7 +1993,7 @@ describe("@tsuba/compiler host emitter", () => {
       entry,
       [
         'import { annotate, attr, tokens } from "@tsuba/core/lang.js";',
-        'import type { i32, Attr, AttrMacro, DeriveMacro, Tokens } from "@tsuba/core/types.js";',
+        'import type { i32, Attr, AttrMacro, DeriveMacro, Tokens } from \"@tsuba/core/types.js\";',
         "",
         "declare const Serialize: DeriveMacro;",
         "declare const Deserialize: DeriveMacro;",
@@ -1972,7 +2028,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import type { f32, u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
         "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
@@ -2002,7 +2058,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  const x = 1 as u32;",
@@ -2029,7 +2085,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, sharedArray, syncthreads, atomicAdd, addr } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  const smem = sharedArray<u32, 256>();",
@@ -2061,7 +2117,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, blockIdxX } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import type { f32, u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>): void => {',
         "  const row = blockIdxX();",
@@ -2095,7 +2151,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, threadIdxY, blockIdxX, blockIdxY, blockDimX, blockDimY, sharedArray, syncthreads } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import type { f32, u32 } from \"@tsuba/core/types.js\";',
         "",
         'const matmul = kernel({ name: "matmul" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
         "  const TILE = 16 as u32;",
@@ -2144,7 +2200,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, blockDimX, sharedArray, syncthreads, expf } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import type { f32, u32 } from \"@tsuba/core/types.js\";',
         "",
         'const softmax = kernel({ name: "softmax" } as const, (xs: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
         "  const tid = threadIdxX();",
@@ -2202,7 +2258,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, blockIdxX, blockDimX, atomicAdd, addr } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const countExperts = kernel({ name: "countExperts" } as const, (expertIds: global_ptr<u32>, counts: global_ptr<u32>, n: u32): void => {',
         "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
@@ -2246,7 +2302,7 @@ describe("@tsuba/compiler host emitter", () => {
       entry,
       [
         'import { kernel } from "@tsuba/gpu/lang.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'const k = kernel({ name: "k" } as const, (n: u32): void => {',
         "  const x = 1;",
@@ -2281,7 +2337,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import type { f32, u32 } from \"@tsuba/core/types.js\";',
         "",
         'export const add = kernel({ name: "add" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
         "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
@@ -2298,7 +2354,7 @@ describe("@tsuba/compiler host emitter", () => {
       entry,
       [
         'import { deviceMalloc } from "@tsuba/gpu/lang.js";',
-        'import type { f32, u32 } from "@tsuba/core/types.js";',
+        'import type { f32, u32 } from \"@tsuba/core/types.js\";',
         'import { add as addKernel } from "./add.js";',
         "",
         "export function main(): void {",
@@ -2328,7 +2384,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { kernel, threadIdxX } from "@tsuba/gpu/lang.js";',
         'import type { global_ptr } from "@tsuba/gpu/types.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'export const foo = kernel({ name: "k" } as const, (out: global_ptr<u32>): void => {',
         "  out[threadIdxX()] = 1 as u32;",
@@ -2341,7 +2397,7 @@ describe("@tsuba/compiler host emitter", () => {
     writeFileSync(
       entry,
       [
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         'import { deviceMalloc } from "@tsuba/gpu/lang.js";',
         'import { foo } from "./k.js";',
         "",
@@ -2369,7 +2425,7 @@ describe("@tsuba/compiler host emitter", () => {
       kernelFile,
       [
         'import { kernel } from "@tsuba/gpu/lang.js";',
-        'import type { u32 } from "@tsuba/core/types.js";',
+        'import type { u32 } from \"@tsuba/core/types.js\";',
         "",
         'export const k = kernel({ name: "k" } as const, (n: u32): void => {',
         "  if (n < n) {",
@@ -2441,7 +2497,7 @@ describe("@tsuba/compiler host emitter", () => {
       [
         'import { deviceMalloc, deviceFree, memcpyHtoD, memcpyDtoH } from "@tsuba/gpu/lang.js";',
         'import { Vec } from "@tsuba/std/prelude.js";',
-        'import type { f32, u32, mut } from "@tsuba/core/types.js";',
+        'import type { f32, u32, mut } from \"@tsuba/core/types.js\";',
         "",
         "export function main(): void {",
         "  const n = 4 as u32;",
