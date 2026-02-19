@@ -11,6 +11,7 @@
     "build": "npm run typecheck",
     "run-all": "bash test/scripts/run-all.sh",
     "publish:npm": "bash scripts/publish-npm.sh",
+    "verify:proof": "bash scripts/verify-proof.sh",
     "test": "npm test --workspaces",
     "test:cli": "cd packages/cli && npm test --",
     "test:compiler": "cd packages/compiler && npm test --"
