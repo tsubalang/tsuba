@@ -477,6 +477,116 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("pub fn add(a: i32, b: i32) -> i32");
   });
 
+  it("sorts emitted Rust `use` items deterministically independent of TS import order", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    const a = join(dir, "alpha.ts");
+    const b = join(dir, "beta.ts");
+
+    writeFileSync(
+      a,
+      [
+        "type i32 = number;",
+        "",
+        "export function a1(): i32 {",
+        "  return 1 as i32;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      b,
+      [
+        "type i32 = number;",
+        "",
+        "export function b1(): i32 {",
+        "  return 2 as i32;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        'import { b1 as z } from "./beta.js";',
+        'import { a1 } from "./alpha.js";',
+        "",
+        "export function main(): void {",
+        "  void z;",
+        "  void a1;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    const useAlpha = out.mainRs.indexOf("use crate::alpha::a1;");
+    const useBeta = out.mainRs.indexOf("use crate::beta::b1 as z;");
+    expect(useAlpha).to.be.greaterThan(-1);
+    expect(useBeta).to.be.greaterThan(-1);
+    expect(useAlpha).to.be.lessThan(useBeta);
+  });
+
+  it("sorts emitted module blocks deterministically independent of file traversal order", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
+    const entry = join(dir, "main.ts");
+    const z = join(dir, "zeta.ts");
+    const a = join(dir, "alpha.ts");
+
+    writeFileSync(
+      z,
+      [
+        "type i32 = number;",
+        "export function zed(): i32 {",
+        "  return 26 as i32;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      a,
+      [
+        "type i32 = number;",
+        "export function alpha(): i32 {",
+        "  return 1 as i32;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      [
+        "type i32 = number;",
+        'import { zed } from "./zeta.js";',
+        'import { alpha } from "./alpha.js";',
+        "",
+        "export function main(): void {",
+        "  void zed;",
+        "  void alpha;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    const modAlpha = out.mainRs.indexOf("mod alpha {");
+    const modZeta = out.mainRs.indexOf("mod zeta {");
+    expect(modAlpha).to.be.greaterThan(-1);
+    expect(modZeta).to.be.greaterThan(-1);
+    expect(modAlpha).to.be.lessThan(modZeta);
+  });
+
   it("lowers array literals to vec!(...) and supports element access", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
     const entry = join(dir, "main.ts");

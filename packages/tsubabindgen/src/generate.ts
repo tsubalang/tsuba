@@ -197,6 +197,11 @@ function normalizePath(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
+function compareText(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
@@ -844,6 +849,13 @@ function collectModulesLegacy(manifestPath: string): ParsedModule[] {
   };
 
   visit(root, []);
+  out.sort((a, b) => {
+    const left = a.moduleParts.join("::");
+    const right = b.moduleParts.join("::");
+    const byParts = compareText(left, right);
+    if (byParts !== 0) return byParts;
+    return compareText(a.source, b.source);
+  });
   return out;
 }
 
@@ -908,9 +920,9 @@ function mapExtractedModule(module: ExtractedModule): ParsedModule {
     reexports: [...(module.reexports ?? [])]
       .map((r) => ({ name: normalizeIdentifier(r.name), source: normalizeTypeText(r.source) }))
       .sort((a, b) => {
-        const byName = a.name.localeCompare(b.name);
+        const byName = compareText(a.name, b.name);
         if (byName !== 0) return byName;
-        return a.source.localeCompare(b.source);
+        return compareText(a.source, b.source);
       }),
     pendingMethods: new Map(
       module.pendingMethods.map((entry) => [
@@ -950,6 +962,13 @@ function runRustExtractor(manifestPath: string): ExtractedOutput {
 function collectModules(manifestPath: string): ParsedModule[] {
   const extracted = runRustExtractor(manifestPath);
   const modules = extracted.modules.map((m) => mapExtractedModule(m));
+  modules.sort((a, b) => {
+    const left = a.moduleParts.join("::");
+    const right = b.moduleParts.join("::");
+    const byParts = compareText(left, right);
+    if (byParts !== 0) return byParts;
+    return compareText(a.source, b.source);
+  });
   if (modules.length > 0) {
     return modules;
   }
@@ -1164,11 +1183,11 @@ function addReexportedDeclaration(
 }
 
 function sortModuleDeclarations(module: ParsedModule): void {
-  module.consts.sort((a, b) => a.name.localeCompare(b.name));
-  module.enums.sort((a, b) => a.name.localeCompare(b.name));
-  module.structs.sort((a, b) => a.name.localeCompare(b.name));
-  module.traits.sort((a, b) => a.name.localeCompare(b.name));
-  module.functions.sort((a, b) => a.name.localeCompare(b.name));
+  module.consts.sort((a, b) => compareText(a.name, b.name));
+  module.enums.sort((a, b) => compareText(a.name, b.name));
+  module.structs.sort((a, b) => compareText(a.name, b.name));
+  module.traits.sort((a, b) => compareText(a.name, b.name));
+  module.functions.sort((a, b) => compareText(a.name, b.name));
 }
 
 function applyReexports(modules: ParsedModule[]): void {
@@ -1238,7 +1257,7 @@ function collectMarkerTypes(modules: readonly ParsedModule[]): string[] {
       for (const p of f.params) emitText(p.type);
     }
   }
-  return [...tokens].sort((a, b) => a.localeCompare(b)).filter((name) => !JS_KEYWORDS.has(name));
+  return [...tokens].sort((a, b) => compareText(a, b)).filter((name) => !JS_KEYWORDS.has(name));
 }
 
 function emitDts(module: ParsedModule): string {
@@ -1376,9 +1395,11 @@ function moduleForRustPath(modules: readonly ParsedModule[], crateName: string, 
 
 function collectSkipIssues(modules: readonly ParsedModule[], crateRoot?: string): readonly SkipIssue[] {
   const normalizeIssueFile = (value: string): string => {
-    if (!crateRoot) return normalizePath(value);
+    const normalized = normalizePath(value);
+    if (!crateRoot) return normalized;
+    if (!normalized.startsWith("/") && !/^[A-Za-z]:\//.test(normalized)) return normalized;
     const rel = normalizePath(relative(crateRoot, resolve(value)));
-    if (rel.length === 0 || rel.startsWith("../")) return normalizePath(value);
+    if (rel.length === 0 || rel.startsWith("../")) return normalized;
     return rel;
   };
   const seen = new Set<string>();
@@ -1393,13 +1414,13 @@ function collectSkipIssues(modules: readonly ParsedModule[], crateRoot?: string)
     }
   }
   out.sort((a, b) => {
-    const byFile = a.file.localeCompare(b.file);
+    const byFile = compareText(a.file, b.file);
     if (byFile !== 0) return byFile;
-    const byKind = a.kind.localeCompare(b.kind);
+    const byKind = compareText(a.kind, b.kind);
     if (byKind !== 0) return byKind;
-    const bySnippet = a.snippet.localeCompare(b.snippet);
+    const bySnippet = compareText(a.snippet, b.snippet);
     if (bySnippet !== 0) return bySnippet;
-    return a.reason.localeCompare(b.reason);
+    return compareText(a.reason, b.reason);
   });
   return out;
 }
@@ -1459,7 +1480,7 @@ export function runGenerate(opts: GenerateOptions): void {
       dtsName,
     });
   }
-  moduleEntries.sort((a, b) => a.spec.localeCompare(b.spec));
+  moduleEntries.sort((a, b) => compareText(a.spec, b.spec));
 
   for (const entry of moduleEntries) {
     const outJs = join(outDir, entry.jsName);
@@ -1484,7 +1505,7 @@ export function runGenerate(opts: GenerateOptions): void {
   };
   writeFileSync(join(outDir, "tsuba.bindings.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
 
-  const entryPaths = moduleEntries.map((entry) => entry.jsName).sort((a, b) => a.localeCompare(b));
+  const entryPaths = moduleEntries.map((entry) => entry.jsName).sort((a, b) => compareText(a, b));
   const pkgVersion = version;
   writeFileSync(join(outDir, "package.json"), makePackageJson(chosenPackageName, pkgVersion, entryPaths), "utf-8");
   writeFileSync(join(outDir, "README.md"), `# ${chosenPackageName}\n\nGenerated by tsubabindgen.\n`, "utf-8");

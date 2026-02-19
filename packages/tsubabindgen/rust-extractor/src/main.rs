@@ -113,6 +113,21 @@ fn normalize_ws(text: String) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn normalize_path_for_json(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn relative_module_label(crate_root: &Path, canonical: &Path) -> String {
+    if let Ok(rel) = canonical.strip_prefix(crate_root) {
+        let out = normalize_path_for_json(rel);
+        if out.is_empty() {
+            return ".".to_string();
+        }
+        return out;
+    }
+    normalize_path_for_json(canonical)
+}
+
 fn type_to_string(ty: &Type) -> String {
     normalize_ws(ty.to_token_stream().to_string())
 }
@@ -429,6 +444,7 @@ fn module_base_dir_for_file(file_path: &Path) -> PathBuf {
 fn collect_module_items(
     file_label: &str,
     parts: &[String],
+    crate_root: &Path,
     base_dir: &Path,
     items: &[Item],
     out: &mut Vec<ExtractModule>,
@@ -457,6 +473,7 @@ fn collect_module_items(
                     collect_module_items(
                         file_label,
                         &child_parts,
+                        crate_root,
                         &inline_base,
                         inline_items,
                         out,
@@ -465,7 +482,7 @@ fn collect_module_items(
                     continue;
                 }
                 let child_file = resolve_child_module_file(base_dir, &ident.to_string())?;
-                collect_module_file(&child_file, &child_parts, out, seen_files)?;
+                collect_module_file(crate_root, &child_file, &child_parts, out, seen_files)?;
             }
             Item::Const(c) if is_public(&c.vis) => module.consts.push(parse_const(c)),
             Item::Fn(f) if is_public(&f.vis) => {
@@ -525,6 +542,7 @@ fn collect_module_items(
 }
 
 fn collect_module_file(
+    crate_root: &Path,
     file_path: &Path,
     parts: &[String],
     out: &mut Vec<ExtractModule>,
@@ -542,11 +560,12 @@ fn collect_module_file(
 
     let source = fs::read_to_string(&canonical)
         .map_err(|e| format!("Failed to read module file {}: {e}", canonical.display()))?;
+    let file_label = relative_module_label(crate_root, &canonical);
     let file = match syn::parse_file(&source) {
         Ok(file) => file,
         Err(e) => {
             out.push(ExtractModule {
-                file: canonical.to_string_lossy().to_string(),
+                file: file_label.clone(),
                 parts: parts.to_vec(),
                 consts: Vec::new(),
                 enums: Vec::new(),
@@ -556,12 +575,12 @@ fn collect_module_file(
                 reexports: Vec::new(),
                 pending_methods: Vec::new(),
                 issues: vec![SkipIssue {
-                    file: canonical.to_string_lossy().to_string(),
+                    file: file_label.clone(),
                     kind: "parse".to_string(),
-                    snippet: canonical.to_string_lossy().to_string(),
+                    snippet: file_label.clone(),
                     reason: format!(
                         "Failed to parse Rust module {}; declarations were skipped: {e}",
-                        canonical.display()
+                        file_label
                     ),
                 }],
             });
@@ -570,8 +589,9 @@ fn collect_module_file(
     };
     let base_dir = module_base_dir_for_file(&canonical);
     collect_module_items(
-        &canonical.to_string_lossy(),
+        &file_label,
         parts,
+        crate_root,
         &base_dir,
         &file.items,
         out,
@@ -596,7 +616,7 @@ fn extract_modules(manifest_path: &Path) -> Result<Vec<ExtractModule>, String> {
 
     let mut modules = Vec::new();
     let mut seen_files = HashSet::new();
-    collect_module_file(&root_file, &[], &mut modules, &mut seen_files)?;
+    collect_module_file(crate_root, &root_file, &[], &mut modules, &mut seen_files)?;
     modules.sort_by(|a, b| {
         let left = if a.parts.is_empty() {
             String::new()

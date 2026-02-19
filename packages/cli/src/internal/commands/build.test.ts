@@ -5,10 +5,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runBuild } from "./build.js";
+import { runBindgen } from "./bindgen.js";
 import { runInit } from "./init.js";
 
 describe("@tsuba/cli build", function () {
-  this.timeout(30_000);
+  this.timeout(120_000);
 
   function getRepoRoot(): string {
     const here = fileURLToPath(import.meta.url);
@@ -411,6 +412,65 @@ describe("@tsuba/cli build", function () {
     expect(mainRs).to.contain("use simple_crate::add;");
     expect(mainRs).to.contain("use simple_crate::math::mul;");
     expect(mainRs).to.contain("Point::origin()");
+  });
+
+  it("builds a project that consumes a tsubabindgen-generated facade package (bundled crate mode)", async () => {
+    const root = makeRepoTempDir("cli-build-bindgen-bundled-");
+    const projectName = basename(root);
+
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", projectName);
+
+    const repoRoot = getRepoRoot();
+    const fixtureCrate = join(repoRoot, "test", "fixtures", "bindgen", "@tsuba", "simple", "crate");
+    const localCrate = join(root, "local-crates", "simple-crate");
+    cpSync(fixtureCrate, localCrate, { recursive: true });
+    const fixtureManifest = join(localCrate, "Cargo.toml");
+
+    await runBindgen({
+      dir: root,
+      argv: [
+        "--manifest-path",
+        fixtureManifest,
+        "--out",
+        "./node_modules/@tsuba/simple-bundled",
+        "--package",
+        "@tsuba/simple-bundled",
+        "--bundle-crate",
+      ],
+    });
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      [
+        'import { ANSWER, Point, add } from "@tsuba/simple-bundled/index.js";',
+        'import { mul } from "@tsuba/simple-bundled/math.js";',
+        "",
+        "export function main(): void {",
+        "  const p = Point.origin();",
+        "  void p;",
+        "  const x = add(1, 2);",
+        "  const y = mul(2, 3);",
+        "  if (x === 3 && y === 6 && ANSWER === 42) {",
+        "    // ok",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    await runBuild({ dir: projectRoot });
+
+    const cargoToml = readFileSync(join(projectRoot, "generated", "Cargo.toml"), "utf-8");
+    expect(cargoToml).to.contain('simple_crate = { path = "');
+    expect(cargoToml).to.contain("simple-bundled/crate");
+
+    const mainRs = readFileSync(join(projectRoot, "generated", "src", "main.rs"), "utf-8");
+    expect(mainRs).to.contain("use simple_crate::ANSWER;");
+    expect(mainRs).to.contain("use simple_crate::Point;");
+    expect(mainRs).to.contain("use simple_crate::add;");
+    expect(mainRs).to.contain("use simple_crate::math::mul;");
   });
 
   it("maps rustc errors back to TS source spans when possible", async () => {

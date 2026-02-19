@@ -279,4 +279,78 @@ describe("@tsuba/compiler risk regressions", () => {
     expect(b.crates).to.deep.equal(a.crates);
     expect(b.kernels).to.deep.equal(a.kernels);
   });
+
+  it("is byte-deterministic across relocated project roots", () => {
+    const source = [
+      'import type { i32 } from "@tsuba/core/types.js";',
+      "",
+      "type Pair = {",
+      "  left: i32;",
+      "  right: i32;",
+      "};",
+      "",
+      "function sum(p: Pair): i32 {",
+      "  return (p.left + p.right) as i32;",
+      "}",
+      "",
+      "export function main(): void {",
+      "  const p = { left: 1 as i32, right: 2 as i32 };",
+      "  const out = sum(p);",
+      "  void out;",
+      "}",
+      "",
+    ].join("\n");
+
+    const dirA = makeRepoTempDir("compiler-risk-reloc-a-");
+    const dirB = makeRepoTempDir("compiler-risk-reloc-b-");
+    const entryA = join(dirA, "main.ts");
+    const entryB = join(dirB, "main.ts");
+    writeFileSync(entryA, source, "utf-8");
+    writeFileSync(entryB, source, "utf-8");
+
+    const outA = compileHostToRust({ entryFile: entryA });
+    const outB = compileHostToRust({ entryFile: entryB });
+
+    expect(outA.mainRs).to.equal(outB.mainRs);
+    expect(outA.mainRs).to.contain("// tsuba-span: main.ts:");
+    expect(outA.mainRs).to.not.contain(dirA.replaceAll("\\", "/"));
+    expect(outB.mainRs).to.not.contain(dirB.replaceAll("\\", "/"));
+    expect(outA.crates).to.deep.equal(outB.crates);
+    expect(outA.kernels).to.deep.equal(outB.kernels);
+  });
+
+  it("keeps kernel lowering deterministic across relocated project roots", () => {
+    const source = [
+      'import type { f32, u32 } from "@tsuba/core/types.js";',
+      'import type { global_ptr } from "@tsuba/gpu/types.js";',
+      'import { kernel, threadIdxX, blockIdxX, blockDimX } from "@tsuba/gpu/lang.js";',
+      "",
+      'const add = kernel({ name: "add_kernel" } as const, (a: global_ptr<f32>, b: global_ptr<f32>, out: global_ptr<f32>, n: u32): void => {',
+      "  const i = (blockIdxX() * blockDimX() + threadIdxX()) as u32;",
+      "  if (i < n) {",
+      "    out[i] = a[i] + b[i];",
+      "  }",
+      "});",
+      "",
+      "export function main(): void {",
+      "  return;",
+      "}",
+      "",
+    ].join("\n");
+
+    const dirA = makeRepoTempDir("compiler-risk-kernel-reloc-a-");
+    const dirB = makeRepoTempDir("compiler-risk-kernel-reloc-b-");
+    const entryA = join(dirA, "main.ts");
+    const entryB = join(dirB, "main.ts");
+    writeFileSync(entryA, source, "utf-8");
+    writeFileSync(entryB, source, "utf-8");
+
+    const outA = compileHostToRust({ entryFile: entryA });
+    const outB = compileHostToRust({ entryFile: entryB });
+
+    expect(outA.mainRs).to.equal(outB.mainRs);
+    expect(outA.kernels).to.deep.equal(outB.kernels);
+    expect(outA.kernels).to.have.length(1);
+    expect(outA.kernels[0]!.name).to.equal("add_kernel");
+  });
 });

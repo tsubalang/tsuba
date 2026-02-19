@@ -98,7 +98,7 @@ Primary evidence:
 | --- | --- | --- | --- |
 | Kernel declarations | `kernel({ name } as const, (..) => ..)` in top-level consts | invalid kernel declaration forms/names/specs | broader declaration forms |
 | Kernel body subset | scalar ops, loops, shared memory, barriers, pointer/index intrinsics, selected math/atomics | non-whitelisted syntax/intrinsics/types | staged expansion after test coverage |
-| Host launch path | launch lowering + runtime glue + CUDA PTX compile path | invalid launch configs or host misuse of kernel-only values | backend expansion beyond CUDA/PTX |
+| Host launch path | launch lowering + runtime glue + CUDA PTX compile path; launch config validation for object-literal shape, required `{grid, block}`, and strict 3D dimensions | invalid launch configs or host misuse of kernel-only values | backend expansion beyond CUDA/PTX |
 
 Primary evidence:
 

@@ -28,3 +28,4 @@ Specs:
 - `tsubabindgen-representability.md` — concrete bindgen surface/skip taxonomy and determinism contract.
 - `compiler-pass-contracts.md` — compiler pass graph and pass I/O contract.
 - `diagnostics-catalog.md` — high-frequency `TSBxxxx` diagnostic catalog by domain.
+- `release-playbook.md` — release preflight, publish order, rollback/republish policy.

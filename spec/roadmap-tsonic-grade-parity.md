@@ -57,9 +57,9 @@ Status values for tracking:
 - [ ] Cross-pass mutation is prohibited except through typed pass outputs.
 
 ### A.2 Deterministic lowering
-- [ ] Same source + config produces byte-identical output in generated Rust/CUDA/manifests.
-- [ ] Ordering rules are explicit for modules, imports, type declarations, impl blocks, and generated helper names.
-- [ ] No environment-dependent paths in generated artifacts (except optional debug traces).
+- [x] Same source + config produces byte-identical output in generated Rust/CUDA/manifests.
+- [x] Ordering rules are explicit for modules, imports, type declarations, impl blocks, and generated helper names.
+- [x] No environment-dependent paths in generated artifacts (except optional debug traces).
 
 ### A.3 Miscompile prevention gates
 - [ ] Every supported syntax shape has a dedicated lowering test.
@@ -108,7 +108,7 @@ Status values for tracking:
 - [x] Class-to-struct lowering has constructor/field/method correctness coverage.
 
 ### B.5 Async model (P1)
-- [ ] Runtime policy (`none`/`tokio`) is fully validated at compile time.
+- [x] Runtime policy (`none`/`tokio`) is fully validated at compile time.
 - [x] Async diagnostic coverage includes all prohibited forms (e.g. unsupported Promise chains).
 - [ ] Runnable async proof fixtures exist for host services/jobs.
 
@@ -119,9 +119,9 @@ Status values for tracking:
 ## 5) Workstream C — Diagnostics quality parity (P0/P1)
 
 ### C.1 Stable diagnostic inventory (P0)
-- [ ] Every compiler error path maps to a registered `TSBxxxx`.
-- [ ] No raw `throw` escapes user-facing paths without code assignment.
-- [ ] Diagnostic domain taxonomy remains complete and enforced.
+- [x] Every compiler error path maps to a registered `TSBxxxx`.
+- [x] No raw `throw` escapes user-facing paths without code assignment.
+- [x] Diagnostic domain taxonomy remains complete and enforced.
 
 ### C.2 Error precision (P1)
 - [ ] All diagnostics include actionable message + source span.
@@ -130,7 +130,7 @@ Status values for tracking:
 
 ### C.3 Diagnostic regression harness (P1)
 - [x] Add fixture-based “expected diagnostics” snapshots per domain.
-- [ ] Add negative tests for each newly added feature before merge.
+- [x] Add negative tests for each newly added feature before merge.
 
 **Exit gate C:** 100% diagnostic-path coverage for supported/unsupported syntax classes.
 
@@ -139,8 +139,8 @@ Status values for tracking:
 ## 6) Workstream D — Bindgen maturity parity (P0/P1)
 
 ### D.1 Extractor robustness (P0)
-- [ ] syn extractor remains primary path; legacy parser only debug-gated.
-- [ ] Deterministic ordering and normalized paths in reports.
+- [x] syn extractor remains primary path; legacy parser only debug-gated.
+- [x] Deterministic ordering and normalized paths in reports.
 - [x] Parse failures produce explicit skip issues (never silent drop).
 
 ### D.2 Surface coverage (P1)
@@ -151,7 +151,7 @@ Status values for tracking:
 ### D.3 Cross-crate fidelity (P1)
 - [x] Re-export and module-path correctness for nested modules.
 - [ ] Deterministic behavior on crates with heavy generic and macro usage.
-- [ ] Bundled crate mode and path-backed mode both verified via CLI integration fixtures.
+- [x] Bundled crate mode and path-backed mode both verified via CLI integration fixtures.
 
 **Exit gate D:** Two-run byte identity + no unexplained surface loss across advanced fixture set.
 
@@ -180,14 +180,14 @@ Status values for tracking:
 ## 8) Workstream F — GPU parity path (P0/P1)
 
 ### F.1 Kernel subset completeness (P0)
-- [ ] Explicitly documented allowed syntax in kernels.
-- [ ] Deterministic lowering for scalar math, indexing, loops, shared memory, barriers, atomics.
-- [ ] Strict diagnostics for forbidden kernel constructs.
+- [x] Explicitly documented allowed syntax in kernels.
+- [x] Deterministic lowering for scalar math, indexing, loops, shared memory, barriers, atomics.
+- [x] Strict diagnostics for forbidden kernel constructs.
 
 ### F.2 Host↔device integration (P1)
-- [ ] Launch config validation coverage (`grid`, `block`, dimensions, types).
-- [ ] Runtime glue verified for allocation/free/copy paths with borrow safety constraints.
-- [ ] Capability/config mismatch diagnostics are clear and stable.
+- [x] Launch config validation coverage (`grid`, `block`, dimensions, types).
+- [x] Runtime glue verified for allocation/free/copy paths with borrow safety constraints.
+- [x] Capability/config mismatch diagnostics are clear and stable.
 
 ### F.3 GPU proof kernels (P1)
 - [ ] Matmul, softmax, MoE-dispatch kernels compile deterministically.
@@ -252,7 +252,7 @@ Status values for tracking:
 - [ ] Signed tags and reproducible release artifact metadata.
 
 ### I.3 Rollback readiness
-- [ ] Documented rollback and republish playbook.
+- [x] Documented rollback and republish playbook.
 
 **Exit gate I:** Release process is deterministic, auditable, and fail-fast.
 

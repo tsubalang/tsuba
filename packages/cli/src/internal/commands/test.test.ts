@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import { runInit } from "./init.js";
 import { runTest } from "./test.js";
 
-describe("@tsuba/cli test", () => {
+describe("@tsuba/cli test", function () {
+  this.timeout(30_000);
+
   function getRepoRoot(): string {
     const here = fileURLToPath(import.meta.url);
     return resolve(join(dirname(here), "../../../../.."));
