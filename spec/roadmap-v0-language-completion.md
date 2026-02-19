@@ -85,7 +85,7 @@ Still incomplete for parity-grade v0:
 - Compiler architecture is still too concentrated in `packages/compiler/src/rust/host.ts` (needs cleaner pass boundaries).
 - `tsubabindgen` is still MVP-grade and source/regex-heavy (needs robust extraction path and broader coverage).
 - Release/publish preflight scripts are missing.
-- External proof verification has a script entrypoint (`scripts/verify-proof.sh`) but is not yet required in publish gates.
+- External proof verification is wired into publish preflight (`scripts/publish-npm.sh` runs `scripts/verify-proof.sh --require` by default).
 
 For the explicit parity matrix vs Tsonic, see:
 

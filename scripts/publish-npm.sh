@@ -7,20 +7,25 @@ cd "$ROOT_DIR"
 
 RUN_TESTS=true
 DRY_RUN=false
+RUN_PROOF=true
+PROOF_REPO=""
 
 print_help() {
   cat <<'EOF_HELP'
-Usage: ./scripts/publish-npm.sh [--no-tests] [--dry-run]
+Usage: ./scripts/publish-npm.sh [--no-tests] [--dry-run] [--no-proof] [--proof-repo <path>]
 
 Safety checks (always on):
   - must run on branch main
   - working tree must be clean
   - local main must match origin/main
   - package versions must not already exist on npm
+  - proof verification must pass (requires proof repo)
 
 Options:
   --no-tests   Skip npm run run-all (not recommended for releases)
   --dry-run    Run checks and print publish plan without publishing
+  --no-proof   Skip proof verification (not recommended for releases)
+  --proof-repo Override proof repo path used by verify-proof.sh
   -h, --help   Show this help
 EOF_HELP
 }
@@ -33,6 +38,19 @@ while [ $# -gt 0 ]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --no-proof)
+      RUN_PROOF=false
+      shift
+      ;;
+    --proof-repo)
+      shift
+      if [ -z "${1:-}" ]; then
+        echo "FAIL: --proof-repo requires a path"
+        exit 2
+      fi
+      PROOF_REPO="$1"
       shift
       ;;
     -h|--help)
@@ -74,6 +92,17 @@ if [ "$RUN_TESTS" = true ]; then
   npm run run-all
 else
   echo "WARN: skipping tests (--no-tests)."
+fi
+
+if [ "$RUN_PROOF" = true ]; then
+  echo "==> Running proof verification (required)"
+  proof_args=(bash "$ROOT_DIR/scripts/verify-proof.sh" --require)
+  if [ -n "$PROOF_REPO" ]; then
+    proof_args+=(--repo "$PROOF_REPO")
+  fi
+  "${proof_args[@]}"
+else
+  echo "WARN: skipping proof verification (--no-proof)."
 fi
 
 PACKAGE_DIRS=(
