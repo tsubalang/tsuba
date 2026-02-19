@@ -30,6 +30,14 @@ import {
   type KernelDecl,
 } from "./kernel-dialect.js";
 import { writeRustProgram } from "./write.js";
+import {
+  isMutMarkerType,
+  lowerTypeParameters as lowerTypeParametersFromLowering,
+  methodReceiverFromThisParam,
+  typeNodeToRust as typeNodeToRustFromLowering,
+  unwrapPromiseInnerType as unwrapPromiseInnerTypeFromLowering,
+} from "./lowering/type-lowering.js";
+import { tryParseAnnotateStatement as tryParseAnnotateStatementFromLowering } from "./lowering/annotations.js";
 
 export type { KernelDecl } from "./kernel-dialect.js";
 
@@ -260,11 +268,6 @@ function unionDefFromIdentifier(ctx: EmitCtx, ident: ts.Identifier): UnionDef | 
   return undefined;
 }
 
-function entityNameToSegments(name: ts.EntityName): readonly string[] {
-  if (ts.isIdentifier(name)) return [name.text];
-  return [...entityNameToSegments(name.left), name.right.text];
-}
-
 function expressionToSegments(expr: ts.Expression): readonly string[] | undefined {
   if (ts.isIdentifier(expr)) return [expr.text];
   if (ts.isPropertyAccessExpression(expr)) {
@@ -447,26 +450,6 @@ function kernelDeclForIdentifier(ctx: EmitCtx, ident: ts.Identifier): KernelDecl
   return lookupKernelDeclForIdentifier(ctx.checker, ctx.kernelDeclBySymbol, ident);
 }
 
-const rustPrimitiveTypes = new Map<string, RustType>([
-  ["i8", pathType(["i8"])],
-  ["i16", pathType(["i16"])],
-  ["i32", pathType(["i32"])],
-  ["i64", pathType(["i64"])],
-  ["i128", pathType(["i128"])],
-  ["isize", pathType(["isize"])],
-  ["u8", pathType(["u8"])],
-  ["u16", pathType(["u16"])],
-  ["u32", pathType(["u32"])],
-  ["u64", pathType(["u64"])],
-  ["u128", pathType(["u128"])],
-  ["usize", pathType(["usize"])],
-  ["f32", pathType(["f32"])],
-  ["f64", pathType(["f64"])],
-  ["bool", pathType(["bool"])],
-  ["Str", pathType(["str"])],
-  ["String", pathType(["std", "string", "String"])],
-]);
-
 function fail(code: string, message: string, span?: Span): never {
   assertCompilerDiagnosticCode(code);
   throw new CompileError(code, message, span);
@@ -594,221 +577,23 @@ function sortUseItems(uses: readonly RustItem[]): RustItem[] {
   });
 }
 
-function parseTokensArg(ctx: EmitCtx, expr: ts.Expression): string {
-  if (!ts.isTaggedTemplateExpression(expr) || !ts.isIdentifier(expr.tag)) {
-    failAt(expr, "TSB3300", "attr(...) arguments must be tokens`...` in v0.");
-  }
-  if (expr.tag.text !== "tokens" || !isFromTsubaCoreLang(ctx, expr.tag)) {
-    failAt(expr.tag, "TSB3301", "attr(...) arguments must use @tsuba/core tokens`...` in v0.");
-  }
-  const tmpl = expr.template;
-  if (!ts.isNoSubstitutionTemplateLiteral(tmpl)) {
-    failAt(tmpl, "TSB3302", "tokens`...` must not contain substitutions in v0.");
-  }
-  if (tmpl.text.includes("\n") || tmpl.text.includes("\r")) {
-    failAt(tmpl, "TSB3303", "tokens`...` must be single-line in v0.");
-  }
-  return tmpl.text;
-}
-
-function parseCoreAttrMarker(ctx: EmitCtx, expr: ts.CallExpression): string {
-  if (!ts.isIdentifier(expr.expression)) {
-    failAt(expr, "TSB3305", "annotate(...) @tsuba/core attr markers must use attr(...).");
-  }
-  const callee = expr.expression;
-  if (callee.text !== "attr" || !isFromTsubaCoreLang(ctx, callee)) {
-    failAt(callee, "TSB3305", "annotate(...) @tsuba/core attr markers must use attr(...).");
-  }
-  const [nameArg, ...rest] = expr.arguments;
-  if (!nameArg || !ts.isStringLiteral(nameArg)) {
-    failAt(expr, "TSB3306", "attr(name, ...) requires a string literal name in v0.");
-  }
-  const args = rest.map((item) => parseTokensArg(ctx, item));
-  if (args.length === 0) return `#[${nameArg.text}]`;
-  return `#[${nameArg.text}(${args.join(", ")})]`;
-}
-
-function annotatePathFromExpr(expr: ts.Expression): string {
-  const segs = expressionToSegments(expr);
-  if (!segs || segs.length === 0) {
-    failAt(
-      expr,
-      "TSB3304",
-      "annotate(...) only supports attr(...), AttrMacro calls, and DeriveMacro values in v0."
-    );
-  }
-  return segs.join("::");
-}
-
-function parseAnnotateItem(
-  ctx: EmitCtx,
-  item: ts.Expression
-): { readonly attr?: string; readonly derive?: string } {
-  if (ts.isCallExpression(item)) {
-    if (ts.isIdentifier(item.expression) && item.expression.text === "attr" && isFromTsubaCoreLang(ctx, item.expression)) {
-      return { attr: parseCoreAttrMarker(ctx, item) };
-    }
-    if (isAttrMacroType(ctx.checker, item.expression)) {
-      if ((item.typeArguments?.length ?? 0) > 0) {
-        failAt(item, "TSB3304", "annotate(...) AttrMacro calls do not support type arguments in v0.");
-      }
-      const name = annotatePathFromExpr(item.expression);
-      const args = item.arguments.map((arg) => parseTokensArg(ctx, arg));
-      if (args.length === 0) return { attr: `#[${name}]` };
-      return { attr: `#[${name}(${args.join(", ")})]` };
-    }
-    failAt(
-      item,
-      "TSB3304",
-      "annotate(...) only supports attr(...), AttrMacro calls, and DeriveMacro values in v0."
-    );
-  }
-
-  if (isDeriveMacroType(ctx.checker, item)) {
-    return { derive: annotatePathFromExpr(item) };
-  }
-
-  failAt(
-    item,
-    "TSB3304",
-    "annotate(...) only supports attr(...), AttrMacro calls, and DeriveMacro values in v0."
-  );
-}
-
 function tryParseAnnotateStatement(
   ctx: EmitCtx,
   st: ts.Statement
 ): { readonly target: string; readonly attrs: readonly string[] } | undefined {
-  if (!ts.isExpressionStatement(st)) return undefined;
-  const e = st.expression;
-  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression)) return undefined;
-  const callee = e.expression;
-  if (callee.text !== "annotate" || !isFromTsubaCoreLang(ctx, callee)) return undefined;
-
-  if (e.arguments.length < 2) {
-    failAt(e, "TSB3307", "annotate(target, ...) requires at least one attribute in v0.");
-  }
-  const [target, ...items] = e.arguments;
-  if (!target || !ts.isIdentifier(target)) {
-    failAt(e, "TSB3308", "annotate(...) target must be an identifier in v0.");
-  }
-
-  const attrs: string[] = [];
-  const derives: string[] = [];
-  for (const item of items) {
-    const parsed = parseAnnotateItem(ctx, item);
-    if (parsed.attr) attrs.push(parsed.attr);
-    if (parsed.derive) derives.push(parsed.derive);
-  }
-  if (derives.length > 0) attrs.push(`#[derive(${derives.join(", ")})]`);
-  return { target: target.text, attrs };
+  return tryParseAnnotateStatementFromLowering(
+    {
+      failAt,
+      isFromTsubaCoreLang: (ident) => isFromTsubaCoreLang(ctx, ident),
+      isAttrMacroType: (node) => isAttrMacroType(ctx.checker, node),
+      isDeriveMacroType: (node) => isDeriveMacroType(ctx.checker, node),
+    },
+    st
+  );
 }
 
 function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
-  if (!typeNode) return unitType();
-  if (typeNode.kind === ts.SyntaxKind.VoidKeyword) return unitType();
-  if (ts.isTypeReferenceNode(typeNode)) {
-    const typeNameSegments = entityNameToSegments(typeNode.typeName);
-
-    if (typeNameSegments.length > 0) {
-      const baseName = typeNameSegments[typeNameSegments.length - 1]!;
-      const mapped = typeNameSegments.length === 1 ? rustPrimitiveTypes.get(baseName) : undefined;
-      if (mapped) return mapped;
-
-      if (typeNameSegments.length === 1 && (baseName === "ref" || baseName === "mutref")) {
-        const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1016", `${baseName}<T> must have exactly one type argument.`);
-        return { kind: "ref", mut: baseName === "mutref", inner: typeNodeToRust(inner) };
-      }
-
-      if (typeNameSegments.length === 1 && (baseName === "refLt" || baseName === "mutrefLt")) {
-        const [lt, inner] = typeNode.typeArguments ?? [];
-        if (!lt || !inner) failAt(typeNode, "TSB1017", `${baseName}<L,T> must have exactly two type arguments.`);
-        if (!ts.isLiteralTypeNode(lt) || !ts.isStringLiteral(lt.literal)) {
-          failAt(lt, "TSB1018", `${baseName} lifetime must be a string literal (e.g., refLt<\"a\", T>).`);
-        }
-        return {
-          kind: "ref",
-          mut: baseName === "mutrefLt",
-          lifetime: lt.literal.text,
-          inner: typeNodeToRust(inner),
-        };
-      }
-
-      // mut<T> marker -> let mut + T
-      if (typeNameSegments.length === 1 && baseName === "mut") {
-        const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1011", "mut<T> must have exactly one type argument.");
-        return typeNodeToRust(inner);
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "Option") {
-        const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1012", "Option<T> must have exactly one type argument.");
-        return pathType(["Option"], [typeNodeToRust(inner)]);
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "Result") {
-        const [okTy, errTy] = typeNode.typeArguments ?? [];
-        if (!okTy || !errTy) failAt(typeNode, "TSB1013", "Result<T,E> must have exactly two type arguments.");
-        return pathType(["Result"], [typeNodeToRust(okTy), typeNodeToRust(errTy)]);
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "Vec") {
-        const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1014", "Vec<T> must have exactly one type argument.");
-        return pathType(["Vec"], [typeNodeToRust(inner)]);
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "HashMap") {
-        const [k, v] = typeNode.typeArguments ?? [];
-        if (!k || !v) failAt(typeNode, "TSB1015", "HashMap<K,V> must have exactly two type arguments.");
-        return pathType(["std", "collections", "HashMap"], [typeNodeToRust(k), typeNodeToRust(v)]);
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "Slice") {
-        const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1021", "Slice<T> must have exactly one type argument.");
-        return { kind: "slice", inner: typeNodeToRust(inner) };
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "ArrayN") {
-        const [inner, lenNode] = typeNode.typeArguments ?? [];
-        if (!inner || !lenNode) {
-          failAt(typeNode, "TSB1022", "ArrayN<T,N> must have exactly two type arguments.");
-        }
-        if (
-          !ts.isLiteralTypeNode(lenNode) ||
-          !ts.isNumericLiteral(lenNode.literal)
-        ) {
-          failAt(lenNode, "TSB1023", "ArrayN length must be a numeric literal type (e.g., ArrayN<u8, 16>).");
-        }
-        const len = Number.parseInt(lenNode.literal.text, 10);
-        if (!Number.isInteger(len) || len < 0) {
-          failAt(lenNode, "TSB1023", "ArrayN length must be a non-negative integer literal.");
-        }
-        return { kind: "array", inner: typeNodeToRust(inner), len };
-      }
-
-      if (typeNameSegments.length === 1 && baseName === "global_ptr") {
-        const [inner] = typeNode.typeArguments ?? [];
-        if (!inner) failAt(typeNode, "TSB1020", "global_ptr<T> must have exactly one type argument.");
-        return pathType(["__tsuba_cuda", "DevicePtr"], [typeNodeToRust(inner)]);
-      }
-
-      // Nominal/user-defined types (including crate types) are allowed as identifiers (and qualified names).
-      // v0 supports generic type application for nominal types.
-      const typeArgs = (typeNode.typeArguments ?? []).map((t) => typeNodeToRust(t));
-      return pathType(typeNameSegments, typeArgs);
-    }
-  }
-  if (ts.isTupleTypeNode(typeNode)) {
-    const elems = typeNode.elements.map((el) =>
-      ts.isNamedTupleMember(el) ? typeNodeToRust(el.type) : typeNodeToRust(el)
-    );
-    return { kind: "tuple", elems };
-  }
-  failAt(typeNode, "TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
+  return typeNodeToRustFromLowering(typeNode, { failAt });
 }
 
 function unwrapPromiseInnerType(
@@ -817,65 +602,7 @@ function unwrapPromiseInnerType(
   typeNode: ts.TypeNode | undefined,
   code: string
 ): ts.TypeNode {
-  if (!typeNode) {
-    failAt(ownerNode, code, `${ownerLabel}: async functions must declare an explicit Promise<...> return type in v0.`);
-  }
-  if (!ts.isTypeReferenceNode(typeNode) || !ts.isIdentifier(typeNode.typeName) || typeNode.typeName.text !== "Promise") {
-    failAt(ownerNode, code, `${ownerLabel}: async functions must return Promise<T> in v0.`);
-  }
-  const [inner] = typeNode.typeArguments ?? [];
-  if (!inner) {
-    failAt(typeNode, code, `${ownerLabel}: Promise<T> must have exactly one type argument in v0.`);
-  }
-  return inner;
-}
-
-function lowerTypeParameter(
-  checker: ts.TypeChecker,
-  ownerNode: ts.Node,
-  ownerLabel: string,
-  p: ts.TypeParameterDeclaration,
-  code: string
-): RustGenericParam {
-  if (!ts.isIdentifier(p.name)) {
-    failAt(ownerNode, code, `${ownerLabel}: unsupported generic parameter declaration in v0.`);
-  }
-
-  const bounds: RustType[] = [];
-  const constraint = p.constraint;
-  if (constraint) {
-    const pushBound = (node: ts.TypeNode): void => {
-      const ty = typeNodeToRust(node);
-      if (ty.kind !== "path") {
-        failAt(node, code, `${ownerLabel}: generic constraint must be a nominal trait/type path in v0.`);
-      }
-      const constraintType = checker.getTypeFromTypeNode(node);
-      const symbol0 =
-        constraintType.getSymbol() ??
-        (constraintType as unknown as { readonly aliasSymbol?: ts.Symbol }).aliasSymbol;
-      if (!symbol0) {
-        failAt(node, code, `${ownerLabel}: generic constraint must resolve to a trait interface in v0.`);
-      }
-      const symbol =
-        (symbol0.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol0) : symbol0;
-      const isInterface = (symbol.declarations ?? []).some((d) => ts.isInterfaceDeclaration(d));
-      if (!isInterface) {
-        failAt(node, code, `${ownerLabel}: generic constraint must resolve to a trait interface in v0.`);
-      }
-      bounds.push(ty);
-    };
-
-    if (ts.isIntersectionTypeNode(constraint)) {
-      if (constraint.types.length === 0) {
-        failAt(constraint, code, `${ownerLabel}: empty intersection constraints are not supported in v0.`);
-      }
-      for (const part of constraint.types) pushBound(part);
-    } else {
-      pushBound(constraint);
-    }
-  }
-
-  return { name: p.name.text, bounds };
+  return unwrapPromiseInnerTypeFromLowering(ownerNode, ownerLabel, typeNode, code, { failAt });
 }
 
 function lowerTypeParameters(
@@ -885,8 +612,7 @@ function lowerTypeParameters(
   params: readonly ts.TypeParameterDeclaration[] | undefined,
   code: string
 ): readonly RustGenericParam[] {
-  if (!params || params.length === 0) return [];
-  return params.map((p) => lowerTypeParameter(checker, ownerNode, ownerLabel, p, code));
+  return lowerTypeParametersFromLowering(checker, ownerNode, ownerLabel, params, code, { failAt });
 }
 
 function rustTypeEq(a: RustType, b: RustType): boolean {
@@ -950,14 +676,6 @@ function lowerExprWithTypeArgsToRustType(
   }
   const args = (exprWithTypeArgs.typeArguments ?? []).map((a) => typeNodeToRust(a));
   return pathType(segments, args);
-}
-
-function isMutMarkerType(typeNode: ts.TypeNode | undefined): boolean {
-  if (!typeNode) return false;
-  if (!ts.isTypeReferenceNode(typeNode)) return false;
-  const tn = typeNode.typeName;
-  if (!ts.isIdentifier(tn)) return false;
-  return tn.text === "mut";
 }
 
 function hasTypeBrand(checker: ts.TypeChecker, node: ts.Expression, brand: string): boolean {
@@ -2179,20 +1897,6 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
     attrs,
     body,
   };
-}
-
-function methodReceiverFromThisParam(typeNode: ts.TypeNode | undefined): { readonly mut: boolean; readonly lifetime?: string } | undefined {
-  if (!typeNode) return undefined;
-  if (!ts.isTypeReferenceNode(typeNode)) return undefined;
-  if (!ts.isIdentifier(typeNode.typeName)) return undefined;
-  const name = typeNode.typeName.text;
-  if (name === "ref" || name === "mutref") return { mut: name === "mutref" };
-  if (name === "refLt" || name === "mutrefLt") {
-    const [lt] = typeNode.typeArguments ?? [];
-    if (!lt || !ts.isLiteralTypeNode(lt) || !ts.isStringLiteral(lt.literal)) return undefined;
-    return { mut: name === "mutrefLt", lifetime: lt.literal.text };
-  }
-  return undefined;
 }
 
 function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly string[]): readonly RustItem[] {
