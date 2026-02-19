@@ -37,9 +37,9 @@ Status:
 | Generic + trait semantics | Strong generic/constraint validation and lowering | **Done** (host subset) | P0 | Trait/generic tests in `packages/compiler/src/rust/host.test.ts` | Expand edge-case matrix (nested bounds, generic impl collisions) |
 | Async + runtime policy | Deterministic async lowering/runtime contract | **Done** (tokio/none policy) | P0 | `runtimeKind` handling in `host.ts`, async tests in `host.test.ts` | Add more E2E fixtures for async crate deps and error surfaces |
 | Bindgen determinism and breadth | Robust extractor + deterministic surface + skip reporting | **Partial** | P0 | `packages/tsubabindgen/src/generate.ts`, deterministic tests | Replace regex/source parsing core with robust extractor; grow trait/enum/macro coverage |
-| Test harness composition | Unit + fixture typecheck + E2E with filtered loop and full gate | **Done** | P0 | `test/scripts/{run-all.sh,run-e2e.sh,typecheck-fixtures.sh}` | Add explicit dirty-tree guard in run-all |
+| Test harness composition | Unit + fixture typecheck + E2E with filtered loop and full gate | **Done** | P0 | `test/scripts/{run-all.sh,run-e2e.sh,typecheck-fixtures.sh}` | Keep fixture corpus expanding with new features |
 | Proof-repo verification loop | Separate integration repo (`proof-is-in-the-pudding`) run as gate | **Missing** | P1 | N/A in this repo | Wire external proof repo verify script into release checklist |
-| Publish preflight discipline | Branch/sync/clean/version checks before publish | **Missing** | P0 | No `scripts/publish-*.sh` yet in this repo | Add publish scripts with invariant checks before npm/crates publish |
+| Publish preflight discipline | Branch/sync/clean/version checks before publish | **Partial** | P0 | `scripts/publish-npm.sh` enforces branch/sync/clean/full-test/version checks | Add crates publish preflight + signed release notes flow |
 | Docs parity depth | Architecture + user + limitations docs kept current | **Partial** | P1 | `spec/*` exists and is substantial | Keep roadmap/status docs synchronized with implementation after every major merge |
 
 ---

@@ -133,16 +133,24 @@ Merge gate:
 
 ### A3. Publish preflight discipline (later, but plan it now)
 
-We should port Tsonic-style publish invariants:
+Current state:
 
-- only publish from `main` (or a tagged release branch)
-- working tree clean
-- remote synced
-- version bump present
+- **Partially completed**: npm preflight and publish flow is implemented in `scripts/publish-npm.sh`.
+- Enforced checks include:
+  - branch must be `main`
+  - working tree must be clean
+  - local `main` must match `origin/main`
+  - full `npm run run-all` gate (unless explicitly skipped)
+  - package version must not already exist on npm
+
+Remaining scope:
+
+- add crates publish preflight with equivalent invariants
+- add release-note/tag workflow integration
 
 Merge gate:
 
-- A single `scripts/publish-*.sh` exists for npm packages (and later for crates) with invariant checks.
+- `scripts/publish-*.sh` exists for npm and crates with parity preflight checks.
 
 ---
 
