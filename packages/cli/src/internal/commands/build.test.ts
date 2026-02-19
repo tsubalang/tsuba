@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,125 @@ describe("@tsuba/cli build", () => {
 
     const mainRs = readFileSync(join(projectRoot, "generated", "src", "main.rs"), "utf-8");
     expect(mainRs).to.contain("fn main()");
+  });
+
+  it("rejects unsupported tsuba.workspace.json schema", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tsuba-build-invalid-ws-"));
+    const projectName = basename(root);
+    await runInit({ dir: root });
+    const wsPath = join(root, "tsuba.workspace.json");
+    const projectRoot = join(root, "packages", projectName);
+    const ws = JSON.parse(readFileSync(wsPath, "utf-8")) as Record<string, unknown>;
+
+    ws.schema = 99;
+    writeFileSync(wsPath, JSON.stringify(ws, null, 2) + "\n", "utf-8");
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(String(err)).to.contain("Unsupported tsuba.workspace.json schema.");
+  });
+
+  it("rejects unsupported tsuba.json schema", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tsuba-build-invalid-project-"));
+    const root = join(dir, "demo");
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", "demo");
+    const projectJsonPath = join(projectRoot, "tsuba.json");
+    const project = JSON.parse(readFileSync(projectJsonPath, "utf-8")) as Record<string, unknown>;
+
+    project.schema = 0;
+    writeFileSync(projectJsonPath, JSON.stringify(project, null, 2) + "\n", "utf-8");
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(String(err)).to.contain("Unsupported tsuba.json schema.");
+  });
+
+  it("errors when imported bindings manifest is not schema-1 compatible", async () => {
+    const root = makeRepoTempDir("cli-build-bad-manifest-");
+    const projectName = basename(root);
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", projectName);
+
+    const pkgRoot = join(root, "node_modules", "@tsuba", "bad");
+    mkdirSync(pkgRoot, { recursive: true });
+    writeFileSync(join(pkgRoot, "package.json"), JSON.stringify({ name: "@tsuba/bad", version: "0.0.1" }) + "\n", "utf-8");
+    writeFileSync(join(pkgRoot, "index.js"), "export {};\n", "utf-8");
+    writeFileSync(
+      join(pkgRoot, "index.d.ts"),
+      ["export declare class Foo {}", "export declare function add(a: number, b: number): number;"].join("\n") + "\n",
+      "utf-8"
+    );
+    writeFileSync(
+      join(pkgRoot, "tsuba.bindings.json"),
+      JSON.stringify({ schema: 99, kind: "crate", crate: { name: "bad", version: "0.0.1" }, modules: {} }, null, 2) + "\n",
+      "utf-8"
+    );
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      ['import { Foo, add } from "@tsuba/bad/index.js";', "", "export function main(): void {", "  const x = add(1, 2);", "  void x;", "  void Foo;", "}", ""].join(
+        "\n"
+      ),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      await runBuild({ dir: projectRoot });
+    } catch (e) {
+      err = e;
+    }
+
+    expect(String(err)).to.contain("unsupported schema (expected 1)");
+  });
+
+  it("produces deterministic generated output for unchanged inputs", async () => {
+    const root = makeRepoTempDir("cli-build-deterministic-");
+    const projectName = basename(root);
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", projectName);
+    const generatedRoot = join(projectRoot, "generated");
+
+    writeFileSync(
+      join(projectRoot, "src", "main.ts"),
+      [
+        "type i32 = number;",
+        "",
+        "export function main(): void {",
+        "  const x = 1 as i32;",
+        "  const y = x + (2 as i32);",
+        "  if (y > x) {",
+        "    // deterministic branch",
+        "  }",
+        "  void y;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    await runBuild({ dir: projectRoot });
+    const rust1 = readFileSync(join(generatedRoot, "src", "main.rs"), "utf-8");
+    const toml1 = readFileSync(join(generatedRoot, "Cargo.toml"), "utf-8");
+
+    rmSync(generatedRoot, { recursive: true, force: true });
+    await runBuild({ dir: projectRoot });
+    const rust2 = readFileSync(join(generatedRoot, "src", "main.rs"), "utf-8");
+    const toml2 = readFileSync(join(generatedRoot, "Cargo.toml"), "utf-8");
+
+    expect(rust2).to.equal(rust1);
+    expect(toml2).to.equal(toml1);
   });
 
   it("errors when kernels exist and gpu.backend is none", async () => {

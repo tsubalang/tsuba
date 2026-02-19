@@ -1,5 +1,6 @@
 import { argv, cwd, exit } from "node:process";
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 import { CompileError } from "@tsuba/compiler";
 
@@ -10,7 +11,7 @@ import { runInit } from "./internal/commands/init.js";
 import { runRun } from "./internal/commands/run.js";
 import { runTest } from "./internal/commands/test.js";
 
-type Cmd = "init" | "add" | "build" | "run" | "test" | "bindgen" | "help";
+export type Cmd = "init" | "add" | "build" | "run" | "test" | "bindgen" | "help";
 
 function usage(): void {
   // Keep this minimal for now.
@@ -33,7 +34,7 @@ function usage(): void {
   );
 }
 
-function parseCommand(args: readonly string[]): Cmd {
+export function parseCommand(args: readonly string[]): Cmd {
   const [cmd] = args;
   if (!cmd) return "help";
   if (cmd === "init" || cmd === "add" || cmd === "build" || cmd === "run" || cmd === "test" || cmd === "bindgen" || cmd === "help") return cmd;
@@ -98,4 +99,6 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main();
+}

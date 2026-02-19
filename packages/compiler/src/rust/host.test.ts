@@ -563,6 +563,37 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.crates).to.deep.equal([{ name: "fake_crate", version: "0.1.0" }]);
   });
 
+  it("errors when a bindings manifest schema is unsupported", () => {
+    const dir = makeRepoTempDir("compiler-bindings-invalid-manifest-");
+    const entry = join(dir, "main.ts");
+
+    const pkgRoot = join(dir, "node_modules", "@tsuba", "bad");
+    mkdirSync(pkgRoot, { recursive: true });
+    writeFileSync(join(pkgRoot, "package.json"), JSON.stringify({ name: "@tsuba/bad", version: "0.0.1" }) + "\n", "utf-8");
+    writeFileSync(join(pkgRoot, "index.js"), "export {};\n", "utf-8");
+    writeFileSync(join(pkgRoot, "index.d.ts"), "export declare class Foo {}", "utf-8");
+    writeFileSync(
+      join(pkgRoot, "tsuba.bindings.json"),
+      JSON.stringify({ schema: 99, kind: "crate", crate: { name: "bad", version: "0.0.1" }, modules: {} }, null, 2) + "\n",
+      "utf-8"
+    );
+
+    writeFileSync(
+      entry,
+      ['import { Foo } from "@tsuba/bad/index.js";', "", "export function main(): void {", "  void Foo;", "}"].join("\n") + "\n",
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB3222");
+  });
+
   it("lowers object type aliases to Rust structs and supports struct literals", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-struct-alias-"));
     const entry = join(dir, "main.ts");
