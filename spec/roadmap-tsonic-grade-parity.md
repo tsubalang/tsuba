@@ -161,8 +161,8 @@ Status values for tracking:
 
 ### E.1 Workspace behavior (P0)
 - [x] Commands from any subdirectory correctly target project/workspace root.
-- [ ] Deterministic resolution between workspace and project config.
-- [ ] Strict schema checks with stable diagnostics.
+- [x] Deterministic resolution between workspace and project config.
+- [x] Strict schema checks with stable diagnostics.
 
 ### E.2 Dependency operations (P1)
 - [x] `add crate`, `add path`, `bindgen` flows fully tested, including package renames.
@@ -307,5 +307,6 @@ Use this table in each large parity PR:
 ## 16) Current reality check (2026-02-19)
 
 - Baseline discipline parity is complete.
+- Workspace/config strictness and root-resolution parity are complete (`packages/cli/src/internal/config.ts` + command matrix tests).
 - Full Tsonic-grade maturity parity is **not** complete.
 - This checklist is the authoritative backlog for closing that gap.

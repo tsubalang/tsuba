@@ -11,6 +11,13 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 
 import { runGenerate } from "@tsuba/tsubabindgen";
+import {
+  findWorkspaceRoot,
+  loadProjectConfig,
+  loadProjectContext,
+  type ProjectConfig,
+  writeProjectConfig,
+} from "../config.js";
 
 export type AddArgs = {
   readonly dir: string;
@@ -29,62 +36,6 @@ export type AddGenerate = (opts: {
   readonly packageName?: string;
   readonly bundleCrate: boolean;
 }) => void;
-
-type ProjectConfig = {
-  readonly schema: number;
-  readonly deps?: {
-    readonly crates?: readonly {
-      readonly id: string;
-      readonly package?: string;
-      readonly version?: string;
-      readonly path?: string;
-      readonly features?: readonly string[];
-    }[];
-  };
-};
-
-function readJson<T>(path: string): T {
-  const raw = readFileSync(path, "utf-8");
-  return JSON.parse(raw) as T;
-}
-
-function writeJson(path: string, value: unknown): void {
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n", "utf-8");
-}
-
-function findWorkspaceRoot(fromDir: string): string {
-  let cur = resolve(fromDir);
-  while (true) {
-    const candidate = join(cur, "tsuba.workspace.json");
-    try {
-      readFileSync(candidate, "utf-8");
-      return cur;
-    } catch {
-      // continue
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  throw new Error("Could not find tsuba.workspace.json in this directory or any parent.");
-}
-
-function findProjectRoot(fromDir: string): string {
-  let cur = resolve(fromDir);
-  while (true) {
-    const candidate = join(cur, "tsuba.json");
-    try {
-      readFileSync(candidate, "utf-8");
-      return cur;
-    } catch {
-      // continue
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  throw new Error("Could not find tsuba.json in this directory or any parent.");
-}
 
 function usage(): never {
   throw new Error(
@@ -119,8 +70,7 @@ function addCrateDep(opts: {
     throw new Error("add: expected exactly one of {version,path}.");
   }
   const jsonPath = join(opts.projectRoot, "tsuba.json");
-  const cfg = readJson<ProjectConfig>(jsonPath);
-  if (cfg.schema !== 1) throw new Error("Unsupported tsuba.json schema.");
+  const cfg = loadProjectConfig(jsonPath);
 
   const prev = cfg.deps?.crates ?? [];
   if (prev.some((d) => d.id === opts.id)) {
@@ -134,7 +84,7 @@ function addCrateDep(opts: {
       : { id: opts.id, package: opts.package, version: opts.version! },
   ];
   const out: ProjectConfig = { ...cfg, deps: { ...(cfg.deps ?? {}), crates: next } };
-  writeJson(jsonPath, out);
+  writeProjectConfig(jsonPath, out);
 }
 
 type CargoMetadata = {
@@ -336,12 +286,12 @@ export async function runAdd(
     return;
   }
 
-  const projectRoot = findProjectRoot(args.dir);
+  const ctx = loadProjectContext(args.dir);
+  const { projectRoot, workspaceRoot } = ctx;
 
   if (kind === "crate") {
     const [spec] = rest;
     if (!spec) usage();
-    const workspaceRoot = findWorkspaceRoot(args.dir);
     const { id: cargoPackage, version } = parseCrateSpec(spec);
     const info = resolveRegistryCrateManifest({ workspaceRoot, cargoPackage, version, spawnSync: spawn });
 
@@ -390,7 +340,6 @@ export async function runAdd(
   if (kind === "path") {
     const [id, p] = rest;
     if (!id || !p) usage();
-    const workspaceRoot = findWorkspaceRoot(args.dir);
     const crateRoot = resolve(projectRoot, p);
     const manifestPath = join(crateRoot, "Cargo.toml");
     if (!existsSync(manifestPath)) {

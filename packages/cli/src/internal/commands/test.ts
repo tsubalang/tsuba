@@ -1,14 +1,9 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
+import { loadProjectContext } from "../config.js";
 import { runBuild } from "./build.js";
-
-type WorkspaceConfig = {
-  readonly schema: number;
-  readonly generatedDirName: string;
-  readonly cargoTargetDir: string;
-};
 
 export type TestArgs = {
   readonly dir: string;
@@ -20,55 +15,11 @@ export type TestOutput = {
   readonly stderr: string;
 };
 
-function readJson<T>(path: string): T {
-  const raw = readFileSync(path, "utf-8");
-  return JSON.parse(raw) as T;
-}
-
-function findWorkspaceRoot(fromDir: string): string {
-  let cur = resolve(fromDir);
-  while (true) {
-    const candidate = join(cur, "tsuba.workspace.json");
-    try {
-      readFileSync(candidate, "utf-8");
-      return cur;
-    } catch {
-      // continue
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  throw new Error("Could not find tsuba.workspace.json in this directory or any parent.");
-}
-
-function findProjectRoot(fromDir: string): string {
-  let cur = resolve(fromDir);
-  while (true) {
-    const candidate = join(cur, "tsuba.json");
-    try {
-      readFileSync(candidate, "utf-8");
-      return cur;
-    } catch {
-      // continue
-    }
-    const parent = dirname(cur);
-    if (parent === cur) break;
-    cur = parent;
-  }
-  throw new Error("Could not find tsuba.json in this directory or any parent.");
-}
-
 export async function runTest(args: TestArgs): Promise<TestOutput> {
   // Ensure generated crate is up-to-date and compiles.
   await runBuild({ dir: args.dir });
 
-  const workspaceRoot = findWorkspaceRoot(args.dir);
-  const workspace = readJson<WorkspaceConfig>(join(workspaceRoot, "tsuba.workspace.json"));
-
-  if (workspace.schema !== 1) throw new Error("Unsupported tsuba.workspace.json schema.");
-
-  const projectRoot = findProjectRoot(args.dir);
+  const { workspaceRoot, workspace, projectRoot } = loadProjectContext(args.dir);
   const generatedRoot = join(projectRoot, workspace.generatedDirName);
 
   const cargoTargetDir = resolve(workspaceRoot, workspace.cargoTargetDir);
@@ -92,4 +43,3 @@ export async function runTest(args: TestArgs): Promise<TestOutput> {
     stderr: res.stderr ?? "",
   };
 }
-
