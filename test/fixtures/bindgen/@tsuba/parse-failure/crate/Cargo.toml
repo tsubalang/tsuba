@@ -1,0 +1,8 @@
+[package]
+name = "parse-failure-crate"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "parse_failure_crate"
+path = "src/lib.rs"

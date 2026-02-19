@@ -1302,6 +1302,97 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("fn choose<T: Ordered>(&self, left: T, right: T) -> i32 {");
   });
 
+  it("supports generic trait impls with concrete trait arguments", () => {
+    const dir = makeRepoTempDir("compiler-generic-trait-concrete-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Named {",
+        "  name(this: ref<this>): i32;",
+        "}",
+        "",
+        "interface PickerLike<T extends Named> {",
+        "  pick(this: ref<this>, value: T): i32;",
+        "}",
+        "",
+        "class Item implements Named {",
+        "  name(this: ref<Item>): i32 {",
+        "    return 1 as i32;",
+        "  }",
+        "}",
+        "",
+        "class Picker implements PickerLike<Item> {",
+        "  pick(this: ref<Picker>, value: Item): i32 {",
+        "    return value.name();",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const p = new Picker();",
+        "  const i = new Item();",
+        "  void p.pick(i);",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("impl PickerLike<Item> for Picker {");
+    expect(out.mainRs).to.contain("fn pick(&self, value: Item) -> i32 {");
+  });
+
+  it("errors when trait method generic bounds do not match", () => {
+    const dir = makeRepoTempDir("compiler-generic-trait-bound-mismatch-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Ordered {",
+        "  rank(this: ref<this>): i32;",
+        "}",
+        "",
+        "interface Numeric {",
+        "  toI32(this: ref<this>): i32;",
+        "}",
+        "",
+        "interface Sorter {",
+        "  choose<T extends Ordered>(this: ref<this>, left: T, right: T): i32;",
+        "}",
+        "",
+        "class BadSorter implements Sorter {",
+        "  // @ts-ignore -- intentionally validated by Tsuba trait conformance checks",
+        "  choose<T extends Numeric>(this: ref<BadSorter>, left: T, right: T): i32 {",
+        "    void left;",
+        "    void right;",
+        "    return 0 as i32;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  void BadSorter;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    let err: unknown;
+    try {
+      compileHostToRust({ entryFile: entry });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.instanceOf(CompileError);
+    expect((err as CompileError).code).to.equal("TSB4007");
+    expect((err as CompileError).message).to.contain("generic constraint mismatch");
+  });
+
   it("fails fast when TypeScript reports missing interface methods on `implements`", () => {
     const dir = makeRepoTempDir("compiler-missing-trait-method-");
     const entry = join(dir, "main.ts");

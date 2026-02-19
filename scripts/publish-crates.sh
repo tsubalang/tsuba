@@ -7,20 +7,25 @@ cd "$ROOT_DIR"
 
 RUN_TESTS=true
 DRY_RUN=false
+RUN_PROOF=true
+PROOF_REPO=""
 
 print_help() {
   cat <<'EOF_HELP'
-Usage: ./scripts/publish-crates.sh [--no-tests] [--dry-run]
+Usage: ./scripts/publish-crates.sh [--no-tests] [--dry-run] [--no-proof] [--proof-repo <path>]
 
 Safety checks (always on):
   - must run on branch main
   - working tree must be clean
   - local main must match origin/main
   - crate versions must not already exist on crates.io
+  - proof verification must pass (requires proof repo)
 
 Options:
   --no-tests   Skip npm run run-all (not recommended for releases)
   --dry-run    Run checks and print publish plan without publishing
+  --no-proof   Skip proof verification (not recommended for releases)
+  --proof-repo Override proof repo path used by verify-proof.sh
   -h, --help   Show this help
 EOF_HELP
 }
@@ -33,6 +38,19 @@ while [ $# -gt 0 ]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --no-proof)
+      RUN_PROOF=false
+      shift
+      ;;
+    --proof-repo)
+      shift
+      if [ -z "${1:-}" ]; then
+        echo "FAIL: --proof-repo requires a path"
+        exit 2
+      fi
+      PROOF_REPO="$1"
       shift
       ;;
     -h|--help)
@@ -76,6 +94,17 @@ else
   echo "WARN: skipping tests (--no-tests)."
 fi
 
+if [ "$RUN_PROOF" = true ]; then
+  echo "==> Running proof verification (required)"
+  proof_args=(bash "$ROOT_DIR/scripts/verify-proof.sh" --require)
+  if [ -n "$PROOF_REPO" ]; then
+    proof_args+=(--repo "$PROOF_REPO")
+  fi
+  "${proof_args[@]}"
+else
+  echo "WARN: skipping proof verification (--no-proof)."
+fi
+
 mapfile -t crate_manifests < <(
   git ls-files '**/Cargo.toml' |
     grep -v '^test/fixtures/' |
@@ -84,7 +113,7 @@ mapfile -t crate_manifests < <(
 )
 
 if [ "${#crate_manifests[@]}" -eq 0 ]; then
-  echo "No publishable crate manifests found outside fixtures."
+  echo "No crate manifests found."
   exit 0
 fi
 
@@ -106,14 +135,20 @@ read_package_field() {
 
 crate_names=()
 crate_versions=()
+publish_manifests=()
 
 for manifest in "${crate_manifests[@]}"; do
   name="$(read_package_field "$manifest" "name")"
   version="$(read_package_field "$manifest" "version")"
+  publish_flag="$(read_package_field "$manifest" "publish")"
 
   if [ -z "$name" ] || [ -z "$version" ]; then
     echo "FAIL: could not read [package] name/version from $manifest"
     exit 1
+  fi
+
+  if [ "$publish_flag" = "false" ]; then
+    continue
   fi
 
   if curl -fsSI "https://crates.io/api/v1/crates/${name}/${version}/download" >/dev/null; then
@@ -121,13 +156,19 @@ for manifest in "${crate_manifests[@]}"; do
     exit 1
   fi
 
+  publish_manifests+=("$manifest")
   crate_names+=("$name")
   crate_versions+=("$version")
 done
 
+if [ "${#publish_manifests[@]}" -eq 0 ]; then
+  echo "No publishable crates found."
+  exit 0
+fi
+
 echo "==> Publish plan"
 for idx in "${!crate_names[@]}"; do
-  echo "  - ${crate_names[$idx]}@${crate_versions[$idx]} (${crate_manifests[$idx]})"
+  echo "  - ${crate_names[$idx]}@${crate_versions[$idx]} (${publish_manifests[$idx]})"
 done
 
 if [ "$DRY_RUN" = true ]; then
@@ -140,7 +181,7 @@ if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
   exit 1
 fi
 
-for manifest in "${crate_manifests[@]}"; do
+for manifest in "${publish_manifests[@]}"; do
   echo "==> Publishing crate from ${manifest}"
   cargo publish --manifest-path "$manifest"
 done

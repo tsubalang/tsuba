@@ -53,7 +53,7 @@ Status values for tracking:
 
 ### A.1 Pass boundaries and ownership
 - [ ] Parse/import graph/resolution/validation/IR/emission/backend remain physically separated (no new mixed paths).
-- [ ] Each pass has explicit input/output contract types.
+- [x] Each pass has explicit input/output contract types.
 - [ ] Cross-pass mutation is prohibited except through typed pass outputs.
 
 ### A.2 Deterministic lowering
@@ -96,8 +96,8 @@ Status values for tracking:
   - [x] parameter types
   - [x] return types
   - [x] receiver mutability
-  - [ ] generic parameter/bound compatibility
-- [ ] Supertrait and multi-trait implementation matrix covered with runnable fixtures.
+  - [x] generic parameter/bound compatibility
+- [x] Supertrait and multi-trait implementation matrix covered with runnable fixtures.
 
 ### B.4 Objects/classes/unions (P0)
 - [ ] Object-literal lowering matrix is explicit:
@@ -109,7 +109,7 @@ Status values for tracking:
 
 ### B.5 Async model (P1)
 - [ ] Runtime policy (`none`/`tokio`) is fully validated at compile time.
-- [ ] Async diagnostic coverage includes all prohibited forms (e.g. unsupported Promise chains).
+- [x] Async diagnostic coverage includes all prohibited forms (e.g. unsupported Promise chains).
 - [ ] Runnable async proof fixtures exist for host services/jobs.
 
 **Exit gate B:** Published feature matrix with every supported semantic shape mapped to tests.
@@ -141,7 +141,7 @@ Status values for tracking:
 ### D.1 Extractor robustness (P0)
 - [ ] syn extractor remains primary path; legacy parser only debug-gated.
 - [ ] Deterministic ordering and normalized paths in reports.
-- [ ] Parse failures produce explicit skip issues (never silent drop).
+- [x] Parse failures produce explicit skip issues (never silent drop).
 
 ### D.2 Surface coverage (P1)
 - [ ] Traits, impl methods, enums (including payload variants), consts, macros, attributes.
@@ -149,7 +149,7 @@ Status values for tracking:
 - [ ] Unsupported Rust constructs always appear in `tsubabindgen.report.json`.
 
 ### D.3 Cross-crate fidelity (P1)
-- [ ] Re-export and module-path correctness for nested modules.
+- [x] Re-export and module-path correctness for nested modules.
 - [ ] Deterministic behavior on crates with heavy generic and macro usage.
 - [ ] Bundled crate mode and path-backed mode both verified via CLI integration fixtures.
 
@@ -235,7 +235,7 @@ Status values for tracking:
 - [ ] Track compile time, memory, and diagnostic quality regressions per release.
 
 ### H.3 Release blocking policy (P1)
-- [ ] Publish scripts require proof verification unless explicitly overridden by maintainer flag.
+- [x] Publish scripts require proof verification unless explicitly overridden by maintainer flag.
 
 **Exit gate H:** External proof loop is continuously green and release-blocking.
 
@@ -244,8 +244,8 @@ Status values for tracking:
 ## 11) Workstream I — Release operations parity (P1)
 
 ### I.1 Publish invariants
-- [ ] main-only publish, clean tree, in-sync with origin, version monotonicity, full test gate.
-- [ ] npm + crates scripts both enforce equivalent preflight discipline.
+- [x] main-only publish, clean tree, in-sync with origin, version monotonicity, full test gate.
+- [x] npm + crates scripts both enforce equivalent preflight discipline.
 
 ### I.2 Release traceability
 - [ ] Automatic changelog notes from merged PR labels.
@@ -263,11 +263,11 @@ Status values for tracking:
 ### J.1 User docs
 - [x] “Getting started” docs verified in clean temp dirs.
 - [x] Full feature matrix: supported / rejected / planned.
-- [ ] Error catalog for high-frequency diagnostics.
+- [x] Error catalog for high-frequency diagnostics.
 
 ### J.2 Engineer docs
-- [ ] Compiler pass contracts documented in one architecture spec.
-- [ ] Bindgen representability and skip-report semantics documented.
+- [x] Compiler pass contracts documented in one architecture spec.
+- [x] Bindgen representability and skip-report semantics documented.
 - [x] Testing workflow and gates documented with fast-path + final-path commands.
 
 **Exit gate J:** No undocumented behavior for public user-facing features.

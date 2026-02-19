@@ -123,6 +123,11 @@ type RustTrait = {
   readonly methods: readonly RustTraitMethod[];
 };
 
+type RustReexport = {
+  readonly name: string;
+  readonly source: string;
+};
+
 type RustStruct = {
   readonly name: string;
   readonly typeParams: readonly string[];
@@ -146,6 +151,7 @@ type ParsedModule = {
   structs: RustStruct[];
   traits: RustTrait[];
   functions: RustFunction[];
+  reexports: RustReexport[];
   pendingMethods: Map<string, RustFunction[]>;
   issues: SkipIssue[];
 };
@@ -163,6 +169,10 @@ type ExtractedModule = {
   readonly structs: readonly RustStruct[];
   readonly traits: readonly RustTrait[];
   readonly functions: readonly RustFunction[];
+  readonly reexports?: readonly {
+    readonly name: string;
+    readonly source: string;
+  }[];
   readonly pendingMethods: readonly ExtractedPendingMethods[];
   readonly issues: readonly SkipIssue[];
 };
@@ -770,6 +780,7 @@ function parseModuleDeclarations(text: string, file: string): ParsedModule {
     structs: [],
     traits: [],
     functions: [],
+    reexports: [],
     pendingMethods: new Map(),
     issues: skip,
   };
@@ -894,6 +905,13 @@ function mapExtractedModule(module: ExtractedModule): ParsedModule {
       })),
     })),
     functions: module.functions.map((f) => mapExtractedFunction(f, source, issues)),
+    reexports: [...(module.reexports ?? [])]
+      .map((r) => ({ name: normalizeIdentifier(r.name), source: normalizeTypeText(r.source) }))
+      .sort((a, b) => {
+        const byName = a.name.localeCompare(b.name);
+        if (byName !== 0) return byName;
+        return a.source.localeCompare(b.source);
+      }),
     pendingMethods: new Map(
       module.pendingMethods.map((entry) => [
         normalizeIdentifier(entry.target),
@@ -994,6 +1012,190 @@ function attachMethods(modules: ParsedModule[]): void {
         });
       }
     }
+  }
+}
+
+function cloneAsConst(value: RustField, name: string): RustField {
+  return { kind: "field", name, type: value.type };
+}
+
+function cloneAsEnum(value: RustEnum, name: string): RustEnum {
+  return {
+    name,
+    typeParams: [...value.typeParams],
+    variants: [...value.variants],
+  };
+}
+
+function cloneAsStruct(value: RustStruct, name: string): RustStruct {
+  return {
+    name,
+    typeParams: [...value.typeParams],
+    fields: value.fields.map((f) => ({ kind: "field", name: f.name, type: f.type })),
+    methods: value.methods.map((m) => ({
+      name: m.name,
+      kind: m.kind,
+      typeParams: [...m.typeParams],
+      params: m.params.map((p) => ({ kind: "field", name: p.name, type: p.type })),
+      returnType: m.returnType,
+    })),
+    constructorMethod: value.constructorMethod
+      ? {
+          name: value.constructorMethod.name,
+          kind: value.constructorMethod.kind,
+          typeParams: [...value.constructorMethod.typeParams],
+          params: value.constructorMethod.params.map((p) => ({ kind: "field", name: p.name, type: p.type })),
+          returnType: value.constructorMethod.returnType,
+        }
+      : undefined,
+  };
+}
+
+function cloneAsTrait(value: RustTrait, name: string): RustTrait {
+  return {
+    name,
+    typeParams: [...value.typeParams],
+    superTraits: [...value.superTraits],
+    methods: value.methods.map((m) => ({
+      name: m.name,
+      typeParams: [...m.typeParams],
+      params: m.params.map((p) => ({ kind: "field", name: p.name, type: p.type })),
+      returnType: m.returnType,
+    })),
+  };
+}
+
+function cloneAsFunction(value: RustFunction, name: string): RustFunction {
+  return {
+    name,
+    typeParams: [...value.typeParams],
+    params: value.params.map((p) => ({ kind: "field", name: p.name, type: p.type })),
+    returnType: value.returnType,
+  };
+}
+
+function hasDeclarationNamed(module: ParsedModule, name: string): boolean {
+  if (module.consts.some((d) => d.name === name)) return true;
+  if (module.enums.some((d) => d.name === name)) return true;
+  if (module.structs.some((d) => d.name === name)) return true;
+  if (module.traits.some((d) => d.name === name)) return true;
+  if (module.functions.some((d) => d.name === name)) return true;
+  return false;
+}
+
+function findModuleByParts(modules: readonly ParsedModule[], parts: readonly string[]): ParsedModule | undefined {
+  const key = parts.join("::");
+  return modules.find((m) => m.moduleParts.join("::") === key);
+}
+
+function resolveReexportSourceModule(
+  modules: readonly ParsedModule[],
+  from: ParsedModule,
+  sourcePath: readonly string[]
+): { readonly module: ParsedModule; readonly symbol: string } | undefined {
+  if (sourcePath.length === 0) return undefined;
+  const [head, ...rest] = sourcePath;
+  if (!head) return undefined;
+
+  let baseParts: string[];
+  let lookupParts: string[];
+
+  if (head === "crate") {
+    baseParts = [];
+    lookupParts = rest;
+  } else if (head === "self") {
+    baseParts = [...from.moduleParts];
+    lookupParts = rest;
+  } else if (head === "super") {
+    baseParts = from.moduleParts.length === 0 ? [] : from.moduleParts.slice(0, -1);
+    lookupParts = rest;
+  } else {
+    baseParts = [...from.moduleParts];
+    lookupParts = [...sourcePath];
+  }
+
+  if (lookupParts.length === 0) return undefined;
+  const symbol = lookupParts[lookupParts.length - 1]!;
+  const moduleParts = [...baseParts, ...lookupParts.slice(0, -1)];
+  const module = findModuleByParts(modules, moduleParts);
+  if (!module) return undefined;
+  return { module, symbol };
+}
+
+function addReexportedDeclaration(
+  toModule: ParsedModule,
+  fromModule: ParsedModule,
+  sourceSymbol: string,
+  exportedName: string
+): boolean {
+  if (hasDeclarationNamed(toModule, exportedName)) return true;
+
+  const constDecl = fromModule.consts.find((d) => d.name === sourceSymbol);
+  if (constDecl) {
+    toModule.consts.push(cloneAsConst(constDecl, exportedName));
+    return true;
+  }
+
+  const enumDecl = fromModule.enums.find((d) => d.name === sourceSymbol);
+  if (enumDecl) {
+    toModule.enums.push(cloneAsEnum(enumDecl, exportedName));
+    return true;
+  }
+
+  const structDecl = fromModule.structs.find((d) => d.name === sourceSymbol);
+  if (structDecl) {
+    toModule.structs.push(cloneAsStruct(structDecl, exportedName));
+    return true;
+  }
+
+  const traitDecl = fromModule.traits.find((d) => d.name === sourceSymbol);
+  if (traitDecl) {
+    toModule.traits.push(cloneAsTrait(traitDecl, exportedName));
+    return true;
+  }
+
+  const fnDecl = fromModule.functions.find((d) => d.name === sourceSymbol);
+  if (fnDecl) {
+    toModule.functions.push(cloneAsFunction(fnDecl, exportedName));
+    return true;
+  }
+
+  return false;
+}
+
+function sortModuleDeclarations(module: ParsedModule): void {
+  module.consts.sort((a, b) => a.name.localeCompare(b.name));
+  module.enums.sort((a, b) => a.name.localeCompare(b.name));
+  module.structs.sort((a, b) => a.name.localeCompare(b.name));
+  module.traits.sort((a, b) => a.name.localeCompare(b.name));
+  module.functions.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function applyReexports(modules: ParsedModule[]): void {
+  for (const module of modules) {
+    for (const reexport of module.reexports) {
+      const segments = reexport.source.split("::").filter((s) => s.length > 0);
+      const resolved = resolveReexportSourceModule(modules, module, segments);
+      if (!resolved) {
+        module.issues.push({
+          file: module.source,
+          kind: "reexport",
+          snippet: `${reexport.name} <- ${reexport.source}`,
+          reason: "Could not resolve re-export source module path.",
+        });
+        continue;
+      }
+      const ok = addReexportedDeclaration(module, resolved.module, resolved.symbol, reexport.name);
+      if (!ok) {
+        module.issues.push({
+          file: module.source,
+          kind: "reexport",
+          snippet: `${reexport.name} <- ${reexport.source}`,
+          reason: "Could not resolve re-exported symbol in source module.",
+        });
+      }
+    }
+    sortModuleDeclarations(module);
   }
 }
 
@@ -1243,6 +1445,7 @@ export function runGenerate(opts: GenerateOptions): void {
 
   const modules = collectModules(absManifest);
   attachMethods(modules);
+  applyReexports(modules);
   const skipIssues = collectSkipIssues(modules, dirname(absManifest));
 
   const moduleEntries: { spec: string; jsName: string; rustPath: string; dtsName: string }[] = [];

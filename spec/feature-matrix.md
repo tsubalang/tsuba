@@ -82,7 +82,7 @@ Primary evidence:
 | --- | --- | --- | --- |
 | Project imports | deterministic module lowering (`mod` + `use`) for relative project modules | side-effect-only imports | wider import forms if representable |
 | External bindings | `tsuba.bindings.json` crate mapping, version/path source tracking, crate dep emission | unsupported/malformed manifests, mapping conflicts | richer manifest metadata |
-| tsubabindgen | deterministic generation, traits/enums/macros coverage for supported Rust syntax, explicit skip reports | silent drop of unsupported constructs | expanded Rust surface coverage |
+| tsubabindgen | deterministic generation, traits/enums/macros coverage for supported Rust syntax, explicit skip reports, explicit `pub use` re-export resolution, parser-failure skip reporting | silent drop of unsupported constructs; glob re-exports in TS facades | expanded Rust surface coverage |
 
 Primary evidence:
 
