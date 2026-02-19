@@ -1,0 +1,8 @@
+{
+  "run": true,
+  "test": true,
+  "runStdoutContains": [
+    "inner 2",
+    "shadow 1"
+  ]
+}

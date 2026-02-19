@@ -2687,6 +2687,12 @@ function lowerExprStmt(ctx: EmitCtx, expr: ts.Expression): RustStmt[] {
 }
 
 function lowerStmt(ctx: EmitCtx, st: ts.Statement): RustStmt[] {
+  if (ts.isBlock(st)) {
+    const body: RustStmt[] = [];
+    for (const s of st.statements) body.push(...lowerStmt(ctx, s));
+    return [{ kind: "block", span: spanFromNode(st), body }];
+  }
+
   if (ts.isVariableStatement(st)) {
     return lowerVarDeclList(ctx, st.declarationList);
   }

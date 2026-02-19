@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "host-shadowing",
+  "kind": "bin",
+  "entry": "src/index.ts",
+  "gpu": {
+    "enabled": false
+  },
+  "crate": {
+    "name": "host_shadowing"
+  }
+}
