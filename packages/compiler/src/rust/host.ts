@@ -80,6 +80,8 @@ export type CompileHostOutput = {
   readonly sourceMap: RustSourceMap;
 };
 
+export const COMPILER_BUILD_ID = "v0-2026-02-20";
+
 type UnionVariantDef = {
   readonly tag: string;
   readonly name: string;

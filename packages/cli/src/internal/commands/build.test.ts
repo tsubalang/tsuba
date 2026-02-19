@@ -224,6 +224,37 @@ describe("@tsuba/cli build", function () {
     expect(toml2).to.equal(toml1);
   });
 
+  it("uses deterministic build cache on identical inputs and emits source-map artifacts", async () => {
+    const root = makeRepoTempDir("cli-build-cache-hit-");
+    const projectName = basename(root);
+    await runInit({ dir: root });
+    const projectRoot = join(root, "packages", projectName);
+    const generatedRoot = join(projectRoot, "generated");
+
+    await runBuild({ dir: projectRoot });
+    const state1 = JSON.parse(
+      readFileSync(join(generatedRoot, ".build-cache-state.json"), "utf-8")
+    ) as { readonly mode: string };
+    expect(state1.mode).to.equal("miss");
+
+    await runBuild({ dir: projectRoot });
+    const state2 = JSON.parse(
+      readFileSync(join(generatedRoot, ".build-cache-state.json"), "utf-8")
+    ) as { readonly mode: string };
+    expect(state2.mode).to.equal("hit");
+
+    const srcMapPath = join(generatedRoot, "src", "main.rs.map.json");
+    expect(existsSync(srcMapPath)).to.equal(true);
+    const srcMap = JSON.parse(readFileSync(srcMapPath, "utf-8")) as {
+      readonly schema: number;
+      readonly kind: string;
+      readonly entries: readonly unknown[];
+    };
+    expect(srcMap.schema).to.equal(1);
+    expect(srcMap.kind).to.equal("rust-source-map");
+    expect(srcMap.entries.length).to.be.greaterThan(0);
+  });
+
   it("errors when kernels exist and gpu.backend is none", async () => {
     const root = makeRepoTempDir("cli-build-");
     const projectName = basename(root);
