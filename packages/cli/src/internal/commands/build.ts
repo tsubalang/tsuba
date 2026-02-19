@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 
-import { compileHostToRust } from "@tsuba/compiler";
+import { compileHostToRust, type RustSourceMap } from "@tsuba/compiler";
 
 import { loadProjectContext } from "../config.js";
 import { mergeCargoDependencies, renderCargoToml } from "./cargo.js";
@@ -47,23 +47,23 @@ function posToLineCol(text: string, pos: number): { readonly line: number; reado
   return { line, col };
 }
 
-function parseSpanComment(line: string): { readonly fileName: string; readonly start: number; readonly end: number } | undefined {
-  const trimmed = line.trimStart();
-  const prefix = "// tsuba-span: ";
-  if (!trimmed.startsWith(prefix)) return undefined;
-  const rest = trimmed.slice(prefix.length);
-  const last = rest.lastIndexOf(":");
-  if (last === -1) return undefined;
-  const secondLast = rest.lastIndexOf(":", last - 1);
-  if (secondLast === -1) return undefined;
-  const fileName = rest.slice(0, secondLast);
-  const startText = rest.slice(secondLast + 1, last);
-  const endText = rest.slice(last + 1);
-  const start = Number.parseInt(startText, 10);
-  const end = Number.parseInt(endText, 10);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined;
-  if (start < 0 || end < start) return undefined;
-  return { fileName, start, end };
+function mapRustLineToSourceMap(
+  map: RustSourceMap,
+  rustLine: number
+): { readonly fileName: string; readonly start: number; readonly end: number } | undefined {
+  let best:
+    | {
+        readonly tsFileName: string;
+        readonly tsStart: number;
+        readonly tsEnd: number;
+      }
+    | undefined;
+  for (const entry of map.entries) {
+    if (entry.rustLine > rustLine) break;
+    best = entry;
+  }
+  if (!best) return undefined;
+  return { fileName: best.tsFileName, start: best.tsStart, end: best.tsEnd };
 }
 
 function firstCargoCompilerError(
@@ -98,27 +98,24 @@ function firstCargoCompilerError(
 }
 
 function tryMapRustErrorToTs(opts: {
-  readonly generatedRoot: string;
   readonly sourceRoot: string;
-  readonly rustFileName: string;
   readonly rustLine: number;
+  readonly rustFileName: string;
+  readonly sourceMap: RustSourceMap;
 }): { readonly fileName: string; readonly line: number; readonly col: number } | undefined {
   const isAbs = (p: string): boolean => p.startsWith("/") || /^[A-Za-z]:\//.test(p);
-  const rustFileName = isAbs(opts.rustFileName) ? opts.rustFileName : join(opts.generatedRoot, opts.rustFileName);
-  const rustText = readFileSync(rustFileName, "utf-8");
-  const rustLines = rustText.split(/\r?\n/g);
-  for (let i = Math.min(opts.rustLine - 1, rustLines.length - 1); i >= 0; i--) {
-    const parsed = parseSpanComment(rustLines[i]!);
-    if (!parsed) continue;
-    const tsFileName = isAbs(parsed.fileName)
-      ? parsed.fileName
-      : normalizePath(resolve(opts.sourceRoot, parsed.fileName));
-    if (!existsSync(tsFileName)) continue;
-    const tsText = readFileSync(tsFileName, "utf-8");
-    const lc = posToLineCol(tsText, parsed.start);
-    return { fileName: tsFileName, line: lc.line, col: lc.col };
-  }
-  return undefined;
+  const rustFileName = normalizePath(opts.rustFileName);
+  const base = rustFileName.split("/").at(-1);
+  if (base !== "main.rs") return undefined;
+  const parsed = mapRustLineToSourceMap(opts.sourceMap, opts.rustLine);
+  if (!parsed) return undefined;
+  const tsFileName = isAbs(parsed.fileName)
+    ? parsed.fileName
+    : normalizePath(resolve(opts.sourceRoot, parsed.fileName));
+  if (!existsSync(tsFileName)) return undefined;
+  const tsText = readFileSync(tsFileName, "utf-8");
+  const lc = posToLineCol(tsText, parsed.start);
+  return { fileName: tsFileName, line: lc.line, col: lc.col };
 }
 
 function compileCudaKernels(opts: {
@@ -218,6 +215,7 @@ export async function runBuild(args: BuildArgs): Promise<void> {
 
   writeFileSync(join(generatedRoot, "Cargo.toml"), cargoToml, "utf-8");
   writeFileSync(join(generatedSrcDir, "main.rs"), out.mainRs, "utf-8");
+  writeFileSync(join(generatedSrcDir, "main.rs.map.json"), `${JSON.stringify(out.sourceMap, null, 2)}\n`, "utf-8");
 
   const cargoTargetDir = resolve(workspaceRoot, workspace.cargoTargetDir);
   mkdirSync(cargoTargetDir, { recursive: true });
@@ -234,10 +232,10 @@ export async function runBuild(args: BuildArgs): Promise<void> {
     const err = firstCargoCompilerError(stdout, generatedRoot);
     if (err?.span) {
       const mapped = tryMapRustErrorToTs({
-        generatedRoot,
         sourceRoot: dirname(entryFile),
-        rustFileName: err.span.file_name,
         rustLine: err.span.line_start,
+        rustFileName: err.span.file_name,
+        sourceMap: out.sourceMap,
       });
       if (mapped) {
         throw new Error(`${mapped.fileName}:${mapped.line}:${mapped.col}: cargo build failed.\n${err.rendered}`);

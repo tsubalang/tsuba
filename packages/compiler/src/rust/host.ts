@@ -32,6 +32,7 @@ import {
   type KernelDecl,
 } from "./kernel-dialect.js";
 import { writeRustProgram } from "./write.js";
+import { buildRustSourceMap, type RustSourceMap } from "./source-map.js";
 import {
   isMutMarkerType,
   lowerTypeParameters as lowerTypeParametersFromLowering,
@@ -76,6 +77,7 @@ export type CompileHostOutput = {
   readonly mainRs: string;
   readonly kernels: readonly KernelDecl[];
   readonly crates: readonly CrateDep[];
+  readonly sourceMap: RustSourceMap;
 };
 
 type UnionVariantDef = {
@@ -2840,7 +2842,8 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
   if (ctx.gpuRuntime.used) {
     mainRs = `${mainRs}\n${renderCudaRuntimeModule(kernels)}\n`;
   }
+  const sourceMap = buildRustSourceMap(mainRs);
 
   const crates = [...usedCratesByName.values()].sort((a, b) => compareText(a.name, b.name));
-  return { mainRs, kernels, crates };
+  return { mainRs, kernels, crates, sourceMap };
 }
