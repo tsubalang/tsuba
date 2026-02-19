@@ -1222,6 +1222,86 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("Box::<i32>::new((1) as i32)");
   });
 
+  it("supports classes implementing multiple interfaces", () => {
+    const dir = makeRepoTempDir("compiler-multi-trait-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Left {",
+        "  left(this: ref<this>): i32;",
+        "}",
+        "",
+        "interface Right {",
+        "  right(this: ref<this>): i32;",
+        "}",
+        "",
+        "class Pair implements Left, Right {",
+        "  left(this: ref<Pair>): i32 {",
+        "    return 1 as i32;",
+        "  }",
+        "  right(this: ref<Pair>): i32 {",
+        "    return 2 as i32;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const p = new Pair();",
+        "  void p.left();",
+        "  void p.right();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("impl Left for Pair {");
+    expect(out.mainRs).to.contain("impl Right for Pair {");
+  });
+
+  it("supports generic trait methods with bounds in trait impls", () => {
+    const dir = makeRepoTempDir("compiler-generic-trait-method-bounds-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "",
+        "interface Ordered {",
+        "  rank(this: ref<this>): i32;",
+        "}",
+        "",
+        "interface Sorter {",
+        "  choose<T extends Ordered>(this: ref<this>, left: T, right: T): i32;",
+        "}",
+        "",
+        "class StableSorter implements Sorter {",
+        "  choose<T extends Ordered>(this: ref<StableSorter>, left: T, right: T): i32 {",
+        "    void left;",
+        "    void right;",
+        "    return 0 as i32;",
+        "  }",
+        "}",
+        "",
+        "export function main(): void {",
+        "  const s = new StableSorter();",
+        "  void s;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("trait Sorter {");
+    expect(out.mainRs).to.contain("fn choose<T: Ordered>(&self, left: T, right: T) -> i32;");
+    expect(out.mainRs).to.contain("impl Sorter for StableSorter {");
+    expect(out.mainRs).to.contain("fn choose<T: Ordered>(&self, left: T, right: T) -> i32 {");
+  });
+
   it("fails fast when TypeScript reports missing interface methods on `implements`", () => {
     const dir = makeRepoTempDir("compiler-missing-trait-method-");
     const entry = join(dir, "main.ts");

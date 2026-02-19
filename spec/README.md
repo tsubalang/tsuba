@@ -13,6 +13,7 @@ Specs:
 
 - `tsuba-v0.md` — high-level v0 overview + scope checklist.
 - `language.md` — the Tsuba TS subset + Rust lowering rules.
+- `feature-matrix.md` — executable support matrix (supported/rejected/planned) with test evidence.
 - `markers.md` — marker APIs in `@tsuba/core/types.js` + `@tsuba/core/lang.js`.
 - `gpu.md` — GPU-first kernel dialect + CUDA/PTX direction.
 - `examples.md` — side-by-side Python/Rust/Tsuba examples (host + kernels).

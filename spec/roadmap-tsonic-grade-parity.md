@@ -81,9 +81,9 @@ Status values for tracking:
 - [ ] Full function declaration coverage in supported subset: generics, bounds, async, explicit returns.
 - [ ] Method receiver semantics (`this`/`ref`/`mutref`) are fully test-covered.
 - [ ] Closure support matrix is explicit and complete:
-  - [ ] expression closures
-  - [ ] move closures
-  - [ ] block closures (either supported fully or hard-error with dedicated code)
+  - [x] expression closures
+  - [x] move closures
+  - [x] block closures (either supported fully or hard-error with dedicated code)
 
 ### B.2 Control-flow and narrowing (P0)
 - [ ] Narrowing rules are explicit and deterministic (no best-effort branching).
@@ -262,7 +262,7 @@ Status values for tracking:
 
 ### J.1 User docs
 - [x] “Getting started” docs verified in clean temp dirs.
-- [ ] Full feature matrix: supported / rejected / planned.
+- [x] Full feature matrix: supported / rejected / planned.
 - [ ] Error catalog for high-frequency diagnostics.
 
 ### J.2 Engineer docs
