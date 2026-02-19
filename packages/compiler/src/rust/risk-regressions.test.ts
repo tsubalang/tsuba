@@ -216,7 +216,24 @@ describe("@tsuba/compiler risk regressions", () => {
     expect(rust).to.contain("let f = move |x: i32|");
   });
 
-  it("rejects block-bodied closures with stable diagnostics", () => {
+  it("supports block-bodied closures and keeps non-terminal return diagnostics stable", () => {
+    const rust = compileEntry(
+      [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const f = (x: i32): i32 => {",
+        "    const y = (x + (1 as i32)) as i32;",
+        "    return y;",
+        "  };",
+        "  void f;",
+        "}",
+        "",
+      ].join("\n")
+    );
+    expect(rust).to.contain("let f = |x: i32| {");
+    expect(rust).to.match(/let y = .*as i32;/);
+
     const err = expectCompileError(
       [
         'import type { i32 } from "@tsuba/core/types.js";',
@@ -224,6 +241,8 @@ describe("@tsuba/compiler risk regressions", () => {
         "export function main(): void {",
         "  const f = (x: i32): i32 => {",
         "    return x;",
+        "    const y = (x + (1 as i32)) as i32;",
+        "    return y;",
         "  };",
         "  void f;",
         "}",

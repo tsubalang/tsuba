@@ -95,11 +95,20 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
       ),
     },
     {
-      name: "block arrow closures are rejected",
+      name: "block arrow closures reject non-terminal return statements",
       expectedCode: "TSB1100",
-      source: ['import type { i32 } from "@tsuba/core/types.js";', "export function main(): void {", "  const f = (x: i32): i32 => {", "    return x;", "  };", "  void f;", "}", ""].join(
-        "\n"
-      ),
+      source: [
+        'import type { i32 } from "@tsuba/core/types.js";',
+        "export function main(): void {",
+        "  const f = (x: i32): i32 => {",
+        "    return x;",
+        "    const y = (x + (1 as i32)) as i32;",
+        "    return y;",
+        "  };",
+        "  void f;",
+        "}",
+        "",
+      ].join("\n"),
     },
     {
       name: "function destructuring params are rejected",
@@ -211,6 +220,20 @@ describe("@tsuba/compiler unsupported syntax matrix", () => {
         "}",
         "export function main(): void {",
         "  void Counter;",
+        "}",
+        "",
+      ].join("\n"),
+    },
+    {
+      name: "interface method optional params are rejected",
+      expectedCode: "TSB5109",
+      source: [
+        'import type { i32, ref } from "@tsuba/core/types.js";',
+        "interface Reader {",
+        "  read(this: ref<this>, delta?: i32): i32;",
+        "}",
+        "export function main(): void {",
+        "  return;",
         "}",
         "",
       ].join("\n"),

@@ -162,6 +162,60 @@ describe("@tsuba/compiler rust writer", () => {
     expect(rust).to.contain("let x = { let _ = f(); () };");
   });
 
+  it("writes nested control-flow inside block expressions without placeholders", () => {
+    const program: RustProgram = {
+      kind: "program",
+      items: [
+        {
+          kind: "fn",
+          vis: "private",
+          async: false,
+          typeParams: [],
+          receiver: { kind: "none" },
+          name: "main",
+          params: [],
+          ret: unitType(),
+          attrs: [],
+          body: [
+            {
+              kind: "let",
+              pattern: { kind: "ident", name: "x" },
+              mut: false,
+              init: {
+                kind: "block",
+                stmts: [
+                  {
+                    kind: "if",
+                    cond: { kind: "bool", value: true },
+                    then: [{ kind: "expr", expr: unitExpr() }],
+                    else: [{ kind: "expr", expr: unitExpr() }],
+                  },
+                  {
+                    kind: "while",
+                    cond: { kind: "bool", value: false },
+                    body: [{ kind: "break" }],
+                  },
+                  {
+                    kind: "match",
+                    expr: identExpr("tag"),
+                    arms: [{ pattern: { kind: "wild" }, body: [{ kind: "expr", expr: unitExpr() }] }],
+                  },
+                ],
+                tail: unitExpr(),
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const rust = writeRustProgram(program);
+    expect(rust).to.contain("if true {");
+    expect(rust).to.contain("while false {");
+    expect(rust).to.contain("match tag {");
+    expect(rust).to.not.contain("__tsuba_unreachable_inline_");
+  });
+
   it("writes borrow expressions (&x / &mut y) deterministically", () => {
     const program: RustProgram = {
       kind: "program",

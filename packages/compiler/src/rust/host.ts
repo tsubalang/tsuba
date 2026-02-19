@@ -1986,6 +1986,80 @@ function isArrayNType(ty: ts.Type | undefined): boolean {
   return false;
 }
 
+type DefaultedParam = {
+  readonly name: string;
+  readonly type: RustType;
+  readonly initializer: ts.Expression;
+  readonly span: Span;
+};
+
+function optionType(inner: RustType): RustType {
+  return pathType(["Option"], [inner]);
+}
+
+function someExpr(expr: RustExpr): RustExpr {
+  return { kind: "call", callee: identExpr("Some"), args: [expr] };
+}
+
+function noneExpr(): RustExpr {
+  return pathExpr(["None"]);
+}
+
+function lowerDefaultParamPrelude(ctx: EmitCtx, defaults: readonly DefaultedParam[]): readonly RustStmt[] {
+  const prelude: RustStmt[] = [];
+  for (const def of defaults) {
+    prelude.push({
+      kind: "let",
+      span: def.span,
+      pattern: { kind: "ident", name: def.name },
+      mut: false,
+      type: def.type,
+      init: {
+        kind: "call",
+        callee: { kind: "field", expr: identExpr(def.name), name: "unwrap_or" },
+        args: [lowerExpr(ctx, def.initializer)],
+      },
+    });
+  }
+  return prelude;
+}
+
+function lowerArrowBodyToExpr(
+  ctx: EmitCtx,
+  body: ts.ConciseBody,
+  defaultPrelude: readonly RustStmt[]
+): RustExpr {
+  if (!ts.isBlock(body)) {
+    const tail = lowerExpr(ctx, body);
+    if (defaultPrelude.length === 0) return tail;
+    return { kind: "block", stmts: [...defaultPrelude], tail };
+  }
+
+  const stmts: RustStmt[] = [...defaultPrelude];
+  const bodyStmts = [...body.statements];
+  if (bodyStmts.length === 0) {
+    return { kind: "block", stmts, tail: unitExpr() };
+  }
+
+  for (let i = 0; i < bodyStmts.length; i++) {
+    const st = bodyStmts[i]!;
+    const isLast = i === bodyStmts.length - 1;
+    if (ts.isReturnStatement(st) && !isLast) {
+      failAt(st, "TSB1100", "Arrow block bodies must only use `return` as the final statement in v0.");
+    }
+    if (isLast && ts.isReturnStatement(st)) {
+      return {
+        kind: "block",
+        stmts,
+        tail: st.expression ? lowerExpr(ctx, st.expression) : unitExpr(),
+      };
+    }
+    stmts.push(...lowerStmt(ctx, st));
+  }
+
+  return { kind: "block", stmts, tail: unitExpr() };
+}
+
 function lowerArrowToClosure(
   ctx: EmitCtx,
   fn: ts.ArrowFunction,
@@ -1995,7 +2069,9 @@ function lowerArrowToClosure(
     failAt(fn, "TSB1100", "Generic arrow functions are not supported in v0.");
   }
 
-  const params = fn.parameters.map((p) => {
+  const params: RustParam[] = [];
+  const defaulted: DefaultedParam[] = [];
+  for (const p of fn.parameters) {
     if (!ts.isIdentifier(p.name)) {
       failAt(p.name, "TSB1100", "Arrow function parameters must be identifiers in v0.");
     }
@@ -2005,21 +2081,30 @@ function lowerArrowToClosure(
     if (!p.type) {
       failAt(p, "TSB1100", `Arrow function parameter '${p.name.text}' must have a type annotation in v0.`);
     }
-    if (p.questionToken || p.initializer) {
-      failAt(p, "TSB1100", "Arrow functions do not support optional/default parameters in v0.");
+    if (p.questionToken) {
+      failAt(p, "TSB1100", "Arrow functions do not support optional parameters in v0.");
     }
-    return { name: p.name.text, type: typeNodeToRust(p.type) };
-  });
-
-  if (ts.isBlock(fn.body)) {
-    failAt(fn.body, "TSB1100", "Arrow functions with block bodies are not supported in v0.");
+    const ty = typeNodeToRust(p.type);
+    if (p.initializer) {
+      params.push({ name: p.name.text, type: optionType(ty) });
+      defaulted.push({
+        name: p.name.text,
+        type: ty,
+        initializer: p.initializer,
+        span: spanFromNode(p),
+      });
+      continue;
+    }
+    params.push({ name: p.name.text, type: ty });
   }
+
+  const body = lowerArrowBodyToExpr(ctx, fn.body, lowerDefaultParamPrelude(ctx, defaulted));
 
   return {
     kind: "closure",
     move: moveCapture,
     params,
-    body: lowerExpr(ctx, fn.body),
+    body,
   };
 }
 
@@ -2631,26 +2716,40 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
           : params;
 
       const next: RustExpr[] = [];
-      for (let i = 0; i < callArgs.length; i++) {
-        const arg = callArgs[i]!;
-        const param = effectiveParams[i];
-        if (!param || !param.type) {
-          next.push(arg);
+      for (let i = 0; i < effectiveParams.length; i++) {
+        const param = effectiveParams[i]!;
+        const arg = callArgs[i];
+        const hasDefault = param.initializer !== undefined;
+
+        if (!arg) {
+          if (hasDefault) next.push(noneExpr());
           continue;
         }
-        const rustTy = typeNodeToRust(param.type);
-        if (rustTy.kind !== "ref") {
-          next.push(arg);
-          continue;
-        }
-        if (rustTy.mut) {
-          const okPlace =
-            arg.kind === "ident" || arg.kind === "field" || arg.kind === "index";
-          if (!okPlace) {
-            failAt(expr.arguments[i]!, "TSB1310", "&mut arguments must be place expressions in v0.");
+
+        let nextArg = arg;
+        if (param.type) {
+          const rustTy = typeNodeToRust(param.type);
+          if (rustTy.kind === "ref") {
+            if (rustTy.mut) {
+              const okPlace =
+                nextArg.kind === "ident" || nextArg.kind === "field" || nextArg.kind === "index";
+              if (!okPlace) {
+                failAt(expr.arguments[i]!, "TSB1310", "&mut arguments must be place expressions in v0.");
+              }
+            }
+            nextArg = { kind: "borrow", mut: rustTy.mut, expr: nextArg };
           }
         }
-        next.push({ kind: "borrow", mut: rustTy.mut, expr: arg });
+
+        if (hasDefault) {
+          next.push(someExpr(nextArg));
+          continue;
+        }
+        next.push(nextArg);
+      }
+
+      for (let i = effectiveParams.length; i < callArgs.length; i++) {
+        next.push(callArgs[i]!);
       }
       callArgs = next;
     }
@@ -3007,6 +3106,7 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
   );
 
   const params: RustParam[] = [];
+  const defaulted: DefaultedParam[] = [];
   for (const p of fnDecl.parameters) {
     if (!ts.isIdentifier(p.name)) {
       failAt(p.name, "TSB3002", `Function '${fnDecl.name.text}': destructuring params are not supported in v0.`);
@@ -3018,17 +3118,28 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
         `Function '${fnDecl.name.text}': parameter '${p.name.text}' needs a type annotation in v0.`
       );
     }
-    if (p.questionToken || p.initializer) {
-      failAt(p, "TSB3004", `Function '${fnDecl.name.text}': optional/default params are not supported in v0.`);
+    if (p.questionToken) {
+      failAt(p, "TSB3004", `Function '${fnDecl.name.text}': optional params are not supported in v0.`);
     }
-    params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
+    const ty = typeNodeToRust(p.type);
+    if (p.initializer) {
+      params.push({ name: p.name.text, type: optionType(ty) });
+      defaulted.push({
+        name: p.name.text,
+        type: ty,
+        initializer: p.initializer,
+        span: spanFromNode(p),
+      });
+      continue;
+    }
+    params.push({ name: p.name.text, type: ty });
   }
 
   const ret = isAsync
     ? typeNodeToRust(unwrapPromiseInnerType(fnDecl, `Function '${fnDecl.name.text}'`, fnDecl.type, "TSB3010"))
     : typeNodeToRust(fnDecl.type);
-  const body: RustStmt[] = [];
   const fnCtx: EmitCtx = { ...ctx, inAsync: isAsync };
+  const body: RustStmt[] = [...lowerDefaultParamPrelude(fnCtx, defaulted)];
   for (const st of fnDecl.body.statements) body.push(...lowerStmt(fnCtx, st));
 
   return {
@@ -3262,6 +3373,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       mut: false,
     };
     const params: RustParam[] = [];
+    const defaulted: DefaultedParam[] = [];
     for (let i = 0; i < m.parameters.length; i++) {
       const p = m.parameters[i]!;
       if (!ts.isIdentifier(p.name)) failAt(p.name, "TSB4104", "Destructuring params are not supported in v0.");
@@ -3274,16 +3386,26 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
         continue;
       }
       if (!p.type) failAt(p, "TSB4106", `Method param '${p.name.text}' must have a type annotation in v0.`);
-      if (p.questionToken || p.initializer) {
-        failAt(p, "TSB4107", "Optional/default params are not supported in v0.");
+      if (p.questionToken) {
+        failAt(p, "TSB4107", "Optional params are not supported in v0.");
       }
-      params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
+      const ty = typeNodeToRust(p.type);
+      if (p.initializer) {
+        params.push({ name: p.name.text, type: optionType(ty) });
+        defaulted.push({
+          name: p.name.text,
+          type: ty,
+          initializer: p.initializer,
+          span: spanFromNode(p),
+        });
+        continue;
+      }
+      params.push({ name: p.name.text, type: ty });
     }
 
     const ret = isAsync
       ? typeNodeToRust(unwrapPromiseInnerType(m, `Method '${m.name.text}'`, m.type, "TSB4108"))
       : typeNodeToRust(m.type);
-    const body: RustStmt[] = [];
     const methodCtx: EmitCtx = {
       checker: ctx.checker,
       unions: ctx.unions,
@@ -3298,6 +3420,7 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       thisName: "self",
       inAsync: isAsync,
     };
+    const body: RustStmt[] = [...lowerDefaultParamPrelude(methodCtx, defaulted)];
     for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
 
     implItems.push({
@@ -3709,8 +3832,11 @@ function parseInterfaceMethod(
     if (!p.type) {
       failAt(p, "TSB5108", `${owner}: parameter '${p.name.text}' must have a type annotation in v0.`);
     }
-    if (p.questionToken || p.initializer) {
-      failAt(p, "TSB5109", `${owner}: optional/default parameters are not supported in v0.`);
+    if (p.questionToken) {
+      failAt(p, "TSB5109", `${owner}: optional parameters are not supported in v0.`);
+    }
+    if (p.initializer) {
+      failAt(p, "TSB5109", `${owner}: default parameters are not supported in v0.`);
     }
     params.push({ name: p.name.text, type: typeNodeToRust(p.type) });
   }

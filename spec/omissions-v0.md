@@ -40,10 +40,10 @@ Policy:
 
 | Feature | v0 status | Typical diagnostic |
 | --- | --- | --- |
-| Optional/default parameters | Omitted (use explicit `Option<T>`) | `TSB3004` / `TSB4107` / `TSB5109` |
+| Optional parameters (`x?: T`) | Omitted (use explicit `Option<T>`) | `TSB3004` / `TSB4107` / `TSB5109` |
 | Untyped function parameters | Omitted (explicit parameter types required) | `TSB3003` |
 | Destructuring parameters | Omitted | `TSB3002` / `TSB5107` |
-| Generic/block-bodied arrow closures | Omitted in v0 closure subset | `TSB1100` |
+| Generic arrow closures; block-closure non-terminal `return` | Omitted in v0 closure subset | `TSB1100` |
 | `for..of` loops | Omitted | `TSB2100` |
 | `var` in `for` initializer | Omitted | `TSB2120` |
 | Discriminated-union `switch` `default` branch | Omitted (must be exhaustive over variants) | `TSB2203` |

@@ -85,6 +85,27 @@ Tsuba must not auto-clone.
 
 Optional parameters (`x?: T`) are rejected. Use `Option<T>`.
 
+### 4.3 Default parameters
+
+Default parameters are supported on functions, methods, and arrow closures.
+
+Source:
+
+```ts
+function add(x: i32 = 5 as i32): i32 {
+  return x;
+}
+```
+
+Lowering shape:
+
+- signature parameter lowers to `Option<T>`
+- call sites lower omitted args as `None`
+- call sites lower provided args as `Some(value)`
+- function prelude deterministically normalizes with `unwrap_or(defaultExpr)`
+
+This keeps omission behavior explicit in Rust while preserving TS call ergonomics.
+
 ---
 
 ## 5. Classes → structs
@@ -276,7 +297,7 @@ Core omitted groups include:
 
 - module forms: namespace/default/side-effect imports, barrel re-exports
 - expression forms: array/object spread, optional chaining/nullish
-- parameter/flow forms: optional/default params, destructuring params, `for..of`
+- parameter/flow forms: optional params (`x?: T`), destructuring params, `for..of`
 - declaration/type forms: class inheritance, TS enums, optional interface members
 - advanced async/generator forms: `function*`, `async function*`, `for await`
 - type-level TS computation: conditional/mapped/intersection/`infer`, `any`

@@ -34,7 +34,7 @@ The list below is intentionally focused on the diagnostics that are repeatedly e
 | `TSB1000` | missing exported `main` entrypoint |
 | `TSB1003` | async `main` has non-`Promise<void>` return payload |
 | `TSB1004` | async `main` requires `runtime.kind=tokio` |
-| `TSB1100` | block-bodied closure literal rejected in current closure subset |
+| `TSB1100` | unsupported closure subset usage (generic arrows or non-terminal `return` in block closures) |
 | `TSB1114` | optional chaining (`?.`) is rejected in v0 |
 | `TSB1303` | `move(...)` requires an inline arrow callback |
 | `TSB1306` | Promise `.then(...)` chains are rejected |

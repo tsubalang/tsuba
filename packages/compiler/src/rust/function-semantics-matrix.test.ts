@@ -121,7 +121,7 @@ describe("@tsuba/compiler function semantics matrix", () => {
     expect(out.mainRs).to.contain("let b = inspect(&(c));");
   });
 
-  it("covers closure matrix for expression and move closures", () => {
+  it("covers closure matrix for expression, move, block, and defaulted closures", () => {
     const dir = makeRepoTempDir("compiler-fn-matrix-closures-");
     const entry = join(dir, "main.ts");
     writeFileSync(
@@ -133,10 +133,18 @@ describe("@tsuba/compiler function semantics matrix", () => {
         "export function main(): void {",
         "  const a = (x: i32): i32 => (x + (1 as i32)) as i32;",
         "  const b = move((x: i32): i32 => (x + (2 as i32)) as i32);",
+        "  const c = (x: i32 = 3 as i32): i32 => {",
+        "    const y = (x + (1 as i32)) as i32;",
+        "    return y;",
+        "  };",
         "  const one = a(1 as i32);",
         "  const two = b(2 as i32);",
+        "  const three = c();",
+        "  const four = c(4 as i32);",
         "  void one;",
         "  void two;",
+        "  void three;",
+        "  void four;",
         "}",
         "",
       ].join("\n"),
@@ -146,7 +154,11 @@ describe("@tsuba/compiler function semantics matrix", () => {
     const out = compileHostToRust({ entryFile: entry });
     expect(out.mainRs).to.contain("let a = |x: i32|");
     expect(out.mainRs).to.contain("let b = move |x: i32|");
+    expect(out.mainRs).to.contain("let c = |x: Option<i32>|");
+    expect(out.mainRs).to.contain("let x: i32 = x.unwrap_or((3) as i32);");
     expect(out.mainRs).to.contain("let one = a((1) as i32);");
     expect(out.mainRs).to.contain("let two = b((2) as i32);");
+    expect(out.mainRs).to.contain("let three = c(None);");
+    expect(out.mainRs).to.contain("let four = c(Some((4) as i32));");
   });
 });

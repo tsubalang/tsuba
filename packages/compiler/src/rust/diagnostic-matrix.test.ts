@@ -164,7 +164,7 @@ describe("@tsuba/compiler diagnostics matrix", () => {
       ].join("\n"),
     },
     {
-      name: "entry expressions reject block-bodied closure literals",
+      name: "entry expressions reject non-terminal returns in block closures",
       expectedCode: "TSB1100",
       expectedDomain: "entry-and-expressions",
       entrySource: [
@@ -173,6 +173,8 @@ describe("@tsuba/compiler diagnostics matrix", () => {
         "export function main(): void {",
         "  const f = (x: i32): i32 => {",
         "    return x;",
+        "    const y = (x + (1 as i32)) as i32;",
+        "    return y;",
         "  };",
         "  void f;",
         "}",
