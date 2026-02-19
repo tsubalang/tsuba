@@ -120,6 +120,38 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("let x = add((3) as i32, (4) as i32);");
   });
 
+  it("supports tuple types via TS tuple annotations and lowers tuple indexing to .0/.1", () => {
+    const dir = makeRepoTempDir("compiler-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { i32, u64, u128 } from "@tsuba/core/types.js";',
+        "",
+        "declare function f(n: u128): [u128, u64];",
+        "",
+        "export function main(): void {",
+        "  const t = f(1 as u128);",
+        "  const q = t[0];",
+        "  const r = t[1];",
+        "  const t2: [i32, i32] = [1 as i32, 2 as i32];",
+        "  const a = t2[0];",
+        "  void q;",
+        "  void r;",
+        "  void a;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let q = t.0;");
+    expect(out.mainRs).to.contain("let r = t.1;");
+    expect(out.mainRs).to.contain("let t2: (i32, i32) = ((1) as i32, (2) as i32);");
+    expect(out.mainRs).to.contain("let a = t2.0;");
+  });
+
   it("supports the TS void operator as a discard expression", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
     const entry = join(dir, "main.ts");

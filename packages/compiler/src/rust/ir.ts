@@ -27,6 +27,7 @@ export type RustType =
       readonly inner: RustType;
     })
   | (NodeBase & { readonly kind: "slice"; readonly inner: RustType })
+  | (NodeBase & { readonly kind: "tuple"; readonly elems: readonly RustType[] })
   | (NodeBase & { readonly kind: "path"; readonly path: RustPath; readonly args: readonly RustType[] });
 
 export type RustPattern =
@@ -47,6 +48,7 @@ export type RustExpr =
   | (NodeBase & { readonly kind: "string"; readonly value: string })
   | (NodeBase & { readonly kind: "bool"; readonly value: boolean })
   | (NodeBase & { readonly kind: "paren"; readonly expr: RustExpr })
+  | (NodeBase & { readonly kind: "tuple"; readonly elems: readonly RustExpr[] })
   | (NodeBase & { readonly kind: "borrow"; readonly mut: boolean; readonly expr: RustExpr })
   | (NodeBase & { readonly kind: "cast"; readonly expr: RustExpr; readonly type: RustType })
   | (NodeBase & { readonly kind: "field"; readonly expr: RustExpr; readonly name: string })

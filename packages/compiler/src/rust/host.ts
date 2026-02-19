@@ -1304,11 +1304,13 @@ const rustPrimitiveTypes = new Map<string, RustType>([
   ["i16", pathType(["i16"])],
   ["i32", pathType(["i32"])],
   ["i64", pathType(["i64"])],
+  ["i128", pathType(["i128"])],
   ["isize", pathType(["isize"])],
   ["u8", pathType(["u8"])],
   ["u16", pathType(["u16"])],
   ["u32", pathType(["u32"])],
   ["u64", pathType(["u64"])],
+  ["u128", pathType(["u128"])],
   ["usize", pathType(["usize"])],
   ["f32", pathType(["f32"])],
   ["f64", pathType(["f64"])],
@@ -1439,6 +1441,12 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
       return pathType(typeNameSegments, typeArgs);
     }
   }
+  if (ts.isTupleTypeNode(typeNode)) {
+    const elems = typeNode.elements.map((el) =>
+      ts.isNamedTupleMember(el) ? typeNodeToRust(el.type) : typeNodeToRust(el)
+    );
+    return { kind: "tuple", elems };
+  }
   failAt(typeNode, "TSB1010", `Unsupported type annotation: ${typeNode.getText()}`);
 }
 
@@ -1453,6 +1461,20 @@ function isMutMarkerType(typeNode: ts.TypeNode | undefined): boolean {
 function isMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
   const ty = checker.getTypeAtLocation(node);
   return ty.getProperty("__tsuba_macro") !== undefined;
+}
+
+function isTupleType(ty: ts.Type | undefined): boolean {
+  if (!ty) return false;
+  if ((ty.flags & ts.TypeFlags.Object) === 0) return false;
+  const obj = ty as ts.ObjectType;
+  if ((obj.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
+  // Tuple types are often TypeReferences whose target carries the Tuple flag.
+  if ((obj.objectFlags & ts.ObjectFlags.Reference) !== 0) {
+    const ref = obj as ts.TypeReference;
+    const target = ref.target as ts.ObjectType | undefined;
+    if (target && (target.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
+  }
+  return false;
 }
 
 function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
@@ -1518,10 +1540,30 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isElementAccessExpression(expr)) {
     const index = expr.argumentExpression;
     if (!index) failAt(expr, "TSB1110", "Element access must have an index expression in v0.");
+    const baseTy = ctx.checker.getTypeAtLocation(expr.expression);
+    if (isTupleType(baseTy) && ts.isNumericLiteral(index)) {
+      const n = Number.parseInt(index.text, 10);
+      if (Number.isInteger(n) && n >= 0) {
+        return { kind: "field", expr: lowerExpr(ctx, expr.expression), name: String(n) };
+      }
+    }
     return { kind: "index", expr: lowerExpr(ctx, expr.expression), index: lowerExpr(ctx, index) };
   }
 
   if (ts.isArrayLiteralExpression(expr)) {
+    const ctxt = ctx.checker.getContextualType(expr);
+    const ty = ctx.checker.getTypeAtLocation(expr);
+    if (isTupleType(ctxt ?? ty)) {
+      const elems: RustExpr[] = [];
+      for (const el of expr.elements) {
+        if (ts.isSpreadElement(el)) {
+          failAt(el, "TSB1111", "Array spread is not supported in v0.");
+        }
+        elems.push(lowerExpr(ctx, el));
+      }
+      if (elems.length === 0) return unitExpr();
+      return { kind: "tuple", elems };
+    }
     const args: RustExpr[] = [];
     for (const el of expr.elements) {
       if (ts.isSpreadElement(el)) {

@@ -28,6 +28,10 @@ function emitType(ty: RustType): string {
   if (ty.kind === "slice") {
     return `[${emitType(ty.inner)}]`;
   }
+  if (ty.kind === "tuple") {
+    if (ty.elems.length === 1) return `(${emitType(ty.elems[0]!)},)`;
+    return `(${ty.elems.map(emitType).join(", ")})`;
+  }
   const base = emitPath(ty.path.segments);
   if (ty.args.length === 0) return base;
   return `${base}<${ty.args.map(emitType).join(", ")}>`;
@@ -64,6 +68,10 @@ function emitExpr(expr: RustExpr): string {
       return expr.value ? "true" : "false";
     case "paren":
       return `(${emitExpr(expr.expr)})`;
+    case "tuple": {
+      if (expr.elems.length === 1) return `(${emitExpr(expr.elems[0]!)},)`;
+      return `(${expr.elems.map(emitExpr).join(", ")})`;
+    }
     case "borrow": {
       const mut = expr.mut ? "mut " : "";
       return `&${mut}(${emitExpr(expr.expr)})`;
