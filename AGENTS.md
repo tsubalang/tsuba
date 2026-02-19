@@ -6,6 +6,8 @@ This repo is **airplane‑grade**: correctness > speed.
 
 - Never delete remote branches/tags, and never force-push.
 - Only push new commits/branches; maintainers handle remote cleanup.
+- Do not push directly to `main`. Create a feature branch for all changes and open a PR.
+- Treat PR submission as mandatory for every code or doc change while branch protection is active.
 
 ## Testing workflow
 
