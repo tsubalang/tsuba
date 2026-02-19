@@ -1429,6 +1429,24 @@ function typeNodeToRust(typeNode: ts.TypeNode | undefined): RustType {
         return { kind: "slice", inner: typeNodeToRust(inner) };
       }
 
+      if (typeNameSegments.length === 1 && baseName === "ArrayN") {
+        const [inner, lenNode] = typeNode.typeArguments ?? [];
+        if (!inner || !lenNode) {
+          failAt(typeNode, "TSB1022", "ArrayN<T,N> must have exactly two type arguments.");
+        }
+        if (
+          !ts.isLiteralTypeNode(lenNode) ||
+          !ts.isNumericLiteral(lenNode.literal)
+        ) {
+          failAt(lenNode, "TSB1023", "ArrayN length must be a numeric literal type (e.g., ArrayN<u8, 16>).");
+        }
+        const len = Number.parseInt(lenNode.literal.text, 10);
+        if (!Number.isInteger(len) || len < 0) {
+          failAt(lenNode, "TSB1023", "ArrayN length must be a non-negative integer literal.");
+        }
+        return { kind: "array", inner: typeNodeToRust(inner), len };
+      }
+
       if (typeNameSegments.length === 1 && baseName === "global_ptr") {
         const [inner] = typeNode.typeArguments ?? [];
         if (!inner) failAt(typeNode, "TSB1020", "global_ptr<T> must have exactly one type argument.");
@@ -1463,6 +1481,16 @@ function isMacroType(checker: ts.TypeChecker, node: ts.Expression): boolean {
   return ty.getProperty("__tsuba_macro") !== undefined;
 }
 
+function isFromTsubaCoreTypesSymbol(sym: ts.Symbol): boolean {
+  for (const decl of sym.declarations ?? []) {
+    const file = normalizePath(decl.getSourceFile().fileName);
+    const isCorePackage =
+      file.includes("/node_modules/@tsuba/core/") || file.includes("/packages/core/");
+    if (isCorePackage && file.includes("/types.")) return true;
+  }
+  return false;
+}
+
 function isTupleType(ty: ts.Type | undefined): boolean {
   if (!ty) return false;
   if ((ty.flags & ts.TypeFlags.Object) === 0) return false;
@@ -1474,6 +1502,15 @@ function isTupleType(ty: ts.Type | undefined): boolean {
     const target = ref.target as ts.ObjectType | undefined;
     if (target && (target.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
   }
+  return false;
+}
+
+function isArrayNType(ty: ts.Type | undefined): boolean {
+  if (!ty) return false;
+  const aliasSym = (ty as any).aliasSymbol as ts.Symbol | undefined;
+  if (aliasSym?.name === "ArrayN" && isFromTsubaCoreTypesSymbol(aliasSym)) return true;
+  const lenProp = ty.getProperty("__tsuba_array_len");
+  if (lenProp && isFromTsubaCoreTypesSymbol(lenProp)) return true;
   return false;
 }
 
@@ -1553,6 +1590,16 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
   if (ts.isArrayLiteralExpression(expr)) {
     const ctxt = ctx.checker.getContextualType(expr);
     const ty = ctx.checker.getTypeAtLocation(expr);
+    if (isArrayNType(ctxt ?? ty)) {
+      const elems: RustExpr[] = [];
+      for (const el of expr.elements) {
+        if (ts.isSpreadElement(el)) {
+          failAt(el, "TSB1111", "Array spread is not supported in v0.");
+        }
+        elems.push(lowerExpr(ctx, el));
+      }
+      return { kind: "array", elems };
+    }
     if (isTupleType(ctxt ?? ty)) {
       const elems: RustExpr[] = [];
       for (const el of expr.elements) {

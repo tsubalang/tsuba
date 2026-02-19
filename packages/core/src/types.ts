@@ -35,6 +35,9 @@ export type Str = string;
 // Borrowed slice marker (maps to Rust `[T]`; only valid behind `ref`/`mutref`)
 export type Slice<T> = T[];
 
+// Fixed-size array marker (maps to Rust `[T; N]`)
+export type ArrayN<T, N extends number> = T[] & { readonly __tsuba_array_len?: N };
+
 // Borrow markers
 export type ref<T> = T;
 export type mutref<T> = T;

@@ -28,6 +28,9 @@ function emitType(ty: RustType): string {
   if (ty.kind === "slice") {
     return `[${emitType(ty.inner)}]`;
   }
+  if (ty.kind === "array") {
+    return `[${emitType(ty.inner)}; ${ty.len}]`;
+  }
   if (ty.kind === "tuple") {
     if (ty.elems.length === 1) return `(${emitType(ty.elems[0]!)},)`;
     return `(${ty.elems.map(emitType).join(", ")})`;
@@ -68,6 +71,8 @@ function emitExpr(expr: RustExpr): string {
       return expr.value ? "true" : "false";
     case "paren":
       return `(${emitExpr(expr.expr)})`;
+    case "array":
+      return `[${expr.elems.map(emitExpr).join(", ")}]`;
     case "tuple": {
       if (expr.elems.length === 1) return `(${emitExpr(expr.elems[0]!)},)`;
       return `(${expr.elems.map(emitExpr).join(", ")})`;

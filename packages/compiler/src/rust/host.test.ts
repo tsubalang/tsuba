@@ -268,6 +268,29 @@ describe("@tsuba/compiler host emitter", () => {
     expect(out.mainRs).to.contain("let x = v[(0) as usize];");
   });
 
+  it("supports fixed-size arrays via ArrayN<T,N> (lowered to Rust [T; N])", () => {
+    const dir = makeRepoTempDir("compiler-");
+    const entry = join(dir, "main.ts");
+    writeFileSync(
+      entry,
+      [
+        'import type { ArrayN, i32, usize } from "@tsuba/core/types.js";',
+        "",
+        "export function main(): void {",
+        "  const a: ArrayN<i32, 3> = [1 as i32, 2 as i32, 3 as i32];",
+        "  const x = a[0 as usize];",
+        "  void x;",
+        "}",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+
+    const out = compileHostToRust({ entryFile: entry });
+    expect(out.mainRs).to.contain("let a: [i32; 3] = [(1) as i32, (2) as i32, (3) as i32];");
+    expect(out.mainRs).to.contain("let x = a[(0) as usize];");
+  });
+
   it("supports while loops and assignment statements (requires mut<T> marker)", () => {
     const dir = mkdtempSync(join(tmpdir(), "tsuba-compiler-"));
     const entry = join(dir, "main.ts");
