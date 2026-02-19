@@ -98,6 +98,21 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(dialectSource).to.contain("function lowerKernelToCudaSource(");
   });
 
+  it("routes entry-body lowering through MIR pass before emission", () => {
+    const mainEmissionPath = join(
+      repoRoot(),
+      "packages",
+      "compiler",
+      "src",
+      "rust",
+      "passes",
+      "main-emission.ts"
+    );
+    const body = getFunctionBodyText(mainEmissionPath, "emitMainAndRootShapesPass");
+    expect(body).to.contain("lowerRustBodyToMirPass(");
+    expect(body).to.contain("emitMirBodyToRustStmtsPass(");
+  });
+
   it("uses readonly map wrappers inside module-index pass outputs", () => {
     const moduleIndexPath = join(repoRoot(), "packages", "compiler", "src", "rust", "passes", "module-index.ts");
     const body = getFunctionBodyText(moduleIndexPath, "createUserModuleIndexPass");

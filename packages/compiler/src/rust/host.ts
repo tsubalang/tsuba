@@ -24,6 +24,7 @@ import { collectTypeModelsPass } from "./passes/type-models.js";
 import { collectAnnotationsPass } from "./passes/annotations.js";
 import { emitModuleAndRootDeclarationsPass } from "./passes/declaration-emission.js";
 import { emitMainAndRootShapesPass } from "./passes/main-emission.js";
+import { emitMirBodyToRustStmtsPass, lowerRustBodyToMirPass } from "./passes/mir.js";
 import { renderCudaRuntimeModule } from "./cuda-runtime.js";
 import {
   collectKernelDecls,
@@ -1882,8 +1883,9 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
     ? typeNodeToRust(unwrapPromiseInnerType(fnDecl, `Function '${fnDecl.name.text}'`, fnDecl.type, "TSB3010"))
     : typeNodeToRust(fnDecl.type);
   const fnCtx: EmitCtx = { ...ctx, inAsync: isAsync };
-  const body: RustStmt[] = [...lowerDefaultParamPrelude(fnCtx, defaulted)];
-  for (const st of fnDecl.body.statements) body.push(...lowerStmt(fnCtx, st));
+  const bodyRaw: RustStmt[] = [...lowerDefaultParamPrelude(fnCtx, defaulted)];
+  for (const st of fnDecl.body.statements) bodyRaw.push(...lowerStmt(fnCtx, st));
+  const body = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(bodyRaw));
 
   return {
     kind: "fn",
@@ -2152,8 +2154,9 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
       thisName: "self",
       inAsync: isAsync,
     };
-    const body: RustStmt[] = [...lowerDefaultParamPrelude(methodCtx, defaulted)];
-    for (const st of m.body!.statements) body.push(...lowerStmt(methodCtx, st));
+    const bodyRaw: RustStmt[] = [...lowerDefaultParamPrelude(methodCtx, defaulted)];
+    for (const st of m.body!.statements) bodyRaw.push(...lowerStmt(methodCtx, st));
+    const body = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(bodyRaw));
 
     implItems.push({
       kind: "fn",
