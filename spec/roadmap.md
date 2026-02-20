@@ -15,7 +15,7 @@ When a TS feature has no Rust-faithful lowering, we hard-error (airplane-grade) 
 
 See also:
 
-- `carryover-from-tsonic.md` (process + architecture to reuse)
+- `roadmap-parity-with-tsonic.md` (discipline parity matrix)
 - `gpu.md` (kernel dialect + backend direction)
 
 ---
@@ -63,11 +63,10 @@ Merge gate:
 
 ---
 
-## Phase 0.5 — Tsonic checkpoint adoption (DONE)
+## Phase 0.5 — Tsonic discipline adoption (DONE)
 
 Deliverables:
 
-- Added `checkpoint-tsonic-2026-02-19.md` as a checkpoint reference.
 - Enforced phase discipline from Tsonic:
   - parse/resolve/validate/IR/emission/backend boundaries.
   - explicit command/config split in CLI and build orchestration.
@@ -77,7 +76,7 @@ Deliverables:
 
 Carryover checks:
 
-- Every non-trivial feature change is mapped to a checkpoint item in `carryover-from-tsonic.md`.
+- Every non-trivial feature change must update spec + tests in the same PR.
 - Any divergence from checkpoint must be explicit and justified in roadmap/spec.
 
 ---
