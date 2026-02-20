@@ -33,7 +33,7 @@ This matters because most Tsonic transfer value is in **architecture + validatio
 
 - `carryover-from-tsonic.md` gives what to carry.
 - `spec/roadmap.md` carries execution status in phases.
-- `spec/checkpoint-tsonic-2026-02-19.md` is the immutable snapshot used when a phase diverges.
+- `spec/archive/tsonic-checkpoints/checkpoint-tsonic-2026-02-19.md` is the immutable snapshot used when a phase diverges.
 - `test/scripts/*` (in this repo) holds the same layered verification pattern:
   - unit/golden-style tests,
   - tsc typecheck gate,
