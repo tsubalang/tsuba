@@ -119,6 +119,13 @@ v0 uses a dedicated Rust helper extractor:
 - invocation: `cargo run --manifest-path packages/tsubabindgen/rust-extractor/Cargo.toml -- <crate-manifest>`
 - output: stable JSON IR consumed by `packages/tsubabindgen/src/generate.ts`
 
+Pipeline stage files:
+
+- extract orchestration: `packages/tsubabindgen/src/pipeline/extract.ts`
+- parser internals: `packages/tsubabindgen/src/pipeline/extract-parsers.ts`
+- method/re-export resolution: `packages/tsubabindgen/src/pipeline/resolve.ts`
+- TS emit + reports/symbols: `packages/tsubabindgen/src/pipeline/emit.ts`
+
 This is the required metadata path for v0 (not `rustdoc-json`), chosen for deterministic behavior and stable coverage.
 
 If a Rust module cannot be parsed, extractor must emit an explicit module-scoped `parse` skip issue and generation continues for other modules.

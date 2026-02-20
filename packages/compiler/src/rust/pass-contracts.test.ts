@@ -82,6 +82,19 @@ describe("@tsuba/compiler pass contracts", () => {
     expect(runtimeSource).to.contain("mod __tsuba_cuda {");
   });
 
+  it("keeps host utility/bindings helpers isolated in lowering modules", () => {
+    const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
+    const hostSource = readFileSync(hostPath, "utf-8");
+    expect(hostSource).to.contain('from "./lowering/common.js";');
+    expect(hostSource).to.contain('from "./lowering/bindings-manifest.js";');
+    expect(hostSource).to.contain('from "./lowering/union-model.js";');
+    expect(hostSource).to.not.contain("function rustTypeNameFromTag(");
+    expect(hostSource).to.not.contain("function anonStructName(");
+    expect(hostSource).to.not.contain("function findNodeModulesPackageRoot(");
+    expect(hostSource).to.not.contain("function readBindingsManifest(");
+    expect(hostSource).to.not.contain("function unionDefFromIdentifier(");
+  });
+
   it("keeps rust source-map generation isolated from host lowering", () => {
     const hostPath = join(repoRoot(), "packages", "compiler", "src", "rust", "host.ts");
     const hostSource = readFileSync(hostPath, "utf-8");

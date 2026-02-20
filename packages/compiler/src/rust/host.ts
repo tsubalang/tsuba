@@ -1,6 +1,5 @@
 import ts from "typescript";
-import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import type {
   RustExpr,
@@ -41,6 +40,27 @@ import {
   unwrapPromiseInnerType as unwrapPromiseInnerTypeFromLowering,
 } from "./lowering/type-lowering.js";
 import { tryParseAnnotateStatement as tryParseAnnotateStatementFromLowering } from "./lowering/annotations.js";
+import {
+  anonStructName,
+  compareText,
+  expressionToSegments,
+  normalizePath,
+  rustModuleNameFromFileName,
+  rustTypeNameFromTag,
+  splitRustPath,
+  traitKeyFromDecl,
+  unionKeyFromDecl,
+} from "./lowering/common.js";
+import {
+  unionDefFromIdentifier as unionDefFromIdentifierFromLowering,
+  unionKeyFromType as unionKeyFromTypeFromLowering,
+} from "./lowering/union-model.js";
+import {
+  findNodeModulesPackageRoot,
+  isMarkerModuleSpecifier,
+  packageNameFromSpecifier,
+  readBindingsManifest as readBindingsManifestFromLowering,
+} from "./lowering/bindings-manifest.js";
 
 export type { KernelDecl } from "./kernel-dialect.js";
 
@@ -80,7 +100,7 @@ export type CompileHostOutput = {
   readonly sourceMap: RustSourceMap;
 };
 
-export const COMPILER_BUILD_ID = "v0-2026-02-20";
+export const COMPILER_BUILD_ID = "v0-2026-02-20-wave21";
 
 type UnionVariantDef = {
   readonly tag: string;
@@ -138,28 +158,6 @@ type EmitCtx = {
   readonly fieldBindings?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 };
 
-type BindingsManifest = {
-  readonly schema: number;
-  readonly kind: "crate";
-  readonly crate: {
-    readonly name: string;
-    readonly package?: string;
-    readonly version?: string;
-    readonly path?: string;
-    readonly features?: readonly string[];
-  };
-  readonly modules: Record<string, string>;
-};
-
-function normalizePath(p: string): string {
-  return p.replaceAll("\\", "/");
-}
-
-function compareText(a: string, b: string): number {
-  if (a === b) return 0;
-  return a < b ? -1 : 1;
-}
-
 function syntheticSpanForFile(fileName: string): Span {
   return {
     fileName: mapSpanFileName(fileName),
@@ -196,187 +194,8 @@ function mapSpanFileName(raw: string): string {
   return activeSpanFileNameMapper ? activeSpanFileNameMapper(normalized) : normalized;
 }
 
-function rustIdentFromStem(stem: string): string {
-  const raw = stem
-    .replaceAll(/[^A-Za-z0-9_]/g, "_")
-    .replaceAll(/_+/g, "_")
-    .replaceAll(/^_+|_+$/g, "");
-  const lower = raw.length === 0 ? "mod" : raw.toLowerCase();
-  return /^[0-9]/.test(lower) ? `_${lower}` : lower;
-}
-
-function rustModuleNameFromFileName(fileName: string): string {
-  const b = basename(fileName);
-  const stem = b.replaceAll(/\.[^.]+$/g, "");
-  return rustIdentFromStem(stem);
-}
-
-function rustTypeNameFromTag(tag: string): string {
-  const raw = tag
-    .replaceAll(/[^A-Za-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/g)
-    .filter((s) => s.length > 0)
-    .map((s) => s[0]!.toUpperCase() + s.slice(1))
-    .join("");
-  const base = raw.length === 0 ? "Variant" : raw;
-  return /^[0-9]/.test(base) ? `V${base}` : base;
-}
-
-function splitRustPath(path: string): readonly string[] {
-  return path.split("::").filter((s) => s.length > 0);
-}
-
-function unionKeyFromDecl(decl: ts.TypeAliasDeclaration): string {
-  return `${normalizePath(decl.getSourceFile().fileName)}::${decl.name.text}`;
-}
-
-function traitKeyFromDecl(decl: ts.InterfaceDeclaration): string {
-  return `${normalizePath(decl.getSourceFile().fileName)}::${decl.name.text}`;
-}
-
 function unionKeyFromType(type: ts.Type): string | undefined {
-  const alias = (type as unknown as { readonly aliasSymbol?: ts.Symbol }).aliasSymbol;
-  if (!alias) return undefined;
-  for (const d of alias.declarations ?? []) {
-    if (ts.isTypeAliasDeclaration(d)) return unionKeyFromDecl(d);
-  }
-  return undefined;
-}
-
-function unionDefFromType(ctx: EmitCtx, type: ts.Type): UnionDef | undefined {
-  const key = unionKeyFromType(type);
-  return key ? ctx.unions.get(key) : undefined;
-}
-
-function unionDefFromIdentifier(ctx: EmitCtx, ident: ts.Identifier): UnionDef | undefined {
-  const direct = unionDefFromType(ctx, ctx.checker.getTypeAtLocation(ident));
-  if (direct) return direct;
-
-  const symbol = ctx.checker.getSymbolAtLocation(ident);
-  for (const decl of symbol?.declarations ?? []) {
-    const maybeTypeNode = (() => {
-      if (
-        ts.isVariableDeclaration(decl) ||
-        ts.isParameter(decl) ||
-        ts.isPropertyDeclaration(decl) ||
-        ts.isPropertySignature(decl)
-      ) {
-        return decl.type;
-      }
-      return undefined;
-    })();
-    if (!maybeTypeNode) continue;
-    const declared = unionDefFromType(ctx, ctx.checker.getTypeFromTypeNode(maybeTypeNode));
-    if (declared) return declared;
-  }
-
-  return undefined;
-}
-
-function expressionToSegments(expr: ts.Expression): readonly string[] | undefined {
-  if (ts.isIdentifier(expr)) return [expr.text];
-  if (ts.isPropertyAccessExpression(expr)) {
-    const left = expressionToSegments(expr.expression);
-    if (!left) return undefined;
-    return [...left, expr.name.text];
-  }
-  return undefined;
-}
-
-function fnv1a32(text: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
-
-function anonStructName(key: string): string {
-  return `__Anon_${fnv1a32(key).toString(16).padStart(8, "0")}`;
-}
-
-const markerModuleSpecifiers = new Set<string>([
-  "@tsuba/core/lang.js",
-  "@tsuba/core/types.js",
-  "@tsuba/std/prelude.js",
-  "@tsuba/std/macros.js",
-  "@tsuba/gpu/lang.js",
-  "@tsuba/gpu/types.js",
-]);
-
-function isMarkerModuleSpecifier(spec: string): boolean {
-  return markerModuleSpecifiers.has(spec);
-}
-
-function packageNameFromSpecifier(spec: string): string {
-  if (spec.startsWith("@")) {
-    const parts = spec.split("/");
-    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : spec;
-  }
-  const idx = spec.indexOf("/");
-  return idx === -1 ? spec : spec.slice(0, idx);
-}
-
-function findNodeModulesPackageRoot(fromFileName: string, packageName: string): string | undefined {
-  const packagePath = join("node_modules", ...packageName.split("/"));
-  let cur = resolve(dirname(fromFileName));
-  while (true) {
-    const candidate = join(cur, packagePath);
-    if (existsSync(join(candidate, "package.json"))) return candidate;
-    const parent = dirname(cur);
-    if (parent === cur) return undefined;
-    cur = parent;
-  }
-}
-
-function readBindingsManifest(path: string, specNode: ts.Node): BindingsManifest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-  } catch (e) {
-    failAt(specNode, "TSB3220", `Failed to read ${path}: ${String(e)}`);
-  }
-  if (!parsed || typeof parsed !== "object") {
-    failAt(specNode, "TSB3221", `${path} must be a JSON object.`);
-  }
-  let m = parsed as Partial<BindingsManifest>;
-  if (m.schema !== 1) {
-    failAt(specNode, "TSB3222", `${path}: unsupported schema (expected 1).`);
-  }
-  if (m.kind !== "crate") {
-    failAt(specNode, "TSB3223", `${path}: unsupported kind (expected "crate").`);
-  }
-  const crate = m.crate;
-  if (!crate || typeof crate.name !== "string") {
-    failAt(specNode, "TSB3224", `${path}: missing crate.name.`);
-  }
-  if (crate.package !== undefined && typeof crate.package !== "string") {
-    failAt(specNode, "TSB3224", `${path}: crate.package must be a string when present.`);
-  }
-  const hasVersion = typeof crate.version === "string";
-  const hasPath = typeof crate.path === "string";
-  if (hasVersion && hasPath) {
-    failAt(specNode, "TSB3228", `${path}: crate must specify either version or path, not both.`);
-  }
-  if (!hasVersion && !hasPath) {
-    failAt(specNode, "TSB3224", `${path}: crate must specify either version or path.`);
-  }
-  if (hasPath) {
-    const abs = normalizePath(resolve(dirname(path), crate.path!));
-    m = { ...m, crate: { ...crate, path: abs } };
-  }
-  const features = (m.crate ?? crate).features;
-  if (features !== undefined) {
-    if (!Array.isArray(features) || !features.every((x) => typeof x === "string")) {
-      failAt(specNode, "TSB3227", `${path}: crate.features must be an array of strings when present.`);
-    }
-  }
-  if (!m.modules || typeof m.modules !== "object") {
-    failAt(specNode, "TSB3225", `${path}: missing modules mapping.`);
-  }
-  return m as BindingsManifest;
+  return unionKeyFromTypeFromLowering(type);
 }
 
 function spanFromNode(node: ts.Node): Span {
@@ -968,7 +787,7 @@ function lowerExpr(ctx: EmitCtx, expr: ts.Expression): RustExpr {
         return identExpr(bound);
       }
 
-      const unionDef = unionDefFromIdentifier(ctx, base);
+      const unionDef = unionDefFromIdentifierFromLowering(ctx, base);
       if (unionDef && expr.name.text !== unionDef.discriminant) {
         failAt(
           expr.name,
@@ -1889,7 +1708,9 @@ function lowerFunction(ctx: EmitCtx, fnDecl: ts.FunctionDeclaration, attrs: read
   const fnCtx: EmitCtx = { ...ctx, inAsync: isAsync };
   const bodyRaw: RustStmt[] = [...lowerDefaultParamPrelude(fnCtx, defaulted)];
   for (const st of fnDecl.body.statements) bodyRaw.push(...lowerStmt(fnCtx, st));
-  const body = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(bodyRaw));
+  const body = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(bodyRaw), {
+    fallbackSpanSource: bodyRaw,
+  });
 
   return {
     kind: "fn",
@@ -2160,7 +1981,9 @@ function lowerClass(ctx: EmitCtx, cls: ts.ClassDeclaration, attrs: readonly stri
     };
     const bodyRaw: RustStmt[] = [...lowerDefaultParamPrelude(methodCtx, defaulted)];
     for (const st of m.body!.statements) bodyRaw.push(...lowerStmt(methodCtx, st));
-    const body = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(bodyRaw));
+    const body = emitMirBodyToRustStmtsPass(lowerRustBodyToMirPass(bodyRaw), {
+      fallbackSpanSource: bodyRaw,
+    });
 
     implItems.push({
       kind: "fn",
@@ -2758,7 +2581,8 @@ function compileHostToRustImpl(opts: CompileHostOptions): CompileHostOutput {
         }),
       packageNameFromSpecifier,
       findNodeModulesPackageRoot,
-      readBindingsManifest,
+      readBindingsManifest: (manifestPath, atNode) =>
+        readBindingsManifestFromLowering(manifestPath, atNode, { failAt }),
       addUsedCrate: (atNode, dep) => addUsedCrate(usedCratesByName, atNode, dep),
       splitRustPath,
       spanFromNode,

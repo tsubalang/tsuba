@@ -122,6 +122,19 @@ Airplane-grade rule:
   - `COMPILER_DIAGNOSTIC_CODES`
   - file: `packages/compiler/src/rust/diagnostics.ts`
 
+### 2.1 Host helper decomposition (non-pass modules)
+
+To keep host orchestration clean, these helper modules are intentionally separate:
+
+- `packages/compiler/src/rust/lowering/common.ts`
+  - deterministic naming/path/order helpers
+- `packages/compiler/src/rust/lowering/bindings-manifest.ts`
+  - `tsuba.bindings.json` discovery/parsing helpers
+- `packages/compiler/src/rust/lowering/union-model.ts`
+  - alias key + union lookup helpers
+
+These are not pipeline passes; they are pass-local utility boundaries that reduce host monolith risk.
+
 ---
 
 ## 3) Mutation rules
